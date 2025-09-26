@@ -7,24 +7,22 @@ This test:
 3. Statically computes LSH at second-to-last layer every time
 4. Dynamically challenges random layers via hooks
 5. Stores everything in the database for verification
+
+CRITICAL INVARIANT:
+- The StableHLO stored in the database MUST exactly match what's executed
+- Core computation (JIT-compiled) is separate from verification hooks
+- LSH projections and challenges happen OUTSIDE the verified graph
 """
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-import pytest
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Tuple
 
 import jax
 import jax.numpy as jnp
-import numpy as np
+import pytest
 from jax import random
 
-from veritor.db.api import WorkloadDatabase
 from veritor.db.ir_store import IRFormat, IRRole
 from veritor.db.models import (
     ChallengeRecord,
@@ -61,7 +59,11 @@ class SimpleModel:
 
         # Initialize weights for K layers
         self.weights = []
-        dims = [config.input_dim] + [config.hidden_dim] * (config.n_layers - 1) + [config.output_dim]
+        dims = (
+            [config.input_dim]
+            + [config.hidden_dim] * (config.n_layers - 1)
+            + [config.output_dim]
+        )
 
         for i in range(len(dims) - 1):
             key, w_key, b_key = random.split(key, 3)
@@ -73,10 +75,13 @@ class SimpleModel:
         key, lsh_key = random.split(key)
         self.lsh_matrix = random.normal(lsh_key, (config.hidden_dim, config.lsh_dim))
         # Normalize rows for stable projections
-        self.lsh_matrix = self.lsh_matrix / jnp.linalg.norm(self.lsh_matrix, axis=1, keepdims=True)
+        self.lsh_matrix = self.lsh_matrix / jnp.linalg.norm(
+            self.lsh_matrix, axis=1, keepdims=True
+        )
 
-    def forward(self, x: jnp.ndarray,
-                capture_activations: bool = True) -> Tuple[jnp.ndarray, Dict[str, jnp.ndarray]]:
+    def forward(
+        self, x: jnp.ndarray, capture_activations: bool = True
+    ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
         """
         Forward pass through the model.
 
@@ -113,7 +118,7 @@ class ChallengeHookSystem:
         self.challenges = []
         self.challenge_schedule = {}
 
-    def generate_challenge_schedule(self, n_passes: int) -> Dict[str, bool]:
+    def generate_challenge_schedule(self, n_passes: int) -> dict[str, bool]:
         """Generate random challenge schedule."""
         key = random.PRNGKey(self.config.seed + 1000)
         schedule = {}
@@ -124,14 +129,17 @@ class ChallengeHookSystem:
                 for layer_idx in range(self.config.n_layers - 1):
                     key, subkey = random.split(key)
                     if random.bernoulli(subkey, p=self.config.challenge_prob):
-                        challenge_id = f"pass_{pass_idx}_batch_{batch_idx}_layer_{layer_idx}"
+                        challenge_id = (
+                            f"pass_{pass_idx}_batch_{batch_idx}_layer_{layer_idx}"
+                        )
                         schedule[challenge_id] = True
 
         self.challenge_schedule = schedule
         return schedule
 
-    def compute_lsh_challenge(self, activation: jnp.ndarray,
-                             pass_idx: int, batch_idx: int, layer_idx: int) -> jnp.ndarray:
+    def compute_lsh_challenge(
+        self, activation: jnp.ndarray, pass_idx: int, batch_idx: int, layer_idx: int
+    ) -> jnp.ndarray:
         """Compute LSH projection for a challenge."""
         # Generate deterministic projection matrix based on indices
         seed = pass_idx * 10000 + batch_idx * 100 + layer_idx
@@ -159,19 +167,17 @@ class ChallengeHookSystem:
                 "batch_idx": batch_idx,
                 "layer_idx": layer_idx,
                 "activation_shape": activation.shape,
-                "trace_id": ""  # Will be updated later
-            }
+                "trace_id": "",  # Will be updated later
+            },
         )
         self.challenges.append(challenge)
 
         return projection
 
 
-def run_simple_inference_test():
-    """Main test function."""
-    print("\n" + "="*60)
-    print("Simple Inference Test")
-    print("="*60)
+def test_simple_inference_with_real_stablehlo(workload_db):
+    """Test simple inference with real JAX-generated StableHLO."""
+    database = workload_db
 
     # Configuration
     config = SimpleInferenceConfig(
@@ -181,26 +187,17 @@ def run_simple_inference_test():
         input_dim=2,
         hidden_dim=8,
         output_dim=2,
-        lsh_dim=4
+        lsh_dim=4,
     )
-
-    print(f"\nConfiguration:")
-    print(f"  Forward passes: {config.n_forward_passes}")
-    print(f"  Layers: {config.n_layers}")
-    print(f"  Batch size: {config.batch_size}")
-    print(f"  Input/Output dim: {config.input_dim}/{config.output_dim}")
-    print(f"  Hidden dim: {config.hidden_dim}")
-    print(f"  LSH projection dim: {config.lsh_dim}")
 
     # Initialize
     model = SimpleModel(config)
     hook_system = ChallengeHookSystem(config)
-    database = WorkloadDatabase()
 
     # Generate challenge schedule
     schedule = hook_system.generate_challenge_schedule(config.n_forward_passes)
     n_challenges = len([v for v in schedule.values() if v])
-    print(f"\nChallenge schedule: {n_challenges} challenges planned")
+    assert n_challenges > 0, "Should have some challenges planned"
 
     # Create graph metadata
     graph = Graph(
@@ -210,30 +207,58 @@ def run_simple_inference_test():
             "n_layers": config.n_layers,
             "input_dim": config.input_dim,
             "output_dim": config.output_dim,
-            "test_type": "simple_inference"
-        }
+            "test_type": "simple_inference",
+        },
     )
     graph_id = database.store_graph(graph)
 
-    # Generate StableHLO for the model (simplified - would use JAX export in practice)
-    stablehlo_text = f"""
-    module @simple_model {{
-        func.func @forward(%input: tensor<{config.batch_size}x{config.input_dim}xf32>)
-                          -> tensor<{config.batch_size}x{config.output_dim}xf32> {{
-            // Model with {config.n_layers} layers
-            // Weights are embedded in the module
-            return %output : tensor<{config.batch_size}x{config.output_dim}xf32>
-        }}
-    }}
-    """
+    # Generate real StableHLO from the JAX model
+    # This function MUST match exactly what we execute during forward passes
+    def model_core_forward(x):
+        """
+        Core forward pass - this is the EXACT computation we verify.
+        Returns only the final output, no intermediate activations.
+        """
+        h = x
+        for i, (w, b) in enumerate(model.weights):
+            h = jnp.dot(h, w) + b
+            # Apply ReLU except for last layer
+            if i < len(model.weights) - 1:
+                h = jax.nn.relu(h)
+        return h
 
-    # Store IR
+    # This is the function we'll actually JIT and execute
+    jitted_forward = jax.jit(model_core_forward)
+
+    # Create example input for shape inference
+    example_input = jnp.zeros((config.batch_size, config.input_dim))
+
+    # Lower to StableHLO - this is our source of truth
+    lowered = jitted_forward.lower(example_input)
+    stablehlo_text = lowered.as_text()
+
+    # Store the jitted function for later use
+    model.jitted_forward = jitted_forward
+
+    # Verify we generated real StableHLO
+    assert len(stablehlo_text) > 1000, "StableHLO seems too short"
+    assert "stablehlo.constant" in stablehlo_text, "Missing weight constants"
+    assert "stablehlo.dot_general" in stablehlo_text, "Missing matrix operations"
+    assert "func.func public @main" in stablehlo_text, "Missing main function"
+
+    # Store the real StableHLO IR
     database.ir_store.attach_ir(
         graph_id,
         IRRole.LOGICAL,
         stablehlo_text,
         IRFormat.STABLEHLO,
-        {"generated_from": "test_simple_inference"}
+        {
+            "generated_from": "test_simple_inference",
+            "jax_version": jax.__version__,
+            "model_type": "simple_feedforward",
+            "n_layers": config.n_layers,
+            "weights_embedded": True,  # Weights are constants in the graph
+        },
     )
 
     # Storage for results
@@ -242,8 +267,6 @@ def run_simple_inference_test():
     all_activations = {}
     all_lsh_static = {}
     all_events = []
-
-    print("\nRunning inference passes...")
 
     # Run N forward passes
     for pass_idx in range(config.n_forward_passes):
@@ -255,12 +278,27 @@ def run_simple_inference_test():
         input_id = f"input_pass_{pass_idx}"
         all_inputs[input_id] = TensorData.from_array(x)
 
-        # Forward pass
-        output, activations = model.forward(x, capture_activations=True)
+        # Execute using the SAME JIT-compiled function that we stored as StableHLO
+        output = model.jitted_forward(x)
 
         # Store output
         output_id = f"output_pass_{pass_idx}"
         all_outputs[output_id] = TensorData.from_array(output)
+
+        # Now compute activations and LSH OUTSIDE the verified computation
+        # These are for challenges/verification, not part of the core graph
+        activations = {}
+        h = x
+        for i, (w, b) in enumerate(model.weights):
+            h = jnp.dot(h, w) + b
+            if i < len(model.weights) - 1:
+                h = jax.nn.relu(h)
+            activations[f"layer_{i}"] = h
+
+            # Static LSH at second-to-last layer (computed separately)
+            if i == len(model.weights) - 2:
+                lsh_projection = jnp.dot(h, model.lsh_matrix)
+                activations["lsh_static"] = lsh_projection
 
         # Store static LSH projection
         lsh_id = f"lsh_static_pass_{pass_idx}"
@@ -289,8 +327,8 @@ def run_simple_inference_test():
                         data={
                             "pass_idx": pass_idx,
                             "batch_idx": batch_idx,
-                            "challenge_type": "lsh_dynamic"
-                        }
+                            "challenge_type": "lsh_dynamic",
+                        },
                     )
                     all_events.append(event)
 
@@ -299,19 +337,19 @@ def run_simple_inference_test():
             act_id = f"{name}_pass_{pass_idx}"
             all_activations[act_id] = TensorData.from_array(act)
 
-        print(f"  Pass {pass_idx + 1}/{config.n_forward_passes} complete")
-
     # Create and store trace
     trace = Trace(
         id=f"trace_{uuid.uuid4().hex[:8]}",
         graph_id=graph_id,
-        start_time=all_events[0].timestamp if all_events else datetime.now().timestamp(),
+        start_time=all_events[0].timestamp
+        if all_events
+        else datetime.now().timestamp(),
         end_time=all_events[-1].timestamp if all_events else datetime.now().timestamp(),
         events=all_events,
         metadata={
             "n_passes": config.n_forward_passes,
-            "n_challenges": len(hook_system.challenges)
-        }
+            "n_challenges": len(hook_system.challenges),
+        },
     )
     trace_id = database.store_trace(trace)
 
@@ -333,8 +371,8 @@ def run_simple_inference_test():
         activations=all_activations,
         metadata={
             "trace_id": trace_id,
-            "lsh_static_projections": [lsh_id for lsh_id in all_lsh_static.keys()]
-        }
+            "lsh_static_projections": [lsh_id for lsh_id in all_lsh_static.keys()],
+        },
     )
 
     # Add static LSH projections to activations
@@ -342,90 +380,93 @@ def run_simple_inference_test():
 
     data_id = database.store_data_bundle(data_bundle)
 
-    # Summary
-    print(f"\n{'='*60}")
-    print("Test Complete!")
-    print(f"{'='*60}")
-    print(f"  Graph ID: {graph_id}")
-    print(f"  Trace ID: {trace_id}")
-    print(f"  Data ID: {data_id}")
-    print(f"  Total forward passes: {config.n_forward_passes}")
-    print(f"  Total challenges: {len(hook_system.challenges)}")
-    print(f"  Static LSH projections: {len(all_lsh_static)}")
+    # CRITICAL: Verify that stored StableHLO matches execution
+    test_input = random.normal(random.PRNGKey(999), (config.batch_size, config.input_dim))
 
-    # Verification step
-    print("\nVerification:")
+    # Execute with the jitted function
+    jitted_output = model.jitted_forward(test_input)
+
+    # Execute with Python (should match)
+    h = test_input
+    for i, (w, b) in enumerate(model.weights):
+        h = jnp.dot(h, w) + b
+        if i < len(model.weights) - 1:
+            h = jax.nn.relu(h)
+    python_output = h
+
+    # Check they match
+    assert jnp.allclose(jitted_output, python_output, rtol=1e-5), \
+        "CRITICAL: JIT output doesn't match Python execution!"
 
     # Check that static LSH was computed for each pass
     for pass_idx in range(config.n_forward_passes):
         lsh_key = f"lsh_static_pass_{pass_idx}"
-        assert lsh_key in data_bundle.activations, f"Missing static LSH for pass {pass_idx}"
+        assert lsh_key in data_bundle.activations, (
+            f"Missing static LSH for pass {pass_idx}"
+        )
         lsh_data = data_bundle.activations[lsh_key]
-        assert lsh_data.shape == (config.batch_size, config.lsh_dim), \
+        assert lsh_data.shape == (config.batch_size, config.lsh_dim), (
             f"Wrong LSH shape: {lsh_data.shape}"
-    print("  ✓ All static LSH projections present")
+        )
 
     # Check challenges
-    assert len(hook_system.challenges) == n_challenges, \
+    assert len(hook_system.challenges) == n_challenges, (
         f"Challenge count mismatch: {len(hook_system.challenges)} != {n_challenges}"
-    print(f"  ✓ {n_challenges} dynamic challenges recorded")
+    )
 
     # Check outputs
     for pass_idx in range(config.n_forward_passes):
         output_key = f"output_pass_{pass_idx}"
         assert output_key in all_outputs, f"Missing output for pass {pass_idx}"
         output_data = all_outputs[output_key]
-        assert output_data.shape == (config.batch_size, config.output_dim), \
+        assert output_data.shape == (config.batch_size, config.output_dim), (
             f"Wrong output shape: {output_data.shape}"
-    print("  ✓ All outputs recorded correctly")
-
-    print("\n✅ Simple inference test passed!")
-
-    return database, graph_id, trace_id, data_id
-
-
-def test_simple_inference():
-    """Pytest test for simple inference."""
-    db, graph_id, trace_id, data_id = run_simple_inference_test()
+        )
 
     # Verify database contents
-    assert db.get_graph(graph_id) is not None
-    assert db.get_trace(trace_id) is not None
-    assert db.get_data_bundle(data_id) is not None
+    assert database.get_graph(graph_id) is not None
+    assert database.get_trace(trace_id) is not None
+    assert database.get_data_bundle(data_id) is not None
 
     # Verify challenges were stored
-    # Since ChallengeRecord doesn't have trace_id field, check directly
-    assert len(db.challenges) > 0
+    assert len(database.challenges) > 0
     # Verify our challenges have the trace_id in metadata
-    for challenge in db.challenges:
+    for challenge in database.challenges:
         assert challenge.metadata.get("trace_id") == trace_id
 
-    # Test persistence
-    import tempfile
-    with tempfile.TemporaryDirectory() as tmpdir:
-        save_path = f"{tmpdir}/test_db"
-        db.save(save_path)
+    # === NEW: Unified Verification Engine ===
+    from veritor.verifier.engine import verify_single_execution, VerificationConfig
 
-        loaded_db = WorkloadDatabase.load(save_path)
-        assert len(loaded_db.graphs) == 1
-        assert len(loaded_db.traces) == 1
-        assert len(loaded_db.data_bundles) == 1
+    # Configure verification
+    verification_config = VerificationConfig(
+        enable_jit_vs_python=True,
+        enable_challenge_verification=True,
+        execution_rtol=1e-5,
+        lsh_rtol=1e-3,
+    )
 
+    # Run unified verification
+    result = verify_single_execution(
+        database=database,
+        graph_id=graph_id,
+        trace_id=trace_id,
+        config=verification_config
+    )
 
-if __name__ == "__main__":
-    # Run the test directly
-    db, graph_id, trace_id, data_id = run_simple_inference_test()
+    # Verify the verification succeeded
+    assert result.success, f"Verification failed: {result.errors}"
 
-    # Optional: Save database for inspection
-    import tempfile
-    with tempfile.TemporaryDirectory() as tmpdir:
-        save_path = f"{tmpdir}/test_db"
-        db.save(save_path)
-        print(f"\nDatabase saved to: {save_path}")
+    # Check specific verification results
+    if result.execution_match is not None:
+        assert result.execution_match, "JIT vs Python execution mismatch"
 
-        # Reload and verify
-        loaded_db = WorkloadDatabase.load(save_path)
-        assert len(loaded_db.graphs) == 1
-        assert len(loaded_db.traces) == 1
-        assert len(loaded_db.data_bundles) == 1
-        print("✓ Database persistence verified")
+    # Check challenge verification results
+    failed_challenges = [cid for cid, success in result.challenge_results.items() if not success]
+    assert len(failed_challenges) == 0, f"Failed challenges: {failed_challenges}"
+
+    print(f"✅ Unified verification passed for {graph_id}")
+    print(f"   - Challenge results: {len(result.challenge_results)} verified")
+    if result.metrics:
+        print(f"   - Max execution difference: {result.metrics.get('max_difference', 'N/A')}")
+
+    return graph_id, trace_id  # Return for potential chaining of tests

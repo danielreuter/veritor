@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from veritor.db.ir_store import IRFormat, IRRole, IRStore
 from veritor.db.models import (
     ChallengeRecord,
-    CheckpointRecord,
     DataBundle,
     DeviceTopology,
     Graph,
@@ -36,7 +35,7 @@ class WorkloadDatabase:
     Central database for workload data, accessible to both Prover and Verifier.
 
     This is the trusted store that contains all execution data, graphs, traces, etc.
-    Both the prover writes to it and the verifier reads from it.
+    The prover writes to it and the verifier reads from it.
 
     The actual computational graphs are stored as IR blobs in the IRStore.
     """
@@ -51,7 +50,6 @@ class WorkloadDatabase:
         self.data_bundles: Dict[str, DataBundle] = {}
         self.device_topology: Optional[DeviceTopology] = None
         self.challenges: List[ChallengeRecord] = []
-        self.checkpoints: List[CheckpointRecord] = []
 
         # Metadata about the database itself
         self.metadata: Dict[str, Any] = {
@@ -177,14 +175,34 @@ class WorkloadDatabase:
         """Get challenges associated with a trace"""
         return [c for c in self.challenges if c.trace_id == trace_id]
 
-    # Checkpoint records
-    def store_checkpoint(self, checkpoint: CheckpointRecord):
-        """Store a checkpoint record"""
-        self.checkpoints.append(checkpoint)
+    # Checkpoint operations (using DataBundle)
+    def store_checkpoint(self, graph_id: str, params: Dict[str, Any], step: Optional[int] = None, **metadata) -> str:
+        """Store a model checkpoint as a DataBundle."""
+        bundle = DataBundle.from_checkpoint(graph_id, params, step=step, **metadata)
+        return self.store_data_bundle(bundle)
 
-    def get_checkpoints_for_trace(self, trace_id: str) -> List[CheckpointRecord]:
-        """Get checkpoints associated with a trace"""
-        return [c for c in self.checkpoints if c.trace_id == trace_id]
+    def get_checkpoint(self, checkpoint_id: str) -> Optional[DataBundle]:
+        """Get a checkpoint bundle."""
+        bundle = self.get_data_bundle(checkpoint_id)
+        if bundle and bundle.bundle_type == "checkpoint":
+            return bundle
+        return None
+
+    def get_checkpoints_for_graph(self, graph_id: str) -> List[DataBundle]:
+        """Get all checkpoint bundles for a graph."""
+        return [
+            b for b in self.data_bundles.values()
+            if b.graph_id == graph_id and b.bundle_type == "checkpoint"
+        ]
+
+    def get_checkpoint_at_step(self, graph_id: str, step: int) -> Optional[DataBundle]:
+        """Get checkpoint at a specific training step."""
+        for bundle in self.data_bundles.values():
+            if (bundle.graph_id == graph_id and
+                bundle.bundle_type == "checkpoint" and
+                bundle.metadata.get("step") == step):
+                return bundle
+        return None
 
     # Persistence
     def save(self, path: str):
@@ -213,7 +231,6 @@ class WorkloadDatabase:
                     "num_traces": len(self.traces),
                     "num_data_bundles": len(self.data_bundles),
                     "num_challenges": len(self.challenges),
-                    "num_checkpoints": len(self.checkpoints),
                 },
                 f,
                 indent=2,
@@ -242,10 +259,6 @@ class WorkloadDatabase:
         # Save challenges
         with open(db_path / "challenges.pkl", "wb") as f:
             pickle.dump(self.challenges, f)
-
-        # Save checkpoints
-        with open(db_path / "checkpoints.pkl", "wb") as f:
-            pickle.dump(self.checkpoints, f)
 
         print(f"✓ Database saved to {db_path}")
 
@@ -297,10 +310,6 @@ class WorkloadDatabase:
         # Load challenges
         with open(db_path / "challenges.pkl", "rb") as f:
             db.challenges = pickle.load(f)
-
-        # Load checkpoints
-        with open(db_path / "checkpoints.pkl", "rb") as f:
-            db.checkpoints = pickle.load(f)
 
         print(f"  - {len(db.graphs)} graphs")
         print(f"  - {len(db.traces)} traces")

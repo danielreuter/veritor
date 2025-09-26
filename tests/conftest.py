@@ -77,12 +77,11 @@ def populated_db(temp_db):
         end_time=datetime.now(),
         events=[
             TraceEvent(
-                id="event_1",
-                type=EventType.KERNEL_LAUNCH,
                 timestamp=datetime.now().timestamp(),
+                event_type=EventType.KERNEL_LAUNCH,
                 device_id="device_0",
-                operation_name="test_op",
-                metadata={},
+                operation_id="test_op",
+                data={},
             )
         ],
         metadata={"test_trace": True},

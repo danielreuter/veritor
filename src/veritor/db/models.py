@@ -6,6 +6,7 @@ ML workload execution: Graphs, Traces, Data, and Device specifications.
 """
 
 import hashlib
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -28,17 +29,8 @@ class Graph:
     """
 
     id: str
-
-    # Reference to IR blob (actual computation)
     ir_blob_id: Optional[str] = None  # Points to actual IR in IRStore
-
-    # Metadata about this graph instance
     metadata: Dict[str, Any] = field(default_factory=dict)
-
-    # Legacy fields for compatibility (will be removed)
-    # These are now stored in the IR itself
-    inputs: List[str] = field(default_factory=list)  # For backward compat
-    outputs: List[str] = field(default_factory=list)  # For backward compat
 
 
 # -----------------------------------------------------------------------------
@@ -167,24 +159,31 @@ class TensorData:
 @dataclass
 class DataBundle:
     """
-    Collection of concrete data from an execution.
+    Universal storage for collections of tensors.
 
-    Can be bound to a graph for verification.
+    Can represent:
+    - Execution data (inputs/outputs/weights)
+    - Model checkpoints (weights only)
+    - Training data (inputs as features, outputs as labels)
+    - Gradient data (activations field)
     """
 
     id: str
     graph_id: str  # Graph this data is for
 
+    # Bundle type to distinguish different uses
+    bundle_type: str = "execution"  # "execution", "checkpoint", "training", "gradient"
+
     # Different categories of data
-    inputs: Dict[str, TensorData]  # edge_id -> data
-    outputs: Dict[str, TensorData]  # edge_id -> data
-    weights: Dict[str, TensorData]  # param_name -> data
-    activations: Dict[str, TensorData]  # edge_id -> data (optional, for challenges)
+    inputs: Dict[str, TensorData] = field(default_factory=dict)  # edge_id -> data
+    outputs: Dict[str, TensorData] = field(default_factory=dict)  # edge_id -> data
+    weights: Dict[str, TensorData] = field(default_factory=dict)  # param_name -> data
+    activations: Dict[str, TensorData] = field(default_factory=dict)  # edge_id -> data (gradients, LSH, etc.)
 
     # RNG states for reproducibility
     rng_seeds: Dict[str, int] = field(default_factory=dict)
 
-    # Metadata
+    # Metadata (can include step, loss, timestamp, etc.)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def get_all_tensors(self) -> Dict[str, TensorData]:
@@ -195,6 +194,43 @@ class DataBundle:
         all_tensors.update(self.weights)
         all_tensors.update(self.activations)
         return all_tensors
+
+    @classmethod
+    def from_checkpoint(cls, graph_id: str, params: Dict[str, jnp.ndarray],
+                       step: Optional[int] = None, **metadata) -> "DataBundle":
+        """Create a checkpoint bundle from model parameters."""
+        bundle_id = f"checkpoint_{uuid.uuid4().hex[:8]}"
+        if step is not None:
+            metadata["step"] = step
+            bundle_id = f"checkpoint_step_{step}_{uuid.uuid4().hex[:8]}"
+
+        return cls(
+            id=bundle_id,
+            graph_id=graph_id,
+            bundle_type="checkpoint",
+            weights={name: TensorData.from_array(arr, edge_id=name)
+                    for name, arr in params.items()},
+            metadata=metadata
+        )
+
+    @classmethod
+    def from_training_batch(cls, graph_id: str, features: jnp.ndarray,
+                           labels: jnp.ndarray, step: int, **metadata) -> "DataBundle":
+        """Create a training data bundle."""
+        return cls(
+            id=f"training_step_{step}_{uuid.uuid4().hex[:8]}",
+            graph_id=graph_id,
+            bundle_type="training",
+            inputs={"features": TensorData.from_array(features)},
+            outputs={"labels": TensorData.from_array(labels)},
+            metadata={"step": step, **metadata}
+        )
+
+    def to_checkpoint_params(self) -> Dict[str, jnp.ndarray]:
+        """Extract model parameters from a checkpoint bundle."""
+        if self.bundle_type != "checkpoint":
+            raise ValueError(f"Bundle type {self.bundle_type} is not a checkpoint")
+        return {name: tensor.to_array() for name, tensor in self.weights.items()}
 
 
 # -----------------------------------------------------------------------------
@@ -309,21 +345,4 @@ class ChallengeRecord:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
-class CheckpointRecord:
-    """Record of a training checkpoint for verification"""
-
-    id: str
-    step: int
-    timestamp: float
-
-    # Model state
-    model_params: Dict[str, TensorData]
-    optimizer_state: Optional[Dict[str, Any]] = None
-
-    # Training data commitments
-    batch_commitments: List[str] = field(default_factory=list)
-    gradient_hashes: List[str] = field(default_factory=list)
-
-    # Metadata
-    metadata: Dict[str, Any] = field(default_factory=dict)
+# CheckpointRecord removed - use DataBundle with bundle_type="checkpoint" instead
