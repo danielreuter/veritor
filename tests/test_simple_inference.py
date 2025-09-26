@@ -20,7 +20,6 @@ from datetime import datetime
 
 import jax
 import jax.numpy as jnp
-import pytest
 from jax import random
 
 from veritor.db.ir_store import IRFormat, IRRole
@@ -381,7 +380,9 @@ def test_simple_inference_with_real_stablehlo(workload_db):
     data_id = database.store_data_bundle(data_bundle)
 
     # CRITICAL: Verify that stored StableHLO matches execution
-    test_input = random.normal(random.PRNGKey(999), (config.batch_size, config.input_dim))
+    test_input = random.normal(
+        random.PRNGKey(999), (config.batch_size, config.input_dim)
+    )
 
     # Execute with the jitted function
     jitted_output = model.jitted_forward(test_input)
@@ -395,8 +396,9 @@ def test_simple_inference_with_real_stablehlo(workload_db):
     python_output = h
 
     # Check they match
-    assert jnp.allclose(jitted_output, python_output, rtol=1e-5), \
+    assert jnp.allclose(jitted_output, python_output, rtol=1e-5), (
         "CRITICAL: JIT output doesn't match Python execution!"
+    )
 
     # Check that static LSH was computed for each pass
     for pass_idx in range(config.n_forward_passes):
@@ -435,7 +437,7 @@ def test_simple_inference_with_real_stablehlo(workload_db):
         assert challenge.metadata.get("trace_id") == trace_id
 
     # === NEW: Unified Verification Engine ===
-    from veritor.verifier.engine import verify_single_execution, VerificationConfig
+    from veritor.verifier.engine import VerificationConfig, verify_single_execution
 
     # Configure verification
     verification_config = VerificationConfig(
@@ -450,7 +452,7 @@ def test_simple_inference_with_real_stablehlo(workload_db):
         database=database,
         graph_id=graph_id,
         trace_id=trace_id,
-        config=verification_config
+        config=verification_config,
     )
 
     # Verify the verification succeeded
@@ -461,12 +463,14 @@ def test_simple_inference_with_real_stablehlo(workload_db):
         assert result.execution_match, "JIT vs Python execution mismatch"
 
     # Check challenge verification results
-    failed_challenges = [cid for cid, success in result.challenge_results.items() if not success]
+    failed_challenges = [
+        cid for cid, success in result.challenge_results.items() if not success
+    ]
     assert len(failed_challenges) == 0, f"Failed challenges: {failed_challenges}"
 
     print(f"✅ Unified verification passed for {graph_id}")
     print(f"   - Challenge results: {len(result.challenge_results)} verified")
     if result.metrics:
-        print(f"   - Max execution difference: {result.metrics.get('max_difference', 'N/A')}")
-
-    return graph_id, trace_id  # Return for potential chaining of tests
+        print(
+            f"   - Max execution difference: {result.metrics.get('max_difference', 'N/A')}"
+        )

@@ -173,7 +173,7 @@ class WorkloadDatabase:
 
     def get_challenges_for_trace(self, trace_id: str) -> List[ChallengeRecord]:
         """Get challenges associated with a trace"""
-        return [c for c in self.challenges if c.trace_id == trace_id]
+        return [c for c in self.challenges if c.metadata.get('trace_id') == trace_id]
 
     # Checkpoint operations (using DataBundle)
     def store_checkpoint(self, graph_id: str, params: Dict[str, Any], step: Optional[int] = None, **metadata) -> str:
