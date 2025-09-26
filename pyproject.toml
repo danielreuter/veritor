@@ -7,7 +7,10 @@ authors = [
     { name = "danielreuter", email = "dreuter14@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "jax[metal]>=0.7.2",
+    "tensorboard>=2.20.0",
+]
 
 [build-system]
 requires = ["uv_build>=0.8.17,<0.9.0"]
