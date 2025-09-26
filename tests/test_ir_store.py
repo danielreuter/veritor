@@ -7,8 +7,8 @@ import tempfile
 import os
 from pathlib import Path
 
-from src.veritor.ir_store import IRStore, IRRole, IRFormat
-from src.veritor.api import WorkloadDatabase
+from src.veritor.db.ir_store import IRStore, IRRole, IRFormat
+from src.veritor.db.api import WorkloadDatabase
 
 
 class TestIRBlobStorage:
@@ -61,7 +61,8 @@ class TestSidecarMapping:
 
         assert retrieved is not None
         assert retrieved.blob_id == blob_id
-        assert retrieved.content == logical_ir.encode('utf-8')
+        # Content is normalized with trailing newline
+        assert retrieved.content == (logical_ir + '\n').encode('utf-8')
 
     def test_list_ir_roles(self):
         """Can list all IR roles for a graph"""
@@ -236,7 +237,9 @@ class TestWorkloadDatabaseIntegration:
 
         # Retrieve IR
         ir_content = db.get_graph_ir(graph_id, IRRole.LOGICAL)
-        assert ir_content == stablehlo.encode('utf-8')
+        # Content is normalized (whitespace trimmed per line, ending newline added)
+        normalized_stablehlo = '\n'.join(line.rstrip() for line in stablehlo.splitlines()) + '\n'
+        assert ir_content == normalized_stablehlo.encode('utf-8')
 
     def test_database_persistence(self, tmp_path):
         """WorkloadDatabase saves and loads IR store"""
@@ -257,6 +260,6 @@ class TestWorkloadDatabaseIntegration:
         # Load
         loaded_db = WorkloadDatabase.load(str(save_path))
 
-        # Verify IR preserved
+        # Verify IR preserved (with normalization)
         ir_content = loaded_db.get_graph_ir(graph_id, IRRole.LOGICAL)
-        assert ir_content == b"module @test { return }"
+        assert ir_content == b"module @test { return }\n"

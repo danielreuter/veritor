@@ -2,7 +2,7 @@
 Veritor: Workload verification for ML computations with IR store.
 """
 
-from .data_models import (
+from .db.models import (
     Graph,
     Trace, TraceEvent, EventType,
     DataBundle, TensorData,
@@ -10,16 +10,16 @@ from .data_models import (
     ChallengeRecord, CheckpointRecord
 )
 
-from .api import (
+from .db.api import (
     WorkloadDatabase,
-    QueryFilter,
-    GraphTransformer,
-    DataBinder, BoundGraph,
-    ExecutionEngine,
-    Verifier
+    QueryFilter
 )
 
-from .ir_store import (
+from .verifier.graph_transformer import GraphTransformer
+from .verifier.data_binder import DataBinder, BoundGraph
+from .verifier.runner import ExecutionEngine, Verifier
+
+from .db.ir_store import (
     IRStore,
     IRRole,
     IRFormat,
@@ -29,12 +29,12 @@ from .ir_store import (
 )
 
 # Production sampling and transformation modules
-from .sampling import (
+from .common.sampler import (
     ProductionSampler,
     SimpleTokenSampler
 )
 
-from .transformation import (
+from .verifier.ir_transformation import (
     rewrite_decode_to_teacher_forcing,
     extract_function,
     list_functions

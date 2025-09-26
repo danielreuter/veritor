@@ -6,6 +6,13 @@ import pytest
 import tempfile
 import shutil
 from pathlib import Path
+from contextlib import contextmanager
+from datetime import datetime
+import uuid
+
+from src.veritor.db.api import WorkloadDatabase
+from src.veritor.db.ir_store import IRStore, IRRole, IRFormat
+from src.veritor.db.models import Trace, TraceEvent, EventType
 
 
 @pytest.fixture
@@ -16,18 +23,72 @@ def temp_dir():
     shutil.rmtree(temp, ignore_errors=True)
 
 
+@contextmanager
+def temp_workload_db():
+    """Create a temporary WorkloadDatabase with auto-cleanup."""
+    db = WorkloadDatabase()
+    temp_dir = tempfile.mkdtemp(prefix="veritor_db_")
+
+    try:
+        yield db, Path(temp_dir)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 @pytest.fixture
 def ir_store():
     """Provide a fresh IRStore instance."""
-    from src.veritor.ir_store import IRStore
     return IRStore()
 
 
 @pytest.fixture
 def workload_db():
     """Provide a fresh WorkloadDatabase instance."""
-    from src.veritor.api import WorkloadDatabase
     return WorkloadDatabase()
+
+
+@pytest.fixture
+def temp_db():
+    """Provide a temporary database that auto-cleans."""
+    with temp_workload_db() as (db, path):
+        yield db, path
+
+
+@pytest.fixture
+def populated_db(temp_db):
+    """Provide a database pre-populated with test data."""
+    db, path = temp_db
+
+    # Add sample graph
+    graph_id = db.store_graph_with_ir(
+        f"test_model_{uuid.uuid4().hex[:8]}",
+        "module @test { func.func @main() { return } }",
+        IRRole.LOGICAL,
+        IRFormat.STABLEHLO,
+        metadata={'test_data': True}
+    )
+
+    # Add sample trace
+    trace = Trace(
+        id=f"trace_{uuid.uuid4().hex[:8]}",
+        graph_id=graph_id,
+        start_time=datetime.now(),
+        end_time=datetime.now(),
+        events=[
+            TraceEvent(
+                id="event_1",
+                type=EventType.KERNEL_LAUNCH,
+                timestamp=datetime.now().timestamp(),
+                device_id="device_0",
+                operation_name="test_op",
+                metadata={}
+            )
+        ],
+        metadata={'test_trace': True}
+    )
+    db.store_trace(trace)
+
+    return db, path
 
 
 @pytest.fixture

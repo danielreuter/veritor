@@ -6,11 +6,12 @@ including autoregressive decode to teacher-forcing conversion.
 """
 
 import re
-from typing import Optional, Tuple
+from typing import Optional
 
 # Check for optional MLIR Python bindings
 try:
     from mlir import ir as mlir_ir
+
     HAVE_MLIR = True
 except ImportError:
     mlir_ir = None
@@ -18,9 +19,7 @@ except ImportError:
 
 
 def rewrite_decode_to_teacher_forcing(
-    hlo_text: str,
-    func_name: str = "main",
-    teacher_arg_name: Optional[str] = None
+    hlo_text: str, func_name: str = "main", teacher_arg_name: Optional[str] = None
 ) -> str:
     """
     Transform an autoregressive decode function to teacher-forcing variant.
@@ -52,9 +51,7 @@ def rewrite_decode_to_teacher_forcing(
 
 
 def _rewrite_textually(
-    hlo_text: str,
-    func_name: str = "main",
-    teacher_arg_name: Optional[str] = None
+    hlo_text: str, func_name: str = "main", teacher_arg_name: Optional[str] = None
 ) -> str:
     """Textual rewriting implementation."""
 
@@ -75,7 +72,7 @@ def _rewrite_textually(
 
     # Create new function signature
     new_func_name = func_name + "_teacher_forcing"
-    arg_count = orig_args.count('%arg')
+    arg_count = orig_args.count("%arg")
     new_arg = teacher_arg_name or f"%arg{arg_count}"
     new_args = orig_args + f", {new_arg}: tensor<?xi32>"
 
@@ -90,7 +87,7 @@ def _rewrite_textually(
         r"func\.func (?:public )?@" + re.escape(func_name) + r"\(.*?\)\s*->\s*\(.*?\)",
         f"func.func {public_str}@{new_func_name}({new_args}) -> ({orig_rets})",
         new_func,
-        count=1
+        count=1,
     )
 
     # Find and modify the while loop's do block
@@ -100,12 +97,12 @@ def _rewrite_textually(
         raise RuntimeError("Could not find while loop 'do' block")
 
     do_body = do_match.group(2)
-    do_lines = do_body.split('\n')
+    do_lines = do_body.split("\n")
 
     # Find the return statement
     ret_line_idx = None
     for i, line in enumerate(do_lines):
-        if 'stablehlo.return' in line:
+        if "stablehlo.return" in line:
             ret_line_idx = i
             break
 
@@ -118,7 +115,7 @@ def _rewrite_textually(
         f"      %tf_idx = tensor.from_elements %iterArg_2 : tensor<1xi32>",
         f"      %tf_slice = stablehlo.dynamic_slice {new_arg}, %tf_idx, slice_sizes = [1] : "
         f"(tensor<?xi32>, tensor<1xi32>) -> tensor<1xi32>",
-        f"      %tf_token = stablehlo.reshape %tf_slice : (tensor<1xi32>) -> tensor<i32>"
+        f"      %tf_token = stablehlo.reshape %tf_slice : (tensor<1xi32>) -> tensor<i32>",
     ]
 
     # Modify return statement to use teacher token
@@ -127,25 +124,27 @@ def _rewrite_textually(
 
     if ret_match:
         indent = ret_match.group(1)
-        operands = ret_match.group(2).split(',')
+        operands = ret_match.group(2).split(",")
         types = ret_match.group(3)
 
         if len(operands) >= 4:
             # Replace the token operand (usually 4th in pattern: E, W, i, token, output)
             # Adjust index based on your specific while loop structure
             operands[3] = "%tf_token"
-            new_ret = indent + ', '.join(operands) + types
+            new_ret = indent + ", ".join(operands) + types
             do_lines[ret_line_idx] = new_ret
 
     # Insert new ops before return
     do_lines = do_lines[:ret_line_idx] + insert_ops + do_lines[ret_line_idx:]
 
     # Reconstruct the do block
-    new_do_body = '\n'.join(do_lines)
+    new_do_body = "\n".join(do_lines)
     new_func = (
-        new_func[:do_match.start()] +
-        do_match.group(1) + new_do_body + do_match.group(3) +
-        new_func[do_match.end():]
+        new_func[: do_match.start()]
+        + do_match.group(1)
+        + new_do_body
+        + do_match.group(3)
+        + new_func[do_match.end() :]
     )
 
     # Append the new function to the module
@@ -153,9 +152,7 @@ def _rewrite_textually(
 
 
 def _rewrite_with_mlir(
-    hlo_text: str,
-    func_name: str = "main",
-    teacher_arg_name: Optional[str] = None
+    hlo_text: str, func_name: str = "main", teacher_arg_name: Optional[str] = None
 ) -> str:
     """MLIR-based rewriting implementation (when available)."""
 
@@ -164,8 +161,7 @@ def _rewrite_with_mlir(
 
         # Find the target function
         func_ops = [
-            op for op in module.body.operations
-            if op.operation.name == "func.func"
+            op for op in module.body.operations if op.operation.name == "func.func"
         ]
 
         entry = None

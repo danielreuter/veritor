@@ -8,15 +8,16 @@ graph variants (logical, distributed, verification).
 
 import hashlib
 import json
+import pickle
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Set
 from enum import Enum
 from pathlib import Path
-import pickle
+from typing import Dict, List, Optional, Set, Tuple
 
 
 class IRFormat(Enum):
     """Supported IR formats"""
+
     STABLEHLO = "stablehlo"  # Logical graph
     HLO = "hlo"  # Distributed/partitioned graph
     STABLEHLO_TF = "stablehlo_tf"  # Teacher-forcing variant
@@ -25,6 +26,7 @@ class IRFormat(Enum):
 
 class IRRole(Enum):
     """Role of an IR in the computation pipeline"""
+
     LOGICAL = "logical"  # Pure computational semantics
     DISTRIBUTED = "distributed"  # With distribution annotations
     VERIFICATION = "verification"  # Transformed for verification
@@ -33,20 +35,22 @@ class IRRole(Enum):
 @dataclass
 class IRBlob:
     """Content-addressable IR blob"""
+
     blob_id: str  # SHA256 of normalized content
     content: bytes
     format: IRFormat
     metadata: Dict[str, any] = field(default_factory=dict)
 
     @classmethod
-    def from_content(cls, content: str | bytes, format: IRFormat,
-                     metadata: Optional[Dict] = None) -> 'IRBlob':
+    def from_content(
+        cls, content: str | bytes, format: IRFormat, metadata: Optional[Dict] = None
+    ) -> "IRBlob":
         """Create blob from content, computing stable ID"""
         # Normalize content for consistent hashing
         if isinstance(content, str):
             # Normalize whitespace for textual MLIR
             normalized = cls._normalize_mlir(content)
-            content_bytes = normalized.encode('utf-8')
+            content_bytes = normalized.encode("utf-8")
         else:
             content_bytes = content
 
@@ -57,7 +61,7 @@ class IRBlob:
             blob_id=blob_id,
             content=content_bytes,
             format=format,
-            metadata=metadata or {}
+            metadata=metadata or {},
         )
 
     @staticmethod
@@ -66,12 +70,13 @@ class IRBlob:
         # Remove trailing whitespace and normalize line endings
         lines = mlir_text.splitlines()
         normalized_lines = [line.rstrip() for line in lines]
-        return '\n'.join(normalized_lines) + '\n' if normalized_lines else ''
+        return "\n".join(normalized_lines) + "\n" if normalized_lines else ""
 
 
 @dataclass
 class GraphIRMapping:
     """Maps a graph_id to its IR blobs and roles"""
+
     graph_id: str
     ir_mappings: Dict[IRRole, str] = field(default_factory=dict)  # role -> blob_id
 
@@ -86,6 +91,7 @@ class GraphIRMapping:
 @dataclass
 class TransformationRecord:
     """Records a transformation from one graph to another"""
+
     source_graph_id: str
     target_graph_id: str
     transformation_type: str  # e.g., "partition", "teacher_forcing"
@@ -106,7 +112,9 @@ class IRStore:
     def __init__(self):
         # Core storage
         self.blobs: Dict[str, IRBlob] = {}  # blob_id -> IRBlob
-        self.graph_mappings: Dict[str, GraphIRMapping] = {}  # graph_id -> GraphIRMapping
+        self.graph_mappings: Dict[
+            str, GraphIRMapping
+        ] = {}  # graph_id -> GraphIRMapping
         self.transformations: List[TransformationRecord] = []
 
         # Indexes for efficient queries
@@ -114,8 +122,9 @@ class IRStore:
         self._lineage_index: Dict[str, List[str]] = {}  # graph_id -> [parent_ids]
 
     # R1: IR blob storage
-    def put_blob(self, content: str | bytes, format: IRFormat,
-                 metadata: Optional[Dict] = None) -> str:
+    def put_blob(
+        self, content: str | bytes, format: IRFormat, metadata: Optional[Dict] = None
+    ) -> str:
         """
         Store an IR blob, returning its content-addressable ID.
         Same content always produces same blob_id.
@@ -133,8 +142,14 @@ class IRStore:
         return self.blobs.get(blob_id)
 
     # R2: Sidecar mapping between graphs and IR roles
-    def attach_ir(self, graph_id: str, role: IRRole, content: str | bytes,
-                  format: IRFormat, metadata: Optional[Dict] = None) -> str:
+    def attach_ir(
+        self,
+        graph_id: str,
+        role: IRRole,
+        content: str | bytes,
+        format: IRFormat,
+        metadata: Optional[Dict] = None,
+    ) -> str:
         """
         Attach an IR to a graph with a specific role.
         Returns the blob_id of the stored IR.
@@ -178,8 +193,13 @@ class IRStore:
         return result
 
     # R3: Provenance / transformation chain
-    def link_derivation(self, source_graph_id: str, target_graph_id: str,
-                       transformation_type: str, metadata: Optional[Dict] = None):
+    def link_derivation(
+        self,
+        source_graph_id: str,
+        target_graph_id: str,
+        transformation_type: str,
+        metadata: Optional[Dict] = None,
+    ):
         """Record that target was derived from source via transformation"""
         import time
 
@@ -188,7 +208,7 @@ class IRStore:
             target_graph_id=target_graph_id,
             transformation_type=transformation_type,
             timestamp=time.time(),
-            metadata=metadata or {}
+            metadata=metadata or {},
         )
         self.transformations.append(record)
 
@@ -250,9 +270,12 @@ class IRStore:
         return list(related)
 
     # R4: Compatibility metadata
-    def set_precision_metadata(self, graph_id: str,
-                              intent_precision: Optional[str] = None,
-                              effective_precision: Optional[str] = None):
+    def set_precision_metadata(
+        self,
+        graph_id: str,
+        intent_precision: Optional[str] = None,
+        effective_precision: Optional[str] = None,
+    ):
         """Set precision metadata for a graph"""
         if graph_id not in self.graph_mappings:
             self.graph_mappings[graph_id] = GraphIRMapping(graph_id)
@@ -263,7 +286,9 @@ class IRStore:
         if effective_precision is not None:
             mapping.effective_precision = effective_precision
 
-    def get_precision_metadata(self, graph_id: str) -> Tuple[Optional[str], Optional[str]]:
+    def get_precision_metadata(
+        self, graph_id: str
+    ) -> Tuple[Optional[str], Optional[str]]:
         """Get (intent_precision, effective_precision) for a graph"""
         mapping = self.graph_mappings.get(graph_id)
         if not mapping:
@@ -283,44 +308,46 @@ class IRStore:
         blob_manifest = {}
         for blob_id, blob in self.blobs.items():
             blob_file = blobs_path / f"{blob_id}.blob"
-            with open(blob_file, 'wb') as f:
+            with open(blob_file, "wb") as f:
                 f.write(blob.content)
 
             # Store metadata and checksum in manifest
             blob_manifest[blob_id] = {
-                'format': blob.format.value,
-                'metadata': blob.metadata,
-                'checksum': hashlib.sha256(blob.content).hexdigest()
+                "format": blob.format.value,
+                "metadata": blob.metadata,
+                "checksum": hashlib.sha256(blob.content).hexdigest(),
             }
 
         # Save manifest with integrity info
-        with open(store_path / "blob_manifest.json", 'w') as f:
+        with open(store_path / "blob_manifest.json", "w") as f:
             json.dump(blob_manifest, f, indent=2)
 
         # Save mappings and transformations
         store_data = {
-            'graph_mappings': {
+            "graph_mappings": {
                 gid: {
-                    'ir_mappings': {role.value: bid for role, bid in gm.ir_mappings.items()},
-                    'intent_precision': gm.intent_precision,
-                    'effective_precision': gm.effective_precision,
-                    'metadata': gm.metadata
+                    "ir_mappings": {
+                        role.value: bid for role, bid in gm.ir_mappings.items()
+                    },
+                    "intent_precision": gm.intent_precision,
+                    "effective_precision": gm.effective_precision,
+                    "metadata": gm.metadata,
                 }
                 for gid, gm in self.graph_mappings.items()
             },
-            'transformations': [
+            "transformations": [
                 {
-                    'source_graph_id': t.source_graph_id,
-                    'target_graph_id': t.target_graph_id,
-                    'transformation_type': t.transformation_type,
-                    'timestamp': t.timestamp,
-                    'metadata': t.metadata
+                    "source_graph_id": t.source_graph_id,
+                    "target_graph_id": t.target_graph_id,
+                    "transformation_type": t.transformation_type,
+                    "timestamp": t.timestamp,
+                    "metadata": t.metadata,
                 }
                 for t in self.transformations
-            ]
+            ],
         }
 
-        with open(store_path / "store_data.pkl", 'wb') as f:
+        with open(store_path / "store_data.pkl", "wb") as f:
             pickle.dump(store_data, f)
 
         print(f"✓ IR store saved to {store_path}")
@@ -329,7 +356,7 @@ class IRStore:
         print(f"  - {len(self.transformations)} transformations")
 
     @classmethod
-    def load(cls, path: str) -> 'IRStore':
+    def load(cls, path: str) -> "IRStore":
         """Load IR store from disk with integrity verification"""
         store_path = Path(path)
         if not store_path.exists():
@@ -338,7 +365,7 @@ class IRStore:
         store = cls()
 
         # Load blob manifest
-        with open(store_path / "blob_manifest.json", 'r') as f:
+        with open(store_path / "blob_manifest.json", "r") as f:
             blob_manifest = json.load(f)
 
         # Load blobs with integrity check
@@ -346,12 +373,12 @@ class IRStore:
         for blob_id, manifest_entry in blob_manifest.items():
             blob_file = blobs_path / f"{blob_id}.blob"
 
-            with open(blob_file, 'rb') as f:
+            with open(blob_file, "rb") as f:
                 content = f.read()
 
             # Verify integrity
             actual_checksum = hashlib.sha256(content).hexdigest()
-            expected_checksum = manifest_entry['checksum']
+            expected_checksum = manifest_entry["checksum"]
 
             if actual_checksum != expected_checksum:
                 raise ValueError(f"Integrity check failed for blob {blob_id}")
@@ -360,23 +387,26 @@ class IRStore:
             blob = IRBlob(
                 blob_id=blob_id,
                 content=content,
-                format=IRFormat(manifest_entry['format']),
-                metadata=manifest_entry['metadata']
+                format=IRFormat(manifest_entry["format"]),
+                metadata=manifest_entry["metadata"],
             )
             store.blobs[blob_id] = blob
 
         # Load mappings and transformations
-        with open(store_path / "store_data.pkl", 'rb') as f:
+        with open(store_path / "store_data.pkl", "rb") as f:
             store_data = pickle.load(f)
 
         # Reconstruct graph mappings
-        for gid, mapping_data in store_data['graph_mappings'].items():
+        for gid, mapping_data in store_data["graph_mappings"].items():
             mapping = GraphIRMapping(
                 graph_id=gid,
-                ir_mappings={IRRole(role): bid for role, bid in mapping_data['ir_mappings'].items()},
-                intent_precision=mapping_data['intent_precision'],
-                effective_precision=mapping_data['effective_precision'],
-                metadata=mapping_data['metadata']
+                ir_mappings={
+                    IRRole(role): bid
+                    for role, bid in mapping_data["ir_mappings"].items()
+                },
+                intent_precision=mapping_data["intent_precision"],
+                effective_precision=mapping_data["effective_precision"],
+                metadata=mapping_data["metadata"],
             )
             store.graph_mappings[gid] = mapping
 
@@ -385,19 +415,19 @@ class IRStore:
                 store._role_index[role].add(gid)
 
         # Reconstruct transformations
-        for t_data in store_data['transformations']:
+        for t_data in store_data["transformations"]:
             transform = TransformationRecord(
-                source_graph_id=t_data['source_graph_id'],
-                target_graph_id=t_data['target_graph_id'],
-                transformation_type=t_data['transformation_type'],
-                timestamp=t_data['timestamp'],
-                metadata=t_data['metadata']
+                source_graph_id=t_data["source_graph_id"],
+                target_graph_id=t_data["target_graph_id"],
+                transformation_type=t_data["transformation_type"],
+                timestamp=t_data["timestamp"],
+                metadata=t_data["metadata"],
             )
             store.transformations.append(transform)
 
             # Rebuild lineage index
-            target = t_data['target_graph_id']
-            source = t_data['source_graph_id']
+            target = t_data["target_graph_id"]
+            source = t_data["source_graph_id"]
             if target not in store._lineage_index:
                 store._lineage_index[target] = []
             store._lineage_index[target].append(source)
@@ -418,9 +448,7 @@ class IRStore:
 
         # Put the same content again
         new_blob_id = self.put_blob(
-            original_blob.content,
-            original_blob.format,
-            original_blob.metadata
+            original_blob.content, original_blob.format, original_blob.metadata
         )
 
         # Should get same ID (content-addressable)

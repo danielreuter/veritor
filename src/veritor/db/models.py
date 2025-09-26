@@ -5,18 +5,18 @@ This module defines the fundamental data structures for capturing and verifying
 ML workload execution: Graphs, Traces, Data, and Device specifications.
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional, Union, Tuple
-from enum import Enum
-import jax.numpy as jnp
-from datetime import datetime
 import hashlib
-import json
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+import jax.numpy as jnp
 
 # -----------------------------------------------------------------------------
 # Graph Models
 # -----------------------------------------------------------------------------
+
 
 @dataclass
 class Graph:
@@ -26,6 +26,7 @@ class Graph:
     The actual computation is stored in the IRStore as StableHLO/HLO.
     This class just provides metadata and references.
     """
+
     id: str
 
     # Reference to IR blob (actual computation)
@@ -44,8 +45,10 @@ class Graph:
 # Trace Models
 # -----------------------------------------------------------------------------
 
+
 class EventType(Enum):
     """Type of runtime event"""
+
     KERNEL_LAUNCH = "kernel_launch"
     MEMORY_TRANSFER = "memory_transfer"
     COLLECTIVE_OP = "collective_op"
@@ -58,6 +61,7 @@ class EventType(Enum):
 @dataclass
 class TraceEvent:
     """A single event in an execution trace"""
+
     timestamp: float  # Unix timestamp with microsecond precision
     event_type: EventType
     device_id: str
@@ -86,6 +90,7 @@ class Trace:
     Always references a distributed graph because device information
     is necessary to interpret the events.
     """
+
     id: str
     graph_id: str  # Must be a distributed graph
     start_time: datetime
@@ -108,17 +113,18 @@ class Trace:
 
     def get_events_in_window(self, start: float, end: float) -> List[TraceEvent]:
         """Get events within a time window"""
-        return [e for e in self.events
-                if start <= e.timestamp <= end]
+        return [e for e in self.events if start <= e.timestamp <= end]
 
 
 # -----------------------------------------------------------------------------
 # Data Models
 # -----------------------------------------------------------------------------
 
+
 @dataclass
 class TensorData:
     """Concrete tensor data"""
+
     id: str
     shape: Tuple[int, ...]
     dtype: str
@@ -131,7 +137,9 @@ class TensorData:
     device_id: Optional[str] = None
 
     @classmethod
-    def from_array(cls, array: jnp.ndarray, edge_id: Optional[str] = None) -> 'TensorData':
+    def from_array(
+        cls, array: jnp.ndarray, edge_id: Optional[str] = None
+    ) -> "TensorData":
         """Create TensorData from JAX array"""
         data_bytes = array.tobytes()
         data_hash = hashlib.sha256(data_bytes).hexdigest()
@@ -141,7 +149,7 @@ class TensorData:
             dtype=str(array.dtype),
             data=array,
             hash=data_hash,
-            edge_id=edge_id
+            edge_id=edge_id,
         )
 
     def to_array(self) -> jnp.ndarray:
@@ -150,7 +158,10 @@ class TensorData:
             return self.data
         else:
             import numpy as np
-            return jnp.array(np.frombuffer(self.data, dtype=self.dtype).reshape(self.shape))
+
+            return jnp.array(
+                np.frombuffer(self.data, dtype=self.dtype).reshape(self.shape)
+            )
 
 
 @dataclass
@@ -160,6 +171,7 @@ class DataBundle:
 
     Can be bound to a graph for verification.
     """
+
     id: str
     graph_id: str  # Graph this data is for
 
@@ -189,8 +201,10 @@ class DataBundle:
 # Device Models
 # -----------------------------------------------------------------------------
 
+
 class DeviceType(Enum):
     """Type of compute device"""
+
     CPU = "cpu"
     GPU = "gpu"
     TPU = "tpu"
@@ -200,6 +214,7 @@ class DeviceType(Enum):
 @dataclass
 class DeviceSpec:
     """Specification of a single compute device"""
+
     id: str
     device_type: DeviceType
 
@@ -219,6 +234,7 @@ class DeviceSpec:
 @dataclass
 class NetworkLink:
     """Network connection between devices"""
+
     source_device_id: str
     target_device_id: str
     bandwidth_bytes_per_sec: float
@@ -235,6 +251,7 @@ class DeviceTopology:
 
     Tracks devices and their interconnections.
     """
+
     devices: Dict[str, DeviceSpec]  # device_id -> DeviceSpec
     network_links: List[NetworkLink]
 
@@ -258,11 +275,9 @@ class DeviceTopology:
     def get_link(self, source: str, target: str) -> Optional[NetworkLink]:
         """Get network link between two devices"""
         for link in self.network_links:
-            if (link.source_device_id == source and
-                link.target_device_id == target):
+            if link.source_device_id == source and link.target_device_id == target:
                 return link
-            if (link.source_device_id == target and
-                link.target_device_id == source):
+            if link.source_device_id == target and link.target_device_id == source:
                 return link
         return None
 
@@ -271,9 +286,11 @@ class DeviceTopology:
 # Challenge Models (for verification protocols)
 # -----------------------------------------------------------------------------
 
+
 @dataclass
 class ChallengeRecord:
     """Record of a verification challenge"""
+
     id: str
     challenge_type: str  # e.g., "memory_spot_check", "activation_lsh"
     timestamp: float
@@ -295,6 +312,7 @@ class ChallengeRecord:
 @dataclass
 class CheckpointRecord:
     """Record of a training checkpoint for verification"""
+
     id: str
     step: int
     timestamp: float

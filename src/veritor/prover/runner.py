@@ -5,30 +5,34 @@ This module implements the prover that executes computations and produces
 standardized proof bundles containing graphs, traces, and data.
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional, Tuple
 import tempfile
-from datetime import datetime
 import uuid
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Dict, List, Tuple
 
 import jax
 import jax.numpy as jnp
+import jax.profiler
 from jax import random
 from jax.experimental import io_callback
-import jax.profiler
 
-from .data_models import (
+from ..db.api import WorkloadDatabase
+from ..db.models import (
+    ChallengeRecord,
+    DataBundle,
+    EventType,
     Graph,
-    Trace, TraceEvent, EventType,
-    DataBundle, TensorData,
-    ChallengeRecord
+    TensorData,
+    Trace,
+    TraceEvent,
 )
-from .api import WorkloadDatabase
 
 
 @dataclass
 class ProverConfig:
     """Configuration for the prover"""
+
     enable_profiling: bool = True
     enable_challenges: bool = True
     challenge_probability: float = 0.3
@@ -52,8 +56,14 @@ class HookSystem:
         op_id = f"{step}_{layer}_{batch_idx}"
         return self.challenge_schedule.get(op_id, False)
 
-    def challenge_hook(self, state: jnp.ndarray, step: int, layer: int,
-                      batch_idx: int, projection_seed: int):
+    def challenge_hook(
+        self,
+        state: jnp.ndarray,
+        step: int,
+        layer: int,
+        batch_idx: int,
+        projection_seed: int,
+    ):
         """Hook called during forward pass to record challenges"""
         # Compute the projection
         key = random.PRNGKey(projection_seed)
@@ -71,11 +81,7 @@ class HookSystem:
             projection_dim=self.config.projection_dim,
             target_operation_id=f"layer_{layer}_step_{step}",
             response_value=projection,
-            metadata={
-                'step': step,
-                'layer': layer,
-                'batch_idx': batch_idx
-            }
+            metadata={"step": step, "layer": layer, "batch_idx": batch_idx},
         )
         self.recorded_challenges.append(challenge)
 
@@ -114,25 +120,26 @@ class ModelExecutor:
         # For now, returning a simple Graph reference
         return Graph(
             id=f"model_graph_{uuid.uuid4().hex[:8]}",
-            metadata={
-                'model_type': 'feedforward',
-                'n_layers': n_layers
-            }
+            metadata={"model_type": "feedforward", "n_layers": n_layers},
         )
 
-    def execute_with_trace(self, x: jnp.ndarray, step: int, batch_idx: int) -> Tuple[jnp.ndarray, List[TraceEvent]]:
+    def execute_with_trace(
+        self, x: jnp.ndarray, step: int, batch_idx: int
+    ) -> Tuple[jnp.ndarray, List[TraceEvent]]:
         """Execute model and capture trace events"""
         events = []
         start_time = datetime.now().timestamp()
 
         # Record execution start
-        events.append(TraceEvent(
-            timestamp=start_time,
-            event_type=EventType.KERNEL_LAUNCH,
-            device_id="device_0",
-            operation_id=f"exec_S{step}_B{batch_idx}",
-            data={'step': step, 'batch_idx': batch_idx}
-        ))
+        events.append(
+            TraceEvent(
+                timestamp=start_time,
+                event_type=EventType.KERNEL_LAUNCH,
+                device_id="device_0",
+                operation_id=f"exec_S{step}_B{batch_idx}",
+                data={"step": step, "batch_idx": batch_idx},
+            )
+        )
 
         # Execute through layers with hooks
         for layer_idx, (w, b) in enumerate(self.model.hidden_weights):
@@ -141,13 +148,15 @@ class ModelExecutor:
             x = jax.nn.relu(x)
 
             # Record layer execution
-            events.append(TraceEvent(
-                timestamp=datetime.now().timestamp(),
-                event_type=EventType.KERNEL_LAUNCH,
-                device_id="device_0",
-                operation_id=f"layer_{layer_idx}",
-                data={'layer': layer_idx, 'step': step}
-            ))
+            events.append(
+                TraceEvent(
+                    timestamp=datetime.now().timestamp(),
+                    event_type=EventType.KERNEL_LAUNCH,
+                    device_id="device_0",
+                    operation_id=f"layer_{layer_idx}",
+                    data={"layer": layer_idx, "step": step},
+                )
+            )
 
             # Check if we should challenge this layer
             if self.hook_system.should_challenge(step, layer_idx, batch_idx):
@@ -162,16 +171,18 @@ class ModelExecutor:
                 x = io_callback(hook_wrapper, x, x)
 
                 # Record challenge event
-                events.append(TraceEvent(
-                    timestamp=datetime.now().timestamp(),
-                    event_type=EventType.CHALLENGE,
-                    device_id="device_0",
-                    operation_id=f"layer_{layer_idx}",
-                    challenge_data={
-                        'type': 'activation_lsh',
-                        'seed': projection_seed
-                    }
-                ))
+                events.append(
+                    TraceEvent(
+                        timestamp=datetime.now().timestamp(),
+                        event_type=EventType.CHALLENGE,
+                        device_id="device_0",
+                        operation_id=f"layer_{layer_idx}",
+                        challenge_data={
+                            "type": "activation_lsh",
+                            "seed": projection_seed,
+                        },
+                    )
+                )
 
         # Output layer
         x = jnp.matmul(x, self.model.output_weight) + self.model.output_bias
@@ -198,21 +209,22 @@ class Prover:
         """
         batch_size = input_data.shape[0]
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Prover running")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         # Generate challenge schedule
         schedule = self._generate_schedule(
             n_steps, self.model.n_layers, batch_size, self.config.challenge_probability
         )
-        print(f"Challenge schedule: {len([v for v in schedule.values() if v])} challenges")
+        print(
+            f"Challenge schedule: {len([v for v in schedule.values() if v])} challenges"
+        )
         self.executor.hook_system.set_challenge_schedule(schedule)
 
         # Build computational graph
         graph = self.executor.build_graph(
-            input_shape=input_data[0].shape,
-            n_layers=self.model.n_layers
+            input_shape=input_data[0].shape, n_layers=self.model.n_layers
         )
         graph_id = self.database.store_graph(graph)
 
@@ -238,7 +250,9 @@ class Prover:
                     input_tensors[input_id] = TensorData.from_array(x)
 
                     # Execute and capture trace
-                    output, events = self.executor.execute_with_trace(x, step, batch_idx)
+                    output, events = self.executor.execute_with_trace(
+                        x, step, batch_idx
+                    )
                     all_events.extend(events)
 
                     # Store output
@@ -259,10 +273,10 @@ class Prover:
             end_time=trace_end,
             events=all_events,
             metadata={
-                'n_steps': n_steps,
-                'batch_size': batch_size,
-                'profile_dir': profile_dir
-            }
+                "n_steps": n_steps,
+                "batch_size": batch_size,
+                "profile_dir": profile_dir,
+            },
         )
         trace_id = self.database.store_trace(trace)
 
@@ -276,10 +290,12 @@ class Prover:
             graph_id=graph_id,
             inputs=input_tensors,
             outputs=output_tensors,
-            weights={f"weight_{i}": TensorData.from_array(w)
-                    for i, (w, _) in enumerate(self.model.hidden_weights)},
+            weights={
+                f"weight_{i}": TensorData.from_array(w)
+                for i, (w, _) in enumerate(self.model.hidden_weights)
+            },
             activations=activation_tensors,
-            metadata={'trace_id': trace_id}
+            metadata={"trace_id": trace_id},
         )
         data_id = self.database.store_data_bundle(data_bundle)
 
@@ -288,19 +304,18 @@ class Prover:
         print(f"  Trace ID: {trace_id}")
         print(f"  Data ID: {data_id}")
         print(f"  Total events: {len(all_events)}")
-        print(f"  Total challenges: {len(self.executor.hook_system.recorded_challenges)}")
+        print(
+            f"  Total challenges: {len(self.executor.hook_system.recorded_challenges)}"
+        )
 
         if self.config.enable_profiling:
             print(f"  Profile saved to: {profile_dir}")
 
-        return {
-            'graph_id': graph_id,
-            'trace_id': trace_id,
-            'data_id': data_id
-        }
+        return {"graph_id": graph_id, "trace_id": trace_id, "data_id": data_id}
 
-    def _generate_schedule(self, n_steps: int, n_layers: int,
-                          batch_size: int, challenge_prob: float) -> Dict[str, bool]:
+    def _generate_schedule(
+        self, n_steps: int, n_layers: int, batch_size: int, challenge_prob: float
+    ) -> Dict[str, bool]:
         """Generate deterministic challenge schedule"""
         key = random.PRNGKey(42)
         schedule = {}

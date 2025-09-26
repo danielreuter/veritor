@@ -6,12 +6,13 @@ Top-k and top-p filtering are implemented without JAX tracing issues.
 """
 
 from __future__ import annotations
-from typing import Optional, Tuple
+
 import numpy as np
 
 try:
     import jax
     import jax.numpy as jnp
+
     HAS_JAX = True
 except ImportError:
     jax = None
@@ -69,7 +70,7 @@ class ProductionSampler:
         # Sort logits to find threshold
         sorted_logits = jnp.sort(logits, axis=-1)
         # Get the (V-k)th value as threshold
-        threshold = sorted_logits[..., -(k+1)]
+        threshold = sorted_logits[..., -(k + 1)]
         # Keep values > threshold
         mask = logits > threshold[..., None]
 
@@ -80,7 +81,7 @@ class ProductionSampler:
         logits: jnp.ndarray,
         temperature: float = 1.0,
         seed: int = 42,
-        position: int = 0
+        position: int = 0,
     ) -> jnp.ndarray:
         """
         Simple sampling without complex features.
@@ -119,7 +120,7 @@ class ProductionSampler:
         temperature: float = 1.0,
         top_k: int = -1,
         seed: int = 42,
-        position: int = 0
+        position: int = 0,
     ) -> jnp.ndarray:
         """
         Sample with top-k filtering.
@@ -160,16 +161,18 @@ def create_production_decode(vocab_size: int = 32, hidden_dim: int = 16):
     # Simple model parameters
     key = jax.random.PRNGKey(42)
     E = jax.random.normal(key, (vocab_size, hidden_dim), dtype=jnp.float32) * 0.1
-    W = jax.random.normal(
-        jax.random.fold_in(key, 1),
-        (hidden_dim, vocab_size),
-        dtype=jnp.float32
-    ) * 0.1
+    W = (
+        jax.random.normal(
+            jax.random.fold_in(key, 1), (hidden_dim, vocab_size), dtype=jnp.float32
+        )
+        * 0.1
+    )
 
     sampler = ProductionSampler(enable_x64=False)
 
     def decode_greedy(init_token, embedding, projection, steps=5):
         """Greedy decode (argmax)."""
+
         def body(token, _):
             logits = embedding[token] @ projection
             next_token = jnp.argmax(logits).astype(jnp.int32)
@@ -180,6 +183,7 @@ def create_production_decode(vocab_size: int = 32, hidden_dim: int = 16):
 
     def decode_sampled(init_token, embedding, projection, temperature, seed, steps=5):
         """Decode with sampling."""
+
         def body(carry, pos):
             token = carry
             logits = embedding[token] @ projection
@@ -195,7 +199,7 @@ def create_production_decode(vocab_size: int = 32, hidden_dim: int = 16):
         "greedy": decode_greedy,
         "sampled": decode_sampled,
         "params": (E, W),
-        "sampler": sampler
+        "sampler": sampler,
     }
 
 
