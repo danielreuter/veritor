@@ -2,17 +2,18 @@
 Shared pytest fixtures and configuration.
 """
 
-import pytest
-import tempfile
 import shutil
-from pathlib import Path
+import tempfile
+import uuid
 from contextlib import contextmanager
 from datetime import datetime
-import uuid
+from pathlib import Path
 
-from src.veritor.db.api import WorkloadDatabase
-from src.veritor.db.ir_store import IRStore, IRRole, IRFormat
-from src.veritor.db.models import Trace, TraceEvent, EventType
+import pytest
+
+from veritor.db.api import WorkloadDatabase
+from veritor.db.ir_store import IRFormat, IRRole, IRStore
+from veritor.db.models import EventType, Trace, TraceEvent
 
 
 @pytest.fixture
@@ -65,7 +66,7 @@ def populated_db(temp_db):
         "module @test { func.func @main() { return } }",
         IRRole.LOGICAL,
         IRFormat.STABLEHLO,
-        metadata={'test_data': True}
+        metadata={"test_data": True},
     )
 
     # Add sample trace
@@ -81,10 +82,10 @@ def populated_db(temp_db):
                 timestamp=datetime.now().timestamp(),
                 device_id="device_0",
                 operation_name="test_op",
-                metadata={}
+                metadata={},
             )
         ],
-        metadata={'test_trace': True}
+        metadata={"test_trace": True},
     )
     db.store_trace(trace)
 

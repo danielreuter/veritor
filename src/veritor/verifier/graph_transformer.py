@@ -7,7 +7,7 @@ for verification purposes.
 
 from typing import List
 
-from ..db.models import Graph
+from veritor.db.models import Graph
 
 
 class GraphTransformer:

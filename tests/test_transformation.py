@@ -3,14 +3,12 @@ Tests for StableHLO transformation utilities.
 """
 
 import pytest
-import re
 
-from src.veritor.verifier.ir_transformation import (
-    rewrite_decode_to_teacher_forcing,
+from veritor.verifier.ir_transformation import (
     extract_function,
-    list_functions
+    list_functions,
+    rewrite_decode_to_teacher_forcing,
 )
-
 
 # Sample StableHLO for testing
 SAMPLE_HLO = """
@@ -110,9 +108,7 @@ class TestTransformation:
         """Test transformation with custom teacher argument name."""
         try:
             transformed = rewrite_decode_to_teacher_forcing(
-                SAMPLE_HLO,
-                "main",
-                teacher_arg_name="%teacher_tokens"
+                SAMPLE_HLO, "main", teacher_arg_name="%teacher_tokens"
             )
 
             # Should use the custom name in dynamic_slice
@@ -132,7 +128,7 @@ class TestTransformation:
             transformed = rewrite_decode_to_teacher_forcing(SAMPLE_HLO, "main")
 
             # Extract the new function
-            lines = transformed.split('\n')
+            lines = transformed.split("\n")
             in_teacher_func = False
             teacher_func_lines = []
 
@@ -144,7 +140,7 @@ class TestTransformation:
                     if line.strip() == "}":
                         break
 
-            teacher_func_text = '\n'.join(teacher_func_lines)
+            teacher_func_text = "\n".join(teacher_func_lines)
 
             # Check structure
             assert "stablehlo.while" in teacher_func_text

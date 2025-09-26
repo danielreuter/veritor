@@ -2,19 +2,21 @@
 Tests for deterministic sampling utilities.
 """
 
-import pytest
 import numpy as np
+import pytest
 
 try:
     import jax
     import jax.numpy as jnp
+
     HAS_JAX = True
 except ImportError:
     jax = None
     jnp = None
     HAS_JAX = False
 
-from src.veritor.common.sampler import ProductionSampler as DeterministicSampler, SimpleTokenSampler as SimpleSampler
+from veritor.common.sampler import ProductionSampler as DeterministicSampler
+from veritor.common.sampler import SimpleTokenSampler as SimpleSampler
 
 
 class TestSimpleSampler:
@@ -144,10 +146,7 @@ class TestDeterministicSampler:
     def test_batch_sampling(self, sampler):
         """Test sampling with batched logits."""
         # Batch of 2 sequences
-        logits = jnp.array([
-            [1.0, 2.0, 3.0],
-            [3.0, 2.0, 1.0]
-        ])
+        logits = jnp.array([[1.0, 2.0, 3.0], [3.0, 2.0, 1.0]])
 
         # Sample from each
         idx = sampler.sample_simple(logits, temperature=1.0, seed=42, position=0)
@@ -161,7 +160,9 @@ class TestDeterministicSampler:
         logits = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0])
 
         # Sample with top-k
-        idx = sampler.sample_with_top_k(logits, top_k=2, temperature=1.0, seed=42, position=0)
+        idx = sampler.sample_with_top_k(
+            logits, top_k=2, temperature=1.0, seed=42, position=0
+        )
 
         # Should be from top-k indices
         assert 0 <= idx < len(logits)

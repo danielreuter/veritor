@@ -11,8 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .ir_store import IRFormat, IRRole, IRStore
-from .models import (
+from veritor.db.ir_store import IRFormat, IRRole, IRStore
+from veritor.db.models import (
     ChallengeRecord,
     CheckpointRecord,
     DataBundle,

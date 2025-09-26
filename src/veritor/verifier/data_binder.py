@@ -8,7 +8,7 @@ for execution and verification.
 from dataclasses import dataclass, field
 from typing import Dict, List
 
-from ..db.models import DataBundle, Graph, TensorData
+from veritor.db.models import DataBundle, Graph, TensorData
 
 
 @dataclass

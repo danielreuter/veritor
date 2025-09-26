@@ -187,7 +187,7 @@ class Verifier:
         # Get IR text from graph metadata or IR store
         ir_text = graph.metadata.get("ir_text")
         if not ir_text and graph.ir_blob_id:
-            from ..db import IRRole
+            from veritor.db.ir_store import IRRole
 
             ir_text = self.database.get_graph_ir(graph.id, IRRole.LOGICAL)
             if ir_text:
@@ -235,7 +235,7 @@ class Verifier:
         if not trace:
             return {"error": "Trace not found"}
 
-        from ..db import EventType
+        from veritor.db.models import EventType
 
         challenges = [e for e in trace.events if e.event_type == EventType.CHALLENGE]
 

@@ -3,12 +3,9 @@ Test the IR store functionality with pytest.
 """
 
 import pytest
-import tempfile
-import os
-from pathlib import Path
 
-from src.veritor.db.ir_store import IRStore, IRRole, IRFormat
-from src.veritor.db.api import WorkloadDatabase
+from veritor.db.api import WorkloadDatabase
+from veritor.db.ir_store import IRFormat, IRRole, IRStore
 
 
 class TestIRBlobStorage:
@@ -56,13 +53,15 @@ class TestSidecarMapping:
         graph_id = "model_v1"
         logical_ir = "module @logical { return }"
 
-        blob_id = store.attach_ir(graph_id, IRRole.LOGICAL, logical_ir, IRFormat.STABLEHLO)
+        blob_id = store.attach_ir(
+            graph_id, IRRole.LOGICAL, logical_ir, IRFormat.STABLEHLO
+        )
         retrieved = store.get_ir(graph_id, IRRole.LOGICAL)
 
         assert retrieved is not None
         assert retrieved.blob_id == blob_id
         # Content is normalized with trailing newline
-        assert retrieved.content == (logical_ir + '\n').encode('utf-8')
+        assert retrieved.content == (logical_ir + "\n").encode("utf-8")
 
     def test_list_ir_roles(self):
         """Can list all IR roles for a graph"""
@@ -130,9 +129,7 @@ class TestCompatibilityMetadata:
 
         graph_id = "mixed_precision_model"
         store.set_precision_metadata(
-            graph_id,
-            intent_precision="fp32",
-            effective_precision="mixed"
+            graph_id, intent_precision="fp32", effective_precision="mixed"
         )
 
         intent, effective = store.get_precision_metadata(graph_id)
@@ -151,7 +148,9 @@ class TestPersistence:
         # Add data
         ir_content = "module @test { return }"
         graph_id = "test_graph"
-        blob_id = store.attach_ir(graph_id, IRRole.LOGICAL, ir_content, IRFormat.STABLEHLO)
+        blob_id = store.attach_ir(
+            graph_id, IRRole.LOGICAL, ir_content, IRFormat.STABLEHLO
+        )
         store.set_precision_metadata(graph_id, intent_precision="fp32")
 
         # Save
@@ -182,8 +181,8 @@ class TestPersistence:
 
         # Corrupt a blob file
         blob_file = save_path / "blobs" / f"{blob_id}.blob"
-        with open(blob_file, 'ab') as f:
-            f.write(b'CORRUPTED')
+        with open(blob_file, "ab") as f:
+            f.write(b"CORRUPTED")
 
         # Should raise error on load
         with pytest.raises(ValueError, match="Integrity check failed"):
@@ -232,14 +231,16 @@ class TestWorkloadDatabaseIntegration:
             stablehlo,
             IRRole.LOGICAL,
             IRFormat.STABLEHLO,
-            metadata={'version': 1}
+            metadata={"version": 1},
         )
 
         # Retrieve IR
         ir_content = db.get_graph_ir(graph_id, IRRole.LOGICAL)
         # Content is normalized (whitespace trimmed per line, ending newline added)
-        normalized_stablehlo = '\n'.join(line.rstrip() for line in stablehlo.splitlines()) + '\n'
-        assert ir_content == normalized_stablehlo.encode('utf-8')
+        normalized_stablehlo = (
+            "\n".join(line.rstrip() for line in stablehlo.splitlines()) + "\n"
+        )
+        assert ir_content == normalized_stablehlo.encode("utf-8")
 
     def test_database_persistence(self, tmp_path):
         """WorkloadDatabase saves and loads IR store"""
@@ -247,10 +248,7 @@ class TestWorkloadDatabaseIntegration:
 
         # Add graph with IR
         graph_id = db.store_graph_with_ir(
-            "model_v1",
-            "module @test { return }",
-            IRRole.LOGICAL,
-            IRFormat.STABLEHLO
+            "model_v1", "module @test { return }", IRRole.LOGICAL, IRFormat.STABLEHLO
         )
 
         # Save

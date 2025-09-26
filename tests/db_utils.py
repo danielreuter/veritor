@@ -5,13 +5,13 @@ Provides helper functions for managing WorkloadDatabase lifecycle
 in tests and experiments.
 """
 
-from contextlib import contextmanager
-import tempfile
 import shutil
-from pathlib import Path
-from typing import Optional, Tuple
-from datetime import datetime
+import tempfile
 import uuid
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
 
 
 @contextmanager
@@ -25,7 +25,7 @@ def temp_workload_db():
             db.save(temp_path / "checkpoint")
         # Auto-cleanup on exit
     """
-    from src.veritor.db.api import WorkloadDatabase
+    from veritor.db.api import WorkloadDatabase
 
     db = WorkloadDatabase()
     temp_dir = tempfile.mkdtemp(prefix="veritor_db_")
@@ -46,7 +46,7 @@ class ExperimentHarness:
 
     def get_or_create_db(self):
         """Load existing or create new database."""
-        from src.veritor.db.api import WorkloadDatabase
+        from veritor.db.api import WorkloadDatabase
 
         if self.db_path.exists():
             print(f"Loading existing database from {self.db_path}")
@@ -71,8 +71,8 @@ def create_sample_graph_and_trace(db, graph_id: Optional[str] = None):
 
     Returns: (graph_id, trace_id)
     """
-    from src.veritor.db.ir_store import IRRole, IRFormat
-    from src.veritor.db.models import Trace, TraceEvent, EventType
+    from veritor.db.ir_store import IRFormat, IRRole
+    from veritor.db.models import EventType, Trace, TraceEvent
 
     if graph_id is None:
         graph_id = f"test_model_{uuid.uuid4().hex[:8]}"
@@ -83,7 +83,7 @@ def create_sample_graph_and_trace(db, graph_id: Optional[str] = None):
         "module @test { func.func @main() { return } }",
         IRRole.LOGICAL,
         IRFormat.STABLEHLO,
-        metadata={'created_at': datetime.now().isoformat()}
+        metadata={"created_at": datetime.now().isoformat()},
     )
 
     # Create and store trace
@@ -99,10 +99,10 @@ def create_sample_graph_and_trace(db, graph_id: Optional[str] = None):
                 timestamp=datetime.now().timestamp(),
                 device_id="device_0",
                 operation_name="test_op",
-                metadata={}
+                metadata={},
             )
         ],
-        metadata={'test_trace': True}
+        metadata={"test_trace": True},
     )
     trace_id = db.store_trace(trace)
 
@@ -117,7 +117,7 @@ class DatabaseSandbox:
     """
 
     def __init__(self, base_db=None):
-        from src.veritor.db.api import WorkloadDatabase
+        from veritor.db.api import WorkloadDatabase
 
         self.base_db = base_db
         self.sandbox_db = WorkloadDatabase()
@@ -147,7 +147,7 @@ class DatabaseSandbox:
 
     def rollback(self):
         """Discard sandbox changes."""
-        from src.veritor.db.api import WorkloadDatabase
+        from veritor.db.api import WorkloadDatabase
 
         self.sandbox_db = WorkloadDatabase()
         if self.base_db:
@@ -171,7 +171,7 @@ def inspect_database(db_path: str):
     Usage:
         python -c "from tests.db_utils import inspect_database; inspect_database('path/to/db')"
     """
-    from src.veritor.db.api import WorkloadDatabase
+    from veritor.db.api import WorkloadDatabase
 
     db = WorkloadDatabase.load(db_path)
 

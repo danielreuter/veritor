@@ -10,12 +10,12 @@ from typing import Optional, Tuple
 import jax
 import jax.numpy as jnp
 
-from ..common.sampler import (
+from veritor.common.sampler import (
     sample_bernoulli_logit,
     sample_categorical_logit,
     sample_gaussian_logit,
 )
-from .hooks import HookSystem
+from veritor.prover.hooks import HookSystem
 
 
 def prover_sample_with_hook(

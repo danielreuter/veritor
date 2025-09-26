@@ -17,8 +17,8 @@ import jax.profiler
 from jax import random
 from jax.experimental import io_callback
 
-from ..db.api import WorkloadDatabase
-from ..db.models import (
+from veritor.db.api import WorkloadDatabase
+from veritor.db.models import (
     ChallengeRecord,
     DataBundle,
     EventType,
