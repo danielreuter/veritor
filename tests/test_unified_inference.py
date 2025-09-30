@@ -328,9 +328,9 @@ class ProverSystem:
                 challenge = self.oracle.generate_challenge(op_id, act_array, ctx)
                 # Store in hook data for later retrieval
                 self.hook_data[challenge.id] = challenge
-                return jnp.array([1.0])  # Signal that challenge was generated
+                return jnp.array([1.0], dtype=jnp.float32)  # Signal that challenge was generated
             else:
-                return jnp.array([0.0])  # No challenge
+                return jnp.array([0.0], dtype=jnp.float32)  # No challenge
 
         # Use JAX pure_callback to make external call
         # This makes the challenge decision external and unpredictable

@@ -1,17 +1,3 @@
-Awesome—here’s a single, drop‑in Python module that’s substantially “beefed up,” cleanly abstracted, and designed to be extensible. It uses the IREE Transform API to (a) reliably mark AR decode while‑loops, (b) analyze the matched loops to extract shapes and weights, and (c) emit a teacher‑forcing (prefill) function you can call for verification. It’s structured so you can add new AR variants with minimal code via the recipe/registry system and pluggable analyzers/rewriters.
-
-What you get, at a glance
-	•	Transform/PDL schedule to tag candidate AR loops (veritor.ar.loop).
-	•	Robust analyzer that validates cond (pos < limit), body (dynamic_update_slice on token buffer, gather, reduce, dot/dot_general), and extracts seq_len / vocab / hidden and pointers to embed/output weights (constants or call‑through).
-	•	Rewriter that adds a new, small teacher‑forcing function:
-	•	@{func}_veritor_tf(%tokens, %embed, %output) -> tensor<(S-1)xVxf32>
-	•	Optionally binds weights by cloning constants into a wrapper @{func}_veritor_tf_bind.
-	•	Clean API: apply_teacher_forcing_transform(hlo_text, recipe="jax_scan_v1", emit_bind_wrapper=True) -> str
-	•	Extensible “recipes” (matcher + analyzer + rewriter) to handle different AR lowerings.
-	•	Conservative in‑place mode is included, but the default is additive (doesn’t mutate the original decode function).
-
-    ```py
-    # veritor_tf_transform_beefy.py
 # SPDX-License-Identifier: Apache-2.0
 """
 Veritor StableHLO → Teacher-Forcing transformer (beefy/extensible, IREE Transform API).
@@ -52,11 +38,17 @@ import dataclasses
 import io
 import os
 import tempfile
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Optional, Sequence
 
 # IREE embedded MLIR
-from iree.compiler import ir as mlir_ir
-from iree.compiler import passmanager as mlir_pm
+try:
+    from iree.compiler import ir as mlir_ir
+    from iree.compiler import passmanager as mlir_pm
+    IREE_AVAILABLE = True
+except ImportError:
+    IREE_AVAILABLE = False
+    mlir_ir = None
+    mlir_pm = None
 
 
 # =============================================================================
@@ -78,19 +70,19 @@ def _tmp(text: str, suffix: str) -> str:
         f.write(text)
     return path
 
-def _i64_attr(v: int) -> mlir_ir.IntegerAttr:
+def _i64_attr(v: int):
     return mlir_ir.IntegerAttr.get(mlir_ir.IntegerType.get_signless(64), v)
 
-def _sattr(ctx: mlir_ir.Context, s: str) -> mlir_ir.StringAttr:
-    return mlir_ir.StringAttr.get(ctx, s)
+def _sattr(ctx: mlir_ir.Context, s: str):
+    return mlir_ir.StringAttr.get(s, ctx)
 
-def _array_i64(vals: Sequence[int]) -> mlir_ir.ArrayAttr:
+def _array_i64(vals: Sequence[int]):
     return mlir_ir.ArrayAttr.get([_i64_attr(v) for v in vals])
 
-def _f32_attr(v: float) -> mlir_ir.FloatAttr:
+def _f32_attr(v: float):
     return mlir_ir.FloatAttr.get(mlir_ir.F32Type.get(), v)
 
-def _ranked_tensor(elt, dims: Sequence[int]) -> mlir_ir.RankedTensorType:
+def _ranked_tensor(elt, dims: Sequence[int]):
     return mlir_ir.RankedTensorType.get(list(dims), elt)
 
 def _type_is_i32_scalar(t: mlir_ir.Type) -> bool:
@@ -103,11 +95,11 @@ def _type_is_f32_2d(t: mlir_ir.Type) -> bool:
     return isinstance(t, mlir_ir.RankedTensorType) and len(t.shape) == 2 and isinstance(t.element_type, mlir_ir.F32Type)
 
 def _find_parent_func(op: mlir_ir.Operation) -> Optional[mlir_ir.Operation]:
-    parent = op.operation.parent
+    parent = op.parent
     while parent is not None:
-        if parent.operation.name == "func.func":
+        if parent.name == "func.func":
             return parent
-        parent = parent.operation.parent
+        parent = parent.parent
     return None
 
 def _printable_shape(t: mlir_ir.Type) -> str:
@@ -207,7 +199,7 @@ class ARLoopInfo:
     has_dot: bool
     has_dot_general: bool
 
-def _tensor_dims(t: mlir_ir.Type) -> Optional[Tuple[int, ...]]:
+def _tensor_dims(t: mlir_ir.Type) -> Optional[tuple[int, ...]]:
     if isinstance(t, mlir_ir.RankedTensorType):
         shape = tuple(int(d) for d in t.shape)
         if all(d >= 0 for d in shape):
@@ -217,11 +209,11 @@ def _tensor_dims(t: mlir_ir.Type) -> Optional[Tuple[int, ...]]:
 def _first_op_of_type(region: mlir_ir.Region, opname: str) -> Optional[mlir_ir.Operation]:
     for b in region.blocks:
         for op in b.operations:
-            if op.operation.name == opname:
+            if op.name == opname:
                 return op
     return None
 
-def _walk_ops(region: mlir_ir.Region) -> List[mlir_ir.Operation]:
+def _walk_ops(region: mlir_ir.Region) -> list[mlir_ir.Operation]:
     out = []
     for b in region.blocks:
         for op in b.operations:
@@ -230,13 +222,13 @@ def _walk_ops(region: mlir_ir.Region) -> List[mlir_ir.Operation]:
 
 def _analyze_ar_while_decode_v1(while_op: mlir_ir.Operation) -> Optional[ARLoopInfo]:
     """Best-effort structural analysis for AR decode while-loop."""
-    if while_op.operation.name != "stablehlo.while":
+    if while_op.name != "stablehlo.while":
         return None
     func_op = _find_parent_func(while_op)
     if func_op is None:
         return None
 
-    regs = while_op.operation.regions
+    regs = while_op.regions
     if len(regs) < 2:
         return None
     cond = regs[0]
@@ -267,7 +259,7 @@ def _analyze_ar_while_decode_v1(while_op: mlir_ir.Operation) -> Optional[ARLoopI
     if tokens_arg is None:
         # Try to guess tokens from any 1D i32 value used by gather
         for op in _walk_ops(body):
-            if op.operation.name == "stablehlo.gather":
+            if op.name == "stablehlo.gather":
                 for v in op.operands:
                     if _type_is_i32_1d(v.type):
                         tokens_arg = v
@@ -286,7 +278,7 @@ def _analyze_ar_while_decode_v1(while_op: mlir_ir.Operation) -> Optional[ARLoopI
     vocab = None
     hidden = None
     for op in _walk_ops(body):
-        if op.operation.name == "stablehlo.gather":
+        if op.name == "stablehlo.gather":
             # Heuristic: operand[0] == embedding table
             if len(op.operands) >= 1:
                 emb_src = op.operands[0]
@@ -295,7 +287,7 @@ def _analyze_ar_while_decode_v1(while_op: mlir_ir.Operation) -> Optional[ARLoopI
                     defop = emb_src.owner
                 except Exception:
                     defop = None
-                if defop and defop.operation.name == "stablehlo.constant":
+                if defop and defop.name == "stablehlo.constant":
                     embed_const = defop
                     dims = _tensor_dims(embed_const.results[0].type)
                     if dims and len(dims) == 2:
@@ -305,14 +297,14 @@ def _analyze_ar_while_decode_v1(while_op: mlir_ir.Operation) -> Optional[ARLoopI
     # Find output projection weights from dot/dot_general
     output_const = None
     for op in _walk_ops(body):
-        if op.operation.name in ("stablehlo.dot", "stablehlo.dot_general"):
+        if op.name in ("stablehlo.dot", "stablehlo.dot_general"):
             # Search constant operand
             for v in op.operands:
                 try:
                     d = v.owner
                 except Exception:
                     d = None
-                if d and d.operation.name == "stablehlo.constant":
+                if d and d.name == "stablehlo.constant":
                     dims = _tensor_dims(d.results[0].type)
                     if dims and len(dims) == 2:
                         # Expect HxV
@@ -353,7 +345,7 @@ def _analyze_ar_while_decode_v1(while_op: mlir_ir.Operation) -> Optional[ARLoopI
 # Rewriters
 # =============================================================================
 
-def _emit_tf_function(module: mlir_ir.Module, info: ARLoopInfo, opts: TFOptions) -> Tuple[str, mlir_ir.Operation]:
+def _emit_tf_function(module: mlir_ir.Module, info: ARLoopInfo, opts: TFOptions) -> tuple[str, mlir_ir.Operation]:
     """
     Emit a *new* teacher-forcing function:
 
@@ -377,16 +369,16 @@ def _emit_tf_function(module: mlir_ir.Module, info: ARLoopInfo, opts: TFOptions)
 
     base = "veritor_tf"
     # Base on parent func symbol name if present
-    fn_name_attr = info.func_op.attributes.get("sym_name")
-    if fn_name_attr:
+    if "sym_name" in info.func_op.attributes:
+        fn_name_attr = info.func_op.attributes["sym_name"]
         base = f"{str(fn_name_attr.value)}_veritor_tf"
     new_fn = base
     # Ensure symbol uniqueness
     existing = set()
     for op in module.operation.regions[0].blocks[0].operations:
-        if op.operation.name == "func.func":
-            a = op.attributes.get("sym_name")
-            if a:
+        if op.name == "func.func":
+            if "sym_name" in op.attributes:
+                a = op.attributes["sym_name"]
                 existing.add(str(a.value))
     if new_fn in existing:
         idx = 1
@@ -407,7 +399,6 @@ def _emit_tf_function(module: mlir_ir.Module, info: ARLoopInfo, opts: TFOptions)
     module.operation.regions[0].blocks[0].append(fn_op)
     region = fn_op.regions[0]
     entry = mlir_ir.Block.create_at_start(region, [tok_ty, emb_ty, out_ty])
-    region.attach_block(entry)
 
     with mlir_ir.InsertionPoint(entry):
         # Arguments
@@ -436,9 +427,10 @@ def _emit_tf_function(module: mlir_ir.Module, info: ARLoopInfo, opts: TFOptions)
         # Gather once: (V,H) + (S) -> (S,H)
         # dimension_numbers + slice_sizes as attributes
         dn = mlir_ir.Attribute.parse(
+            ctx,
             '#stablehlo.gather<offset_dims = [1], collapsed_slice_dims = [0], start_index_map = [0], index_vector_dim = 1>'
         )
-        slice_sizes = mlir_ir.Attribute.parse(f'array<i64: 1, {H}>')
+        slice_sizes = mlir_ir.Attribute.parse(ctx, f'array<i64: 1, {H}>')
         gather_res_ty = _ranked_tensor(f32, [S, H])
         gather = mlir_ir.Operation.create(
             "stablehlo.gather",
@@ -453,18 +445,19 @@ def _emit_tf_function(module: mlir_ir.Module, info: ARLoopInfo, opts: TFOptions)
 
         # Build a small "add" reducer region for reduce(sum over dim 0)
         def _make_add_region(elem_ty: mlir_ir.Type) -> mlir_ir.Region:
-            reg = mlir_ir.Region()
+            reg = mlir_ir.Region.create()
             blk = mlir_ir.Block.create_at_start(reg, [elem_ty, elem_ty])
-            add = mlir_ir.Operation.create(
-                "stablehlo.add",
-                operands=[blk.arguments[0], blk.arguments[1]],
-                results=[elem_ty],
-            )
-            blk.append(add)
-            ret = mlir_ir.Operation.create(
-                "stablehlo.return", operands=[add.results[0]]
-            )
-            blk.append(ret)
+            with mlir_ir.InsertionPoint(blk):
+                add = mlir_ir.Operation.create(
+                    "stablehlo.add",
+                    operands=[blk.arguments[0], blk.arguments[1]],
+                    results=[elem_ty],
+                )
+                blk.append(add)
+                ret = mlir_ir.Operation.create(
+                    "stablehlo.return", operands=[add.results[0]]
+                )
+                blk.append(ret)
             return reg
 
         for pos in range(S - 1):
@@ -529,8 +522,9 @@ def _emit_tf_function(module: mlir_ir.Module, info: ARLoopInfo, opts: TFOptions)
                 operands=[mul.results[0], zero_cst.results[0]],
                 results=[_ranked_tensor(f32, [H])],
                 attributes={"dimensions": _array_i64([0])},
-                regions=[_make_add_region(f32)],
+                regions=1,
             )
+            red.regions[0] = _make_add_region(f32)
             entry.append(red)
 
             # logits: (H) · (H,V) -> (V)
@@ -543,6 +537,7 @@ def _emit_tf_function(module: mlir_ir.Module, info: ARLoopInfo, opts: TFOptions)
             else:
                 # dot_general variant if needed
                 ddn = mlir_ir.Attribute.parse(
+                    ctx,
                     "#stablehlo.dot_dimension_numbers<lhs_batching_dimensions = [], rhs_batching_dimensions = [], lhs_contracting_dimensions = [0], rhs_contracting_dimensions = [0]>"
                 )
                 dot = mlir_ir.Operation.create(
@@ -579,9 +574,10 @@ def _emit_tf_function(module: mlir_ir.Module, info: ARLoopInfo, opts: TFOptions)
         if opts.annotate:
             attrs = dict(fn_op.attributes)
             attrs["veritor.teacher_forcing"] = mlir_ir.UnitAttr.get(ctx)
-            attrs["veritor.source.func"] = _sattr(
-                ctx, str(info.func_op.attributes.get("sym_name", _sattr(ctx, "unknown")).value)
-            )
+            func_name = "unknown"
+            if "sym_name" in info.func_op.attributes:
+                func_name = str(info.func_op.attributes["sym_name"].value)
+            attrs["veritor.source.func"] = _sattr(ctx, func_name)
             attrs["veritor.seq_len"] = _i64_attr(S)
             attrs["veritor.vocab"] = _i64_attr(V)
             attrs["veritor.hidden"] = _i64_attr(H)
@@ -620,14 +616,13 @@ def _emit_bind_wrapper_if_possible(module: mlir_ir.Module, info: ARLoopInfo, tf_
     module.operation.regions[0].blocks[0].append(fn_op)
     region = fn_op.regions[0]
     entry = mlir_ir.Block.create_at_start(region, [tok_ty])
-    region.attach_block(entry)
 
     with mlir_ir.InsertionPoint(entry):
         tokens = entry.arguments[0]
 
         # Clone constants' values
-        emb_attr = info.embed_const.attributes.get("value")
-        out_attr = info.output_const.attributes.get("value")
+        emb_attr = info.embed_const.attributes["value"] if "value" in info.embed_const.attributes else None
+        out_attr = info.output_const.attributes["value"] if "value" in info.output_const.attributes else None
         if emb_attr is None or out_attr is None:
             return None
 
@@ -676,7 +671,7 @@ def _rewrite_in_place(module: mlir_ir.Module, info: ARLoopInfo, opts: TFOptions)
     out_logits_ty = _ranked_tensor(f32, [S - 1, V])
 
     # Try to find a tokens value in the parent block that matches tok_ty
-    parent_block = info.while_op.operation.parent
+    parent_block = info.while_op.parent
     if parent_block is None:
         raise RewriteError("While op has no parent block")
 
@@ -726,7 +721,7 @@ def _rewrite_in_place(module: mlir_ir.Module, info: ARLoopInfo, opts: TFOptions)
                 break
         # Erase while if no results are needed anymore
         if replaced:
-            info.while_op.operation.erase()
+            info.while_op.erase()
 
 
 def _rewriter_add_func(module: mlir_ir.Module, info: ARLoopInfo, opts: TFOptions) -> None:
@@ -739,7 +734,7 @@ def _rewriter_add_func(module: mlir_ir.Module, info: ARLoopInfo, opts: TFOptions
 # Recipe registry
 # =============================================================================
 
-_RECIPE_REGISTRY: Dict[str, Recipe] = {}
+_RECIPE_REGISTRY: dict[str, Recipe] = {}
 
 def register_recipe(recipe: Recipe) -> None:
     _RECIPE_REGISTRY[recipe.key] = recipe
@@ -757,7 +752,8 @@ def _default_recipe() -> Recipe:
         ),
     )
 
-register_recipe(_default_recipe())
+if IREE_AVAILABLE:
+    register_recipe(_default_recipe())
 
 
 # =============================================================================
@@ -802,6 +798,9 @@ def apply_teacher_forcing_transform(
     - If no matches are proven, returns the input (post-canonicalization).
     - For safety, failures in one loop don't abort others.
     """
+    if not IREE_AVAILABLE:
+        raise ImportError("IREE compiler not available. Install with: pip install iree-compiler")
+
     if recipe not in _RECIPE_REGISTRY:
         raise KeyError(f"Unknown recipe '{recipe}'. Available: {list(_RECIPE_REGISTRY.keys())}")
 
@@ -817,13 +816,20 @@ def apply_teacher_forcing_transform(
         _run_transform(module, r.transform.transform_ir)
 
         # 2) Collect tagged while ops
-        hits: List[mlir_ir.Operation] = []
-        for op in module.operation.walk():
+        hits: list[mlir_ir.Operation] = []
+        def collect_tagged(op):
             try:
-                if op.operation.name == "stablehlo.while" and op.attributes.get("veritor.ar.loop"):
-                    hits.append(op)
+                if op.name == "stablehlo.while":
+                    # Check if tagged with veritor.ar.loop
+                    try:
+                        if "veritor.ar.loop" in op.attributes:
+                            hits.append(op)
+                    except:
+                        pass
             except Exception:
                 pass
+            return mlir_ir.WalkResult.ADVANCE
+        module.operation.walk(collect_tagged)
 
         # 3) Analyze and rewrite
         for w in hits:
@@ -835,7 +841,7 @@ def apply_teacher_forcing_transform(
             except Exception as e:
                 # Keep going; record minimal context in the IR for debugging.
                 attrs = dict(w.attributes)
-                attrs["veritor.analysis_error"] = mlir_ir.StringAttr.get(ctx, repr(e))
+                attrs["veritor.analysis_error"] = mlir_ir.StringAttr.get(repr(e), ctx)
                 w.attributes = attrs
 
         # 4) Cleanup
@@ -899,7 +905,7 @@ def make_recipe(
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2 or not sys.argv[1].endswith(".mlir"):
-        print("Usage: python veritor_tf_transform_beefy.py <input_stablehlo.mlir> [mode]")
+        print("Usage: python veritor_tf_transform.py <input_stablehlo.mlir> [mode]")
         print("  mode: add_func (default) | rewrite_in_place")
         sys.exit(1)
     path = sys.argv[1]
@@ -908,53 +914,3 @@ if __name__ == "__main__":
         text = f.read()
     out = apply_teacher_forcing_transform(text, recipe="jax_scan_v1", emit_bind_wrapper=True, mode=mode)
     print(out)
-    ```
-
-
-
-
-⸻
-
-How to use
-
-Programmatic
-```py
-from veritor_tf_transform_beefy import apply_teacher_forcing_transform
-
-with open("decode_stablehlo.mlir") as f:
-    ar_mlir = f.read()
-
-# Add a teacher-forcing function (and a weights-binding wrapper if possible)
-tf_mlir = apply_teacher_forcing_transform(
-    ar_mlir,
-    recipe="jax_scan_v1",
-    emit_bind_wrapper=True,     # also emits @<func>_veritor_tf_bind if we can bake constants
-    mode="add_func",            # "rewrite_in_place" also available, but "add_func" is safer
-)
-
-print(tf_mlir)
-```
-
-What gets emitted
-	•	@<orig_func>_veritor_tf(%tokens: tensor<Sxi32>, %embed: tensor<VxHxf32>, %output: tensor<HxVxf32>) -> tensor<(S-1)xVxf32>
-	•	If constants are recoverable in the original graph:
-@<orig_func>_veritor_tf_bind(%tokens: tensor<Sxi32>) that clones weights and calls the param version.
-
-Extending to new AR patterns
-	•	Clone ALT_TRANSFORM_SKELETON and write your own PDL matcher.
-	•	Implement a new analyzer (copy _analyze_ar_while_decode_v1 and adapt).
-	•	Reuse _rewriter_add_func or write a custom rewriter if your body differs.
-	•	Register with register_recipe(make_recipe(...)).
-
-⸻
-
-Why this is “beefy”
-	•	Transform‑first: PDL/Transform tags the right kind of while loops; analysis then proves AR-ness (cond/body checks) before any rewrite.
-	•	Robust analysis: Validates presence of dynamic_update_slice, gather, reduce, and dot/dot_general; extracts S/V/H and weight handles.
-	•	Clean emission: Teacher‑forcing function is small, deterministic, and fast: iota → LE‑mask → masked gather → reduce → dot → concat.
-	•	Two delivery modes: Additive function (default) and in‑place replacement (best effort).
-	•	Weight handling: Pass as args for portability; auto‑emit a binder that clones constants when available.
-	•	Extensible recipes: New matchers/analyzers/rewriters compose cleanly; you can incrementally harden patterns without touching core plumbing.
-	•	Conservative failure behavior: If one loop fails to analyze, others still process; we annotate failures in‑IR (veritor.analysis_error) for debugging.
-
-If you want, I can also include a second stricter matcher that explicitly checks the cond region for %pos < %limit (by walking the cond region for a stablehlo.compare LT|LE that feeds the stablehlo.return), but the analyzer already performs that check—adding it to the Transform schedule is easy to do when you have real samples to tune against.
