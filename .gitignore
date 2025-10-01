@@ -17,4 +17,4 @@ wheels/
 # Pytest
 .pytest_cache/
 
-.claude
+.sesskey
