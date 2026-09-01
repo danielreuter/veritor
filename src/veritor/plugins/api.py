@@ -41,6 +41,7 @@ from veritor.core import (
     Capability,
     CapabilityReport,
     ClaimStatus,
+    CompiledArtifact,
     CompiledResultIdentity,
     Digest,
     EvidenceStatus,
@@ -373,13 +374,6 @@ class ExecutableCapacityProviderSurface(Protocol):
 DemoGCapacityProviderSurface = ExecutableCapacityProviderSurface
 
 
-type ProtocolTuple = tuple[
-    CallDagCircuit,
-    ReplayPartition,
-    VerificationPartition,
-]
-
-
 def _unsupported(
     *,
     capability: Capability,
@@ -399,15 +393,14 @@ def _unsupported(
 
 @dataclass(frozen=True, slots=True)
 class ProtocolCircuitArtifact:
-    """Genuine executable protocol compile with a literal ``(C, R, V)``."""
+    """Genuine executable protocol compile holding a :class:`CompiledArtifact`."""
 
     architecture_id: ArchitectureId
     plugin_id: str
     plugin_version: str
     identity: ArchitectureArtifactIdentity
-    compiled_identity: CompiledResultIdentity
     capabilities: CapabilityReport
-    _protocol_tuple: ProtocolTuple
+    compiled: CompiledArtifact
     public_inputs: tuple[int, ...]
     expected_outputs: tuple[int, ...]
     bound_provider: ExecutableCapacityProviderSurface
@@ -419,32 +412,31 @@ class ProtocolCircuitArtifact:
         default=ArtifactKind.EXECUTABLE_CIRCUIT,
     )
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.compiled, CompiledArtifact):
+            raise TypeError("compiled must be a CompiledArtifact")
+        if not isinstance(self.compiled.circuit, CallDagCircuit):
+            raise TypeError("executable plug-in artifacts require a CallDagCircuit")
+
     @property
     def kind(self) -> ArtifactKind:
         return self.artifact_kind
 
     @property
-    def literal_tuple(self) -> ProtocolTuple:
-        return self._protocol_tuple
-
-    @property
-    def compiled_tuple(self) -> ProtocolTuple:
-        return self._protocol_tuple
-
-    def as_protocol_tuple(self) -> ProtocolTuple:
-        return self._protocol_tuple
+    def compiled_identity(self) -> CompiledResultIdentity:
+        return self.compiled.identity
 
     @property
     def circuit(self) -> CallDagCircuit:
-        return self._protocol_tuple[0]
+        return self.compiled.circuit  # type: ignore[return-value]
 
     @property
     def replay_partition(self) -> ReplayPartition:
-        return self._protocol_tuple[1]
+        return self.compiled.replay
 
     @property
     def verification_partition(self) -> VerificationPartition:
-        return self._protocol_tuple[2]
+        return self.compiled.verification
 
     @property
     def assumption_texts(self) -> tuple[str, ...]:
@@ -460,12 +452,12 @@ class ProtocolCircuitArtifact:
         selected = self.public_inputs if inputs is None else tuple(inputs)
         return self.circuit.evaluate(selected)
 
-    def verification_access(self) -> ProtocolTuple:
-        """Return the trusted tuple consumed by the staged verifier."""
+    def verification_access(self) -> CompiledArtifact:
+        """Return the trusted compiled artifact consumed by the verifier."""
 
-        return self._protocol_tuple
+        return self.compiled
 
-    def verify(self) -> ProtocolTuple:
+    def verify(self) -> CompiledArtifact:
         """Compatibility spelling for capability access, not orchestration."""
 
         return self.verification_access()

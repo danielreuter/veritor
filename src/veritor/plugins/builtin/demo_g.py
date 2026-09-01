@@ -1,19 +1,25 @@
-"""Executable built-in plug-in for the production DemoG call-DAG compiler."""
+"""Executable built-in plug-in for the DemoG call-DAG constructor.
+
+``DemoG`` is an untrusted memoized constructor whose only trusted output is
+the canonical call-DAG document decoded by :mod:`veritor.compile`.  The
+constructor, its request types, and the plug-in wrapper all live here.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import cast
 
 from veritor.compile import (
     DEFAULT_REPLAY_POLICY,
     DEFAULT_VERIFICATION_POLICY,
-    BatchInput,
     CompilationLimits,
-    DemoG,
     PartitionPolicy,
+    Producer,
+    ProducerDefinition,
+    ProducerError,
+    Wire,
     compile_call_dag,
-    expected_dot_outputs,
-    make_demo_request,
     make_word_kernel,
 )
 from veritor.core import (
@@ -24,7 +30,6 @@ from veritor.core import (
     EvidenceStatus,
     JSONValue,
     SupportState,
-    validate_compiled_result,
 )
 
 from .._common import (
@@ -44,6 +49,124 @@ from ._call_dag_capacity import CallDagCapacityBoundProvider
 PLUGIN_ID = "veritor.plugins.builtin.demo-g"
 PLUGIN_VERSION = "1"
 DEMO_G_ARCHITECTURE_ID = ArchitectureId.DEMO_G
+
+
+@dataclass(frozen=True, slots=True)
+class DotRequest:
+    accumulator: int
+    values: tuple[int, ...]
+    weights: tuple[int, ...]
+
+    @property
+    def length(self) -> int:
+        return len(self.values)
+
+    def cells(self) -> tuple[int, ...]:
+        if len(self.values) != len(self.weights):
+            raise ProducerError("dot-product values and weights have different lengths")
+        return (self.accumulator, *self.values, *self.weights)
+
+
+@dataclass(frozen=True, slots=True)
+class BatchInput:
+    requests: tuple[DotRequest, ...]
+
+    def cells(self) -> tuple[int, ...]:
+        return tuple(cell for request in self.requests for cell in request.cells())
+
+
+class DemoG:
+    """A memoized demo constructor whose emitted bytes remain pure."""
+
+    def __init__(self, cell_bits: int = 8) -> None:
+        self.cell_bits = cell_bits
+        self.producer = Producer(cell_bits)
+
+        @self.producer.gate(name="add")
+        def add(left: int, right: int) -> int:
+            return left + right
+
+        @self.producer.gate(name="mul")
+        def mul(left: int, right: int) -> int:
+            return left * right
+
+        self.add = add
+        self.mul = mul
+
+        @self.producer.circuit(key=("mac",), input_count=3)
+        def mac(accumulator: Wire, value: Wire, weight: Wire) -> Wire:
+            return add(accumulator, mul(value, weight))
+
+        self.mac = mac
+
+    def dot(self, length: int) -> ProducerDefinition:
+        if type(length) is not int or length < 0:
+            raise ProducerError("dot length must be a nonnegative integer")
+        input_count = 1 + 2 * length
+
+        @self.producer.circuit(key=("dot", length), input_count=input_count)
+        def dot_definition(*inputs: Wire) -> Wire:
+            accumulator = inputs[0]
+            values = inputs[1 : 1 + length]
+            weights = inputs[1 + length :]
+            for value, weight in zip(values, weights, strict=True):
+                accumulator = cast(Wire, self.mac(accumulator, value, weight))
+            return accumulator
+
+        return dot_definition
+
+    def batch(self, lengths: tuple[int, ...]) -> ProducerDefinition:
+        input_count = sum(1 + 2 * length for length in lengths)
+
+        @self.producer.circuit(key=("batch", lengths), input_count=input_count)
+        def batch_definition(*inputs: Wire) -> tuple[Wire, ...]:
+            outputs: list[Wire] = []
+            offset = 0
+            for length in lengths:
+                child = self.dot(length)
+                child_input_count = 1 + 2 * length
+                outputs.append(
+                    cast(
+                        Wire,
+                        child(*inputs[offset : offset + child_input_count]),
+                    )
+                )
+                offset += child_input_count
+            return tuple(outputs)
+
+        return batch_definition
+
+    def __call__(self, x: object, a: bytes) -> bytes:
+        if not isinstance(x, BatchInput):
+            raise ProducerError("DemoG expects BatchInput")
+        if type(a) is not bytes:
+            raise ProducerError("DemoG advice must be bytes")
+        for request in x.requests:
+            request.cells()
+        root = self.batch(tuple(request.length for request in x.requests))
+        return self.producer.serialize(root)
+
+
+def expected_dot_outputs(batch: BatchInput, cell_bits: int) -> tuple[int, ...]:
+    mask = (1 << cell_bits) - 1
+    outputs = []
+    for request in batch.requests:
+        accumulator = request.accumulator
+        for value, weight in zip(request.values, request.weights, strict=True):
+            accumulator = (accumulator + value * weight) & mask
+        outputs.append(accumulator)
+    return tuple(outputs)
+
+
+def make_demo_request(
+    length: int,
+    seed: int,
+    cell_bits: int = 8,
+) -> DotRequest:
+    mask = (1 << cell_bits) - 1
+    values = tuple((seed + 3 * index + 1) & mask for index in range(length))
+    weights = tuple((2 * seed + 5 * index + 1) & mask for index in range(length))
+    return DotRequest(seed & mask, values, weights)
 
 
 def _default_batch() -> BatchInput:
@@ -222,7 +345,6 @@ def compile_demo_g(
         replay_configuration=selected.replay_configuration,
         verification_configuration=selected.verification_configuration,
     )
-    compiled_identity = validate_compiled_result(*compiled)
     artifact_identity = ArchitectureArtifactIdentity.build(
         architecture_id=ArchitectureId.DEMO_G,
         plugin_id=PLUGIN_ID,
@@ -230,7 +352,7 @@ def compile_demo_g(
         artifact_kind=ArtifactKind.EXECUTABLE_CIRCUIT,
         request_manifest=_request_manifest(selected),
         representation_manifest={
-            "compiled_result_digest": compiled_identity.digest,
+            "compiled_result_digest": compiled.identity.digest,
             "expected_outputs": list(selected.expected_outputs),
             "public_inputs": list(selected.public_inputs),
         },
@@ -246,12 +368,11 @@ def compile_demo_g(
         plugin_id=PLUGIN_ID,
         plugin_version=PLUGIN_VERSION,
         identity=artifact_identity,
-        compiled_identity=compiled_identity,
         capabilities=_capabilities(),
-        _protocol_tuple=compiled,
+        compiled=compiled,
         public_inputs=selected.public_inputs,
         expected_outputs=selected.expected_outputs,
-        bound_provider=DemoGCapacityBoundProvider(compiled[0]),
+        bound_provider=DemoGCapacityBoundProvider(compiled.circuit),
         assumptions=assumption_records(
             assumptions,
             source="veritor.compile.call_dag",
@@ -270,7 +391,7 @@ def compile_demo_g(
                 claim=ClaimStatus.EXACT,
                 evidence=EvidenceStatus.BY_CONSTRUCTION,
                 detail="verification units exactly refine replay units",
-                source="veritor.core.validate_compiled_result",
+                source="veritor.core.CompiledArtifact",
             ),
         ),
     )

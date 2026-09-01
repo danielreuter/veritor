@@ -4,7 +4,9 @@ import pytest
 
 from veritor import core
 from veritor.core import (
+    BOUNDARY_OWNER,
     ArtifactKind,
+    CompiledArtifact,
     CompiledResultIdentity,
     ExplicitIndexedDomain,
     InvalidArtifact,
@@ -16,8 +18,9 @@ from veritor.core import (
     StructureIdentity,
     VerificationPartition,
     VerificationUnit,
+    derive_replay_boundary,
     identity_digest,
-    validate_compiled_result,
+    validate_replay_boundary,
 )
 
 
@@ -99,8 +102,8 @@ def test_partitions_validate_exact_cover_ownership_and_refinement():
     assert replay.owner_of(1) == 0
     assert replay.owner_of(4) == 1
     assert verification.owner_of(3) == 2
-    assert verification.units_in_replay_unit(0).items == (0, 1)
-    assert verification.units_in_replay_unit(1).items == (2,)
+    assert verification.units_in_replay_unit(0) == (0, 1)
+    assert verification.units_in_replay_unit(1) == (2,)
     with pytest.raises(KeyError):
         verification.units_in_replay_unit(2)
     assert replay.identity.structure_digest == identity.digest
@@ -174,46 +177,79 @@ def test_zero_computed_positions_require_and_support_zero_units():
         (),
     )
 
-    result_identity = validate_compiled_result(
+    artifact = CompiledArtifact(
         empty_circuit,
         replay,
         verification,
+        derive_replay_boundary(empty_circuit, replay),
     )
 
     assert replay.unit_count == 0
     assert verification.unit_count == 0
-    assert isinstance(result_identity, CompiledResultIdentity)
+    assert isinstance(artifact.identity, CompiledResultIdentity)
+    assert tuple(artifact.boundary) == (0,)
     with pytest.raises(InvalidArtifact, match="zero units"):
         ReplayPartition(identity, empty, (ReplayUnit(0, (0,)),))
 
 
-def test_validate_compiled_result_returns_identity_for_literal_components():
+def test_compiled_artifact_binds_identity_of_all_four_components():
     identity = structure()
     replay, verification = partitions(identity)
+    structural = circuit(identity)
+    boundary = derive_replay_boundary(structural, replay)
 
-    result = validate_compiled_result(circuit(identity), replay, verification)
+    artifact = CompiledArtifact(structural, replay, verification, boundary)
 
-    assert isinstance(result, CompiledResultIdentity)
-    assert result.structure_digest == identity.digest
-    assert result.replay_partition_digest == replay.identity.digest
-    assert result.verification_partition_digest == verification.identity.digest
+    assert isinstance(artifact.identity, CompiledResultIdentity)
+    assert artifact.identity.structure_digest == identity.digest
+    assert artifact.identity.replay_partition_digest == replay.identity.digest
+    assert artifact.identity.verification_partition_digest == verification.identity.digest
+    assert artifact.identity.boundary_digest == artifact.boundary.identity_digest
+    assert not artifact.executable
     assert not hasattr(core, "Gamma")
 
 
-def test_validate_compiled_result_rejects_mixed_structure_identities():
+def test_compiled_artifact_boundary_and_ownership_queries():
+    identity = structure()
+    replay, verification = partitions(identity)
+    structural = circuit(identity)
+
+    artifact = CompiledArtifact(structural, replay, verification, [0, 2, 4])
+
+    assert tuple(artifact.boundary) == (0, 2, 4)
+    assert artifact.value_owner(0) == BOUNDARY_OWNER
+    assert artifact.value_owner(2) == BOUNDARY_OWNER
+    assert artifact.value_owner(4) == BOUNDARY_OWNER
+    assert artifact.value_owner(1) == 0
+    assert artifact.value_owner(3) == 1
+    assert tuple(artifact.interior(0)) == (1,)
+    assert tuple(artifact.interior(1)) == (3,)
+    validate_replay_boundary(artifact)
+    with pytest.raises(InvalidArtifact, match="incorrect replay boundary"):
+        validate_replay_boundary(CompiledArtifact(structural, replay, verification, [0, 4]))
+
+
+def test_compiled_artifact_rejects_boundary_missing_ports_or_naming_unknown_positions():
+    identity = structure()
+    replay, verification = partitions(identity)
+    structural = circuit(identity)
+
+    with pytest.raises(InvalidArtifact, match="omits port position"):
+        CompiledArtifact(structural, replay, verification, [0])
+    with pytest.raises(InvalidArtifact, match="unknown position"):
+        CompiledArtifact(structural, replay, verification, [0, 4, 9])
+
+
+def test_compiled_artifact_rejects_mixed_structure_identities():
     circuit_identity = structure("circuit")
     partition_identity = structure("partition")
     replay, verification = partitions(partition_identity)
 
     with pytest.raises(InvalidArtifact, match="another structure"):
-        validate_compiled_result(
-            circuit(circuit_identity),
-            replay,
-            verification,
-        )
+        CompiledArtifact(circuit(circuit_identity), replay, verification, [0, 4])
 
 
-def test_validate_compiled_result_rejects_verification_for_another_replay():
+def test_compiled_artifact_rejects_verification_for_another_replay():
     identity = structure()
     original_replay, verification = partitions(
         identity, replay_configuration={"version": 1}
@@ -222,8 +258,4 @@ def test_validate_compiled_result_rejects_verification_for_another_replay():
 
     assert original_replay.identity != replacement_replay.identity
     with pytest.raises(InvalidArtifact, match="different replay partition"):
-        validate_compiled_result(
-            circuit(identity),
-            replacement_replay,
-            verification,
-        )
+        CompiledArtifact(circuit(identity), replacement_replay, verification, [0, 4])

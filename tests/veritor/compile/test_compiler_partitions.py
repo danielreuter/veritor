@@ -5,32 +5,31 @@ from collections.abc import Iterable
 import pytest
 
 from veritor.compile import (
-    POSITIVE_TOP_LEVEL_OCCURRENCES,
-    SINGLETON_GATES,
-    WHOLE_ROOT,
-    BatchInput,
     CallDagCircuit,
-    DemoG,
     PartitionPolicy,
     Producer,
     compile_call_dag,
-    derive_occurrence_replay_plan,
-    derive_replay_boundary,
-    derive_replay_partition,
-    derive_verification_partition,
-    make_demo_request,
     make_word_kernel,
     occurrence_paths_for_policy,
+    replay_partition_from_occurrences,
+    verification_partition_from_occurrences,
 )
 from veritor.core import (
+    CompiledArtifact,
+    IntervalDomain,
     InvalidArtifact,
     ReplayPartition,
     VerificationPartition,
+    derive_replay_boundary,
     iter_domain,
-    validate_compiled_result,
+    validate_replay_boundary,
 )
+from veritor.plugins import BatchInput, DemoG, make_demo_request
 
 CELL_BITS = 8
+WHOLE_ROOT = PartitionPolicy.WHOLE_ROOT
+POSITIVE_TOP_LEVEL_OCCURRENCES = PartitionPolicy.POSITIVE_TOP_LEVEL_OCCURRENCES
+SINGLETON_GATES = PartitionPolicy.SINGLETON_GATES
 
 
 def make_batch(lengths: tuple[int, ...]) -> BatchInput:
@@ -49,11 +48,10 @@ def compile_demo(
     verification_policy: PartitionPolicy | str = SINGLETON_GATES,
     replay_configuration=None,
     verification_configuration=None,
-):
-    kernel = make_word_kernel(CELL_BITS)
+) -> tuple[BatchInput, CompiledArtifact]:
     batch = make_batch(lengths)
-    result = compile_call_dag(
-        kernel,
+    artifact = compile_call_dag(
+        make_word_kernel(CELL_BITS),
         DemoG(CELL_BITS),
         batch,
         b"",
@@ -64,41 +62,54 @@ def compile_demo(
         replay_configuration=replay_configuration,
         verification_configuration=verification_configuration,
     )
-    return kernel, batch, result
+    return batch, artifact
+
+
+def compile_producer(root, input_cells: tuple[int, ...], **options) -> CompiledArtifact:
+    producer = root.producer
+    return compile_call_dag(
+        make_word_kernel(CELL_BITS),
+        lambda _x, _a: producer.serialize(root),
+        None,
+        b"",
+        input_cells=input_cells,
+        advice_bound_bits=0,
+        **options,
+    )
 
 
 def members(units: Iterable) -> tuple[tuple[int, ...], ...]:
     return tuple(tuple(iter_domain(unit.members)) for unit in units)
 
 
-def test_compile_returns_literal_validated_tuple_with_global_positions():
-    _, batch, result = compile_demo()
+def test_compile_returns_validated_artifact_with_global_positions():
+    batch, artifact = compile_demo()
+    circuit = artifact.circuit
 
-    assert type(result) is tuple
-    assert len(result) == 3
-    circuit, replay, verification = result
+    assert isinstance(artifact, CompiledArtifact)
     assert isinstance(circuit, CallDagCircuit)
-    assert isinstance(replay, ReplayPartition)
-    assert isinstance(verification, VerificationPartition)
+    assert isinstance(artifact.replay, ReplayPartition)
+    assert isinstance(artifact.verification, VerificationPartition)
+    assert isinstance(artifact.boundary, IntervalDomain)
+    assert artifact.executable
     assert circuit.input_count == len(batch.cells())
     assert circuit.gate_count == 6
     assert circuit.computed_positions.start == circuit.input_count
     assert circuit.computed_positions.stop == circuit.input_count + 6
-    assert members(replay.units) == (
+    assert members(artifact.replay.units) == (
         (circuit.input_count, circuit.input_count + 1),
         tuple(range(circuit.input_count + 2, circuit.input_count + 6)),
     )
-    assert members(verification.units) == tuple(
+    assert members(artifact.verification.units) == tuple(
         (position,)
         for position in range(circuit.input_count, circuit.input_count + 6)
     )
-
-    tuple_identity = validate_compiled_result(*result)
-    assert tuple_identity.structure_digest == circuit.identity.digest
-    assert tuple_identity.replay_partition_digest == replay.identity.digest
-    assert tuple_identity.verification_partition_digest == (
-        verification.identity.digest
+    assert artifact.identity.structure_digest == circuit.identity.digest
+    assert artifact.identity.replay_partition_digest == artifact.replay.identity.digest
+    assert artifact.identity.verification_partition_digest == (
+        artifact.verification.identity.digest
     )
+    assert artifact.identity.boundary_digest == artifact.boundary.identity_digest
 
 
 @pytest.mark.parametrize(
@@ -110,25 +121,21 @@ def test_compile_returns_literal_validated_tuple_with_global_positions():
     ],
 )
 def test_replay_policies_are_deterministic_exact_covers(policy, expected_sizes):
-    _, _, (first_circuit, first_replay, _) = compile_demo(
-        replay_policy=policy,
-    )
-    _, _, (second_circuit, second_replay, _) = compile_demo(
-        replay_policy=policy,
-    )
+    _, first = compile_demo(replay_policy=policy)
+    _, second = compile_demo(replay_policy=policy)
 
-    assert tuple(unit.count for unit in first_replay.units) == expected_sizes
+    assert tuple(unit.count for unit in first.replay.units) == expected_sizes
     assert tuple(
-        first_replay.owner_of(position)
-        for position in iter_domain(first_circuit.computed_positions)
+        first.replay.owner_of(position)
+        for position in iter_domain(first.circuit.computed_positions)
     ) == tuple(
         owner
         for owner, size in enumerate(expected_sizes)
         for _ in range(size)
     )
-    assert first_circuit.identity == second_circuit.identity
-    assert first_replay.identity == second_replay.identity
-    first_replay.validate()
+    assert first.circuit.identity == second.circuit.identity
+    assert first.replay.identity == second.replay.identity
+    assert first.identity == second.identity
 
 
 def test_singleton_verification_exactly_refines_every_replay_policy():
@@ -137,74 +144,75 @@ def test_singleton_verification_exactly_refines_every_replay_policy():
         POSITIVE_TOP_LEVEL_OCCURRENCES,
         SINGLETON_GATES,
     ):
-        _, _, (circuit, replay, verification) = compile_demo(
-            replay_policy=replay_policy,
-        )
-        assert verification.unit_count == circuit.gate_count
-        for unit in verification.units:
+        _, artifact = compile_demo(replay_policy=replay_policy)
+        assert artifact.verification.unit_count == artifact.circuit.gate_count
+        for unit in artifact.verification.units:
             position = unit.members.unrank(0)
             assert unit.count == 1
-            assert unit.replay_unit == replay.owner_of(position)
+            assert unit.replay_unit == artifact.replay.owner_of(position)
             assert unit.proof_relation_id == (
-                circuit.executable_gate_at(position).relation_id
+                artifact.circuit.executable_gate_at(position).relation_id
             )
-        verification.validate(replay)
+        assert artifact.verification.replay_partition_identity == artifact.replay.identity
 
 
 def test_coarse_verification_policy_rejects_cross_replay_units():
-    kernel, batch, (circuit, replay, _) = compile_demo(
-        replay_policy=POSITIVE_TOP_LEVEL_OCCURRENCES,
-    )
-    del kernel, batch
+    _, artifact = compile_demo(replay_policy=POSITIVE_TOP_LEVEL_OCCURRENCES)
 
     with pytest.raises(InvalidArtifact, match="crosses replay units"):
-        derive_verification_partition(circuit, replay, WHOLE_ROOT)
+        verification_partition_from_occurrences(
+            artifact.circuit,
+            artifact.replay,
+            occurrence_paths_for_policy(artifact.circuit, WHOLE_ROOT),
+        )
 
 
 def test_policy_and_caller_configuration_are_partition_identity_bound():
-    _, _, (circuit, replay_a, verification_a) = compile_demo(
+    _, a = compile_demo(
         replay_configuration={"batching": 1},
         verification_configuration={"checks": "single"},
     )
-    _, _, (_, replay_b, verification_b) = compile_demo(
+    _, same = compile_demo(
+        replay_configuration={"batching": 1},
+        verification_configuration={"checks": "single"},
+    )
+    _, b = compile_demo(
         replay_configuration={"batching": 2},
         verification_configuration={"checks": "single"},
     )
-    _, _, (_, replay_c, verification_c) = compile_demo(
+    _, c = compile_demo(
         replay_policy=WHOLE_ROOT,
         replay_configuration={"batching": 1},
         verification_configuration={"checks": "single"},
     )
-    replay_same = derive_replay_partition(
-        circuit,
-        POSITIVE_TOP_LEVEL_OCCURRENCES,
-        configuration={"batching": 1},
-    )
-    verification_other_config = derive_verification_partition(
-        circuit,
-        replay_same,
-        SINGLETON_GATES,
-        configuration={"checks": "other"},
+    _, other_checks = compile_demo(
+        replay_configuration={"batching": 1},
+        verification_configuration={"checks": "other"},
     )
 
-    assert replay_a.identity == replay_same.identity
-    assert replay_a.identity != replay_b.identity
-    assert replay_a.identity != replay_c.identity
-    assert verification_a.identity != verification_b.identity
-    assert verification_a.identity != verification_c.identity
-    assert verification_a.identity != verification_other_config.identity
+    assert a.identity == same.identity
+    assert a.replay.identity != b.replay.identity
+    assert a.replay.identity != c.replay.identity
+    assert a.verification.identity != b.verification.identity
+    assert a.verification.identity != c.verification.identity
+    assert a.replay.identity == other_checks.replay.identity
+    assert a.verification.identity != other_checks.verification.identity
+    assert a.identity != other_checks.identity
 
 
 @pytest.mark.parametrize(
     "policy",
     [WHOLE_ROOT, POSITIVE_TOP_LEVEL_OCCURRENCES, SINGLETON_GATES],
 )
-def test_generic_boundary_matches_kernel_occurrence_oracle(policy):
-    _, _, (circuit, _, _) = compile_demo()
-    replay = derive_replay_partition(circuit, policy)
-    occurrence_plan = derive_occurrence_replay_plan(circuit, policy)
+def test_occurrence_boundary_matches_gate_scan_reference(policy):
+    _, artifact = compile_demo((1, 2, 0, 3), replay_policy=policy)
+    _, plan = replay_partition_from_occurrences(
+        artifact.circuit, occurrence_paths_for_policy(artifact.circuit, policy)
+    )
 
-    assert derive_replay_boundary(circuit, replay) == occurrence_plan.boundary
+    assert plan.boundary == artifact.boundary
+    assert derive_replay_boundary(artifact.circuit, artifact.replay) == artifact.boundary
+    validate_replay_boundary(artifact)
 
 
 def test_boundary_contains_cross_unit_writes_and_deduplicated_outputs():
@@ -220,26 +228,15 @@ def test_boundary_contains_cross_unit_writes_and_deduplicated_outputs():
         second = add(first, value)
         return second, second, value
 
-    kernel = make_word_kernel(CELL_BITS)
-
-    def constructor(_x, _a):
-        return producer.serialize(root)
-
-    circuit, replay, verification = compile_call_dag(
-        kernel,
-        constructor,
-        None,
-        b"",
-        input_cells=(3,),
-        advice_bound_bits=0,
-        replay_policy=SINGLETON_GATES,
-    )
+    artifact = compile_producer(root, (3,), replay_policy=SINGLETON_GATES)
+    circuit = artifact.circuit
 
     assert circuit.ordered_output_positions == (2, 2, 0)
     assert tuple(port.position for port in circuit.output_ports) == (2, 2, 0)
-    assert derive_replay_boundary(circuit, replay) == (0, 1, 2)
+    assert tuple(artifact.boundary) == (0, 1, 2)
+    assert artifact.interior(0).count == artifact.interior(1).count == 0
     assert circuit.evaluate((3,)) == (9, 9, 3)
-    validate_compiled_result(circuit, replay, verification)
+    validate_replay_boundary(artifact)
 
 
 def test_dead_child_gate_and_passthrough_output_have_exact_boundary():
@@ -260,56 +257,39 @@ def test_dead_child_gate_and_passthrough_output_have_exact_boundary():
         passed = passthrough(produced, right)
         return add(passed, right)
 
-    kernel = make_word_kernel(CELL_BITS)
-
-    def constructor(_x, _a):
-        return producer.serialize(root)
-
-    circuit, replay, _ = compile_call_dag(
-        kernel,
-        constructor,
-        None,
-        b"",
-        input_cells=(3, 5),
-        advice_bound_bits=0,
-    )
-    child = circuit.occurrence_summary((1,))
-    occurrence_plan = derive_occurrence_replay_plan(
-        circuit,
-        POSITIVE_TOP_LEVEL_OCCURRENCES,
-    )
+    artifact = compile_producer(root, (3, 5))
+    child = artifact.circuit.occurrence_summary((1,))
 
     assert child.external_reads == (1,)
     assert child.outputs == (2,)
-    assert occurrence_plan.boundary == (0, 1, 2, 4)
-    assert 3 not in occurrence_plan.boundary
-    assert derive_replay_boundary(circuit, replay) == occurrence_plan.boundary
+    assert tuple(artifact.boundary) == (0, 1, 2, 4)
+    assert 3 not in artifact.boundary
+    assert artifact.value_owner(3) == artifact.replay.owner_of(3)
+    assert derive_replay_boundary(artifact.circuit, artifact.replay) == artifact.boundary
 
 
 def test_zero_gate_passthrough_compiles_to_empty_partitions():
-    _, batch, result = compile_demo((0,))
-    circuit, replay, verification = result
+    batch, artifact = compile_demo((0,))
+    circuit = artifact.circuit
 
     assert circuit.gate_count == 0
     assert circuit.computed_positions.count == 0
-    assert replay.units == ()
-    assert verification.units == ()
+    assert artifact.replay.units == ()
+    assert artifact.verification.units == ()
     assert circuit.ordered_output_positions == (0,)
-    assert derive_replay_boundary(circuit, replay) == tuple(
-        range(circuit.input_count)
-    )
+    assert tuple(artifact.boundary) == tuple(range(circuit.input_count))
     assert circuit.evaluate(batch.cells()) == (batch.cells()[0],)
-    validate_compiled_result(*result)
+    validate_replay_boundary(artifact)
 
 
 def test_zero_gate_siblings_are_omitted_from_top_level_replay_cut():
-    _, _, (circuit, replay, _) = compile_demo((0, 1, 0))
+    _, artifact = compile_demo((0, 1, 0))
 
-    assert circuit.gate_count == 2
-    assert replay.unit_count == 1
-    assert replay.units[0].count == 2
+    assert artifact.circuit.gate_count == 2
+    assert artifact.replay.unit_count == 1
+    assert artifact.replay.units[0].count == 2
     assert occurrence_paths_for_policy(
-        circuit,
+        artifact.circuit,
         POSITIVE_TOP_LEVEL_OCCURRENCES,
     ) == ((1,),)
 
@@ -334,11 +314,16 @@ def test_compile_validates_advice_before_running_constructor():
     assert calls == 0
 
 
-def test_partitions_from_another_structure_are_rejected_by_boundary():
-    _, _, (first_circuit, first_replay, _) = compile_demo((1,))
-    _, _, (second_circuit, _, _) = compile_demo((2,))
+def test_partitions_from_another_structure_are_rejected():
+    _, first = compile_demo((1,))
+    _, second = compile_demo((2,))
 
+    assert first.circuit.identity != second.circuit.identity
     with pytest.raises(InvalidArtifact, match="another structure"):
-        derive_replay_boundary(second_circuit, first_replay)
-    assert first_circuit.identity != second_circuit.identity
-
+        CompiledArtifact(second.circuit, first.replay, first.verification, first.boundary)
+    with pytest.raises(InvalidArtifact, match="another structure"):
+        verification_partition_from_occurrences(
+            second.circuit,
+            first.replay,
+            occurrence_paths_for_policy(second.circuit, SINGLETON_GATES),
+        )

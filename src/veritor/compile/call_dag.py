@@ -12,14 +12,16 @@ import contextvars
 import hashlib
 import inspect
 import json
+from bisect import bisect_right
 from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import cast, overload
+from typing import overload
 
 from veritor.core import (
     ArtifactKind,
     ExecutableGate,
+    IntervalDomain,
     InvalidArtifact,
     JSONValue,
     Port,
@@ -245,7 +247,9 @@ class Producer:
                 )
                 for parameter in parameters
             ):
-                raise ProducerError("gate functions need fixed positive positional arity")
+                raise ProducerError(
+                    "gate functions need fixed positive positional arity"
+                )
             if gate_name in self._gates:
                 raise ProducerError(f"duplicate producer gate {gate_name!r}")
             gate = ProducerGate(self, gate_name, len(parameters))
@@ -438,16 +442,10 @@ class SemanticRegistry:
     def relation_id(self, gate_name: str) -> str:
         if gate_name not in {gate.name for gate in self.gates}:
             raise KeyError(gate_name)
-        return (
-            f"{self.registry_id}@{self.registry_version}/"
-            f"relation/{gate_name}"
-        )
+        return f"{self.registry_id}@{self.registry_version}/relation/{gate_name}"
 
     def value_type_id(self, cell_bits: int) -> str:
-        return (
-            f"{self.value_schema_id}@{self.value_schema_version}/"
-            f"u{cell_bits}"
-        )
+        return f"{self.value_schema_id}@{self.value_schema_version}/u{cell_bits}"
 
     @property
     def operator_manifest(self) -> dict[str, JSONValue]:
@@ -530,9 +528,6 @@ class WordValueCodec:
             )
         return self.validate(int.from_bytes(payload, "big"), where="encoded value")
 
-    encode_value = encode
-    decode_value = decode
-
 
 class TrustedRelationEvaluator:
     """Evaluate relation identifiers from one explicit semantic registry."""
@@ -545,9 +540,7 @@ class TrustedRelationEvaluator:
         codec: WordValueCodec,
     ) -> None:
         by_operation = {gate.name: gate for gate in registry.gates}
-        by_relation = {
-            registry.relation_id(gate.name): gate for gate in registry.gates
-        }
+        by_relation = {registry.relation_id(gate.name): gate for gate in registry.gates}
         self._registry = registry
         self._codec = codec
         self._by_operation = MappingProxyType(by_operation)
@@ -617,7 +610,7 @@ _Location = _InputLocation | _GateLocation
 
 
 @dataclass(frozen=True, slots=True)
-class _ValidatedLeaf:
+class ValidatedLeaf:
     gate: GateSpec
     args: tuple[_Location, ...]
     gate_start: int
@@ -628,7 +621,7 @@ class _ValidatedLeaf:
 
 
 @dataclass(frozen=True, slots=True)
-class _ValidatedCall:
+class ValidatedCall:
     child: ValidatedDefinition
     args: tuple[_Location, ...]
     gate_start: int
@@ -638,7 +631,7 @@ class _ValidatedCall:
         return self.child.gate_count
 
 
-_ValidatedStep = _ValidatedLeaf | _ValidatedCall
+_ValidatedStep = ValidatedLeaf | ValidatedCall
 
 
 @dataclass(frozen=True, slots=True)
@@ -653,10 +646,56 @@ class ValidatedDefinition:
     gate_count: int
     cost: int
     nesting_depth: int
+    step_starts: tuple[int, ...] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "step_starts", tuple(step.gate_start for step in self.steps)
+        )
 
     @property
     def output_count(self) -> int:
         return len(self.outputs)
+
+    def step_owning(self, local_ordinal: int) -> _ValidatedStep:
+        """Return the step whose gate interval contains ``local_ordinal``."""
+
+        index = bisect_right(self.step_starts, local_ordinal) - 1
+        while index >= 0:
+            step = self.steps[index]
+            if step.gate_start <= local_ordinal < step.gate_start + step.gate_count:
+                return step
+            index -= 1
+        raise RuntimeError("validated definition did not contain requested gate")
+
+
+@dataclass(frozen=True, slots=True)
+class _Frame:
+    """One level of a lazy descent into nested calls.
+
+    ``args`` are the call's arguments as locations in the parent frame; a
+    child input resolves by walking up until it reaches a gate or a root input.
+    """
+
+    definition: ValidatedDefinition
+    gate_base: int
+    parent: _Frame | None
+    args: tuple[_Location, ...]
+
+    def resolve_input(self, index: int, root_input_count: int) -> int:
+        frame = self
+        while frame.parent is not None:
+            location = frame.args[index]
+            frame = frame.parent
+            if not isinstance(location, _InputLocation):
+                return root_input_count + frame.gate_base + location.ordinal
+            index = location.index
+        return index
+
+    def resolve(self, location: _Location, root_input_count: int) -> int:
+        if isinstance(location, _InputLocation):
+            return self.resolve_input(location.index, root_input_count)
+        return root_input_count + self.gate_base + location.ordinal
 
 
 @dataclass(frozen=True, slots=True)
@@ -710,114 +749,20 @@ class OccurrenceSummary:
 
 @dataclass(frozen=True, slots=True)
 class ReplayPlan:
-    """A validated occurrence cut and its exact staged-commitment boundary."""
+    """A validated occurrence cut and the replay boundary it induces.
+
+    ``boundary`` holds every input position, every root output position, and
+    every position read across a unit boundary.  It is derived from occurrence
+    interfaces alone, so its cost is proportional to the number of units and
+    their interfaces rather than to the number of gates.
+    """
 
     root_digest: str
     root_input_count: int
     root_gate_count: int
     root_outputs: tuple[int, ...]
     units: tuple[OccurrenceSummary, ...]
-    boundary: tuple[int, ...]
-
-    @property
-    def value_count(self) -> int:
-        return self.root_input_count + self.root_gate_count
-
-    def unit_index_for_gate(self, gate_ordinal: int) -> int:
-        if (
-            type(gate_ordinal) is not int
-            or gate_ordinal < 0
-            or gate_ordinal >= self.root_gate_count
-        ):
-            raise KernelReject("gate ordinal is out of range")
-        low = 0
-        high = len(self.units)
-        while low < high:
-            middle = (low + high) // 2
-            unit = self.units[middle]
-            if gate_ordinal < unit.gate_start:
-                high = middle
-            elif gate_ordinal >= unit.gate_stop:
-                low = middle + 1
-            else:
-                return middle
-        raise RuntimeError("validated replay plan does not own requested gate")
-
-    def challenged_unit_indices(
-        self,
-        sampled_gate_ordinals: Sequence[int],
-    ) -> tuple[int, ...]:
-        return tuple(
-            sorted(
-                {
-                    self.unit_index_for_gate(gate_ordinal)
-                    for gate_ordinal in sampled_gate_ordinals
-                }
-            )
-        )
-
-    def interior_positions(self, unit_index: int) -> tuple[int, ...]:
-        if (
-            type(unit_index) is not int
-            or unit_index < 0
-            or unit_index >= len(self.units)
-        ):
-            raise KernelReject("replay unit index is out of range")
-        unit = self.units[unit_index]
-        boundary = set(self.boundary)
-        return tuple(
-            position
-            for position in range(
-                self.root_input_count + unit.gate_start,
-                self.root_input_count + unit.gate_stop,
-            )
-            if position not in boundary
-        )
-
-    def expected_replay_cost(self, sampling_probability: float) -> float:
-        if (
-            isinstance(sampling_probability, bool)
-            or not isinstance(sampling_probability, (int, float))
-            or not 0 <= sampling_probability <= 1
-        ):
-            raise KernelReject("sampling probability must lie in [0, 1]")
-        probability = float(sampling_probability)
-        return sum(
-            unit.cost * (1.0 - (1.0 - probability) ** unit.gate_count)
-            for unit in self.units
-        )
-
-    def expected_two_stage_replay_cost(self, replay_probability: float) -> float:
-        if (
-            isinstance(replay_probability, bool)
-            or not isinstance(replay_probability, (int, float))
-            or not 0 <= replay_probability <= 1
-        ):
-            raise KernelReject("replay probability must lie in [0, 1]")
-        return float(replay_probability) * sum(unit.cost for unit in self.units)
-
-    def expected_two_stage_checked_gates(
-        self,
-        replay_probability: float,
-        within_unit_probability: float,
-    ) -> float:
-        """Return the expected checked-gate count under independent ``q,s``."""
-
-        for name, probability in (
-            ("replay", replay_probability),
-            ("within-unit", within_unit_probability),
-        ):
-            if (
-                isinstance(probability, bool)
-                or not isinstance(probability, (int, float))
-                or not 0 <= probability <= 1
-            ):
-                raise KernelReject(f"{name} probability must lie in [0, 1]")
-        return (
-            float(replay_probability)
-            * float(within_unit_probability)
-            * self.root_gate_count
-        )
+    boundary: IntervalDomain
 
 
 @dataclass(frozen=True, slots=True)
@@ -848,9 +793,7 @@ def _require_mapping(
     if type(value) is not dict:
         raise KernelReject(f"{where} must be an object")
     if set(value) != keys:
-        raise KernelReject(
-            f"{where} has keys {sorted(value)}; expected {sorted(keys)}"
-        )
+        raise KernelReject(f"{where} has keys {sorted(value)}; expected {sorted(keys)}")
     return value
 
 
@@ -897,9 +840,7 @@ class Kernel:
         if type(cell_bits) is not int or cell_bits <= 0:
             raise ValueError("cell_bits must be a positive integer")
         if not isinstance(semantic_registry, SemanticRegistry):
-            raise TypeError(
-                "Kernel requires an explicit, versioned SemanticRegistry"
-            )
+            raise TypeError("Kernel requires an explicit, versioned SemanticRegistry")
         if limits is not None and not isinstance(limits, CompilationLimits):
             raise TypeError("limits must be CompilationLimits")
         self.cell_bits = cell_bits
@@ -926,26 +867,6 @@ class Kernel:
         )
 
     @property
-    def max_blob_bytes(self) -> int:
-        return self.limits.max_blob_bytes
-
-    @property
-    def max_definitions_per_blob(self) -> int:
-        return self.limits.max_definitions_per_blob
-
-    @property
-    def max_steps_per_definition(self) -> int:
-        return self.limits.max_steps_per_definition
-
-    @property
-    def max_cells(self) -> int:
-        return self.limits.max_cells
-
-    @property
-    def max_cost(self) -> int:
-        return self.limits.max_cost
-
-    @property
     def cached_definition_count(self) -> int:
         return len(self._cache)
 
@@ -969,9 +890,7 @@ class Kernel:
             not isinstance(definition, ValidatedDefinition)
             or self._cache.get(definition.digest) is not definition
         ):
-            raise KernelReject(
-                "definition was not validated by this kernel instance"
-            )
+            raise KernelReject("definition was not validated by this kernel instance")
         return definition
 
     @staticmethod
@@ -1030,10 +949,10 @@ class Kernel:
         input_count = _require_int(
             body["input_count"],
             f"definition {digest} input_count",
-            maximum=self.max_cells,
+            maximum=self.limits.max_cells,
         )
         raw_steps = _require_list(body["steps"], f"definition {digest} steps")
-        if len(raw_steps) > self.max_steps_per_definition:
+        if len(raw_steps) > self.limits.max_steps_per_definition:
             raise KernelReject(f"definition {digest} has too many local steps")
 
         steps: list[_ValidatedStep] = []
@@ -1077,22 +996,21 @@ class Kernel:
                         step_outputs=step_outputs,
                         current_step=step_index,
                         where=(
-                            f"definition {digest} leaf {step_index} "
-                            f"arg {arg_index}"
+                            f"definition {digest} leaf {step_index} arg {arg_index}"
                         ),
                     )
                     for arg_index, source in enumerate(raw_args)
                 )
-                validated_leaf = _ValidatedLeaf(gate, args, gate_count)
+                validated_leaf = ValidatedLeaf(gate, args, gate_count)
                 required_inputs.update(
                     arg.index for arg in args if isinstance(arg, _InputLocation)
                 )
                 steps.append(validated_leaf)
                 step_outputs.append((_GateLocation(gate_count),))
                 gate_count = self._bounded_add(
-                    gate_count, 1, self.max_cells, "gate count"
+                    gate_count, 1, self.limits.max_cells, "gate count"
                 )
-                cost = self._bounded_add(cost, gate.cost, self.max_cost, "cost")
+                cost = self._bounded_add(cost, gate.cost, self.limits.max_cost, "cost")
                 continue
 
             if kind == "call":
@@ -1127,13 +1045,12 @@ class Kernel:
                         step_outputs=step_outputs,
                         current_step=step_index,
                         where=(
-                            f"definition {digest} call {step_index} "
-                            f"arg {arg_index}"
+                            f"definition {digest} call {step_index} arg {arg_index}"
                         ),
                     )
                     for arg_index, source in enumerate(raw_args)
                 )
-                validated_call = _ValidatedCall(child, args, gate_count)
+                validated_call = ValidatedCall(child, args, gate_count)
                 for child_input in child.required_inputs:
                     parent_location = args[child_input]
                     if isinstance(parent_location, _InputLocation):
@@ -1152,13 +1069,13 @@ class Kernel:
                 gate_count = self._bounded_add(
                     gate_count,
                     child.gate_count,
-                    self.max_cells,
+                    self.limits.max_cells,
                     "gate count",
                 )
                 cost = self._bounded_add(
                     cost,
                     child.cost,
-                    self.max_cost,
+                    self.limits.max_cost,
                     "cost",
                 )
                 nesting_depth = max(nesting_depth, child.nesting_depth + 1)
@@ -1189,7 +1106,7 @@ class Kernel:
             )
             for output_index, source in enumerate(raw_outputs)
         )
-        self._bounded_add(input_count, gate_count, self.max_cells, "cell count")
+        self._bounded_add(input_count, gate_count, self.limits.max_cells, "cell count")
         return ValidatedDefinition(
             digest=digest,
             input_count=input_count,
@@ -1211,7 +1128,7 @@ class Kernel:
 
         if type(blob) is not bytes:
             raise KernelReject("constructor output must be bytes")
-        if len(blob) > self.max_blob_bytes:
+        if len(blob) > self.limits.max_blob_bytes:
             raise KernelReject("constructor output exceeds byte limit")
         try:
             text = blob.decode("utf-8")
@@ -1232,7 +1149,9 @@ class Kernel:
         try:
             canonical = canonical_call_dag_json(document_value)
         except (TypeError, ValueError, UnicodeEncodeError, RecursionError) as error:
-            raise KernelReject("constructor output is not canonical JSON data") from error
+            raise KernelReject(
+                "constructor output is not canonical JSON data"
+            ) from error
         if canonical != blob:
             raise KernelReject("constructor output is not canonically serialized")
 
@@ -1254,7 +1173,7 @@ class Kernel:
                 f"document uses {cell_bits}-bit cells; kernel uses {self.cell_bits}"
             )
         raw_definitions = _require_list(document["definitions"], "definitions")
-        if len(raw_definitions) > self.max_definitions_per_blob:
+        if len(raw_definitions) > self.limits.max_definitions_per_blob:
             raise KernelReject("too many definitions in one constructor output")
 
         available = dict(self._cache)
@@ -1308,15 +1227,8 @@ class Kernel:
 
     def root_outputs(self, root: ValidatedDefinition) -> tuple[int, ...]:
         self.require_validated_definition(root)
-        return tuple(
-            self._global_location(
-                output,
-                input_context=tuple(range(root.input_count)),
-                gate_base=0,
-                root_input_count=root.input_count,
-            )
-            for output in root.outputs
-        )
+        frame = _Frame(root, 0, None, ())
+        return tuple(frame.resolve(output, root.input_count) for output in root.outputs)
 
     def _flatten_definition(
         self,
@@ -1330,7 +1242,7 @@ class Kernel:
         if len(gates) != gate_base:
             raise RuntimeError("internal flattening offset mismatch")
         for step in definition.steps:
-            if isinstance(step, _ValidatedLeaf):
+            if isinstance(step, ValidatedLeaf):
                 ordinal = gate_base + step.gate_start
                 reads = tuple(
                     self._global_location(
@@ -1399,33 +1311,31 @@ class Kernel:
             cost=root.cost,
         )
 
+    @staticmethod
     def _definition_occurrence_summary(
-        self,
-        definition: ValidatedDefinition,
+        frame: _Frame,
         *,
         path: OccurrencePath,
         kind: str,
-        input_context: tuple[int, ...],
-        gate_base: int,
         root_input_count: int,
     ) -> OccurrenceSummary:
+        definition = frame.definition
         external_reads = tuple(
-            sorted({input_context[index] for index in definition.required_inputs})
+            sorted(
+                {
+                    frame.resolve_input(index, root_input_count)
+                    for index in definition.required_inputs
+                }
+            )
         )
         outputs = tuple(
-            self._global_location(
-                output,
-                input_context=input_context,
-                gate_base=gate_base,
-                root_input_count=root_input_count,
-            )
-            for output in definition.outputs
+            frame.resolve(output, root_input_count) for output in definition.outputs
         )
         return OccurrenceSummary(
             path=path,
             kind=kind,
             definition_digest=definition.digest,
-            gate_start=gate_base,
+            gate_start=frame.gate_base,
             gate_count=definition.gate_count,
             cost=definition.cost,
             external_reads=external_reads,
@@ -1437,7 +1347,11 @@ class Kernel:
         root: ValidatedDefinition,
         path: OccurrencePath,
     ) -> OccurrenceSummary:
-        """Resolve an occurrence path and derive its globally wired interface."""
+        """Resolve an occurrence path and derive its globally wired interface.
+
+        Cost is ``O(depth * interface)``: argument lists of enclosing calls are
+        never materialized.
+        """
 
         self.require_validated_definition(root)
         if type(path) is not tuple or any(
@@ -1448,43 +1362,29 @@ class Kernel:
             )
 
         root_input_count = root.input_count
-        definition = root
-        input_context = tuple(range(root_input_count))
-        gate_base = 0
+        frame = _Frame(root, 0, None, ())
         if not path:
             return self._definition_occurrence_summary(
-                definition,
-                path=path,
-                kind="root",
-                input_context=input_context,
-                gate_base=gate_base,
-                root_input_count=root_input_count,
+                frame, path=path, kind="root", root_input_count=root_input_count
             )
 
         for depth, step_index in enumerate(path):
+            definition = frame.definition
             if step_index >= len(definition.steps):
-                raise KernelReject(f"occurrence path {path!r} references a missing step")
+                raise KernelReject(
+                    f"occurrence path {path!r} references a missing step"
+                )
             step = definition.steps[step_index]
             is_target = depth == len(path) - 1
-            if isinstance(step, _ValidatedLeaf):
+            if isinstance(step, ValidatedLeaf):
                 if not is_target:
                     raise KernelReject(
                         f"occurrence path {path!r} descends through a primitive leaf"
                     )
                 reads = tuple(
-                    sorted(
-                        {
-                            self._global_location(
-                                arg,
-                                input_context=input_context,
-                                gate_base=gate_base,
-                                root_input_count=root_input_count,
-                            )
-                            for arg in step.args
-                        }
-                    )
+                    sorted({frame.resolve(arg, root_input_count) for arg in step.args})
                 )
-                ordinal = gate_base + step.gate_start
+                ordinal = frame.gate_base + step.gate_start
                 return OccurrenceSummary(
                     path=path,
                     kind="leaf",
@@ -1496,28 +1396,13 @@ class Kernel:
                     outputs=(root_input_count + ordinal,),
                 )
 
-            child_context = tuple(
-                self._global_location(
-                    arg,
-                    input_context=input_context,
-                    gate_base=gate_base,
-                    root_input_count=root_input_count,
-                )
-                for arg in step.args
+            frame = _Frame(
+                step.child, frame.gate_base + step.gate_start, frame, step.args
             )
-            child_gate_base = gate_base + step.gate_start
             if is_target:
                 return self._definition_occurrence_summary(
-                    step.child,
-                    path=path,
-                    kind="call",
-                    input_context=child_context,
-                    gate_base=child_gate_base,
-                    root_input_count=root_input_count,
+                    frame, path=path, kind="call", root_input_count=root_input_count
                 )
-            definition = step.child
-            input_context = child_context
-            gate_base = child_gate_base
 
         raise RuntimeError("validated occurrence path did not resolve")
 
@@ -1536,7 +1421,7 @@ class Kernel:
         ) -> None:
             for step_index, step in enumerate(definition.steps):
                 path = (*prefix, step_index)
-                if isinstance(step, _ValidatedLeaf):
+                if isinstance(step, ValidatedLeaf):
                     paths.append(path)
                 else:
                     visit(step.child, path)
@@ -1556,8 +1441,7 @@ class Kernel:
                 type(step_index) is not int or step_index < 0 for step_index in path
             ):
                 raise KernelReject(
-                    "every replay-unit path must be a tuple of "
-                    "nonnegative step indices"
+                    "every replay-unit path must be a tuple of nonnegative step indices"
                 )
             paths.append(path)
         if len(set(paths)) != len(paths):
@@ -1597,24 +1481,23 @@ class Kernel:
             total_cost += unit.cost
         if cursor != root.gate_count:
             raise KernelReject(
-                "replay-unit cut leaves gate interval "
-                f"[{cursor}, {root.gate_count})"
+                f"replay-unit cut leaves gate interval [{cursor}, {root.gate_count})"
             )
         if total_cost != root.cost:
             raise RuntimeError("validated replay-unit costs do not partition root cost")
 
         root_outputs = self.root_outputs(root)
-        boundary = set(range(root.input_count))
-        boundary.update(root_outputs)
+        intervals: list[tuple[int, int]] = [(0, root.input_count)]
+        intervals.extend((item, item + 1) for item in root_outputs)
         for unit in units:
-            boundary.update(unit.external_reads)
+            intervals.extend((item, item + 1) for item in unit.external_reads)
         return ReplayPlan(
             root_digest=root.digest,
             root_input_count=root.input_count,
             root_gate_count=root.gate_count,
             root_outputs=root_outputs,
             units=units,
-            boundary=tuple(sorted(boundary)),
+            boundary=IntervalDomain(intervals),
         )
 
     def validate_replay_plan(
@@ -1624,7 +1507,9 @@ class Kernel:
     ) -> None:
         """Re-derive a replay plan and require exact circuit-relative agreement."""
 
-        if not isinstance(root, ValidatedDefinition) or not isinstance(plan, ReplayPlan):
+        if not isinstance(root, ValidatedDefinition) or not isinstance(
+            plan, ReplayPlan
+        ):
             raise KernelReject("replay plan validation received the wrong type")
         if type(plan.units) is not tuple or any(
             not isinstance(unit, OccurrenceSummary) for unit in plan.units
@@ -1637,69 +1522,36 @@ class Kernel:
         if plan != expected:
             raise KernelReject("replay plan does not match the circuit")
 
-    def _gate_at(
-        self,
-        definition: ValidatedDefinition,
-        local_ordinal: int,
-        *,
-        input_context: tuple[int, ...],
-        gate_base: int,
-        root_input_count: int,
-    ) -> FlatGate:
-        for step in definition.steps:
-            if not (
-                step.gate_start
-                <= local_ordinal
-                < step.gate_start + step.gate_count
-            ):
-                continue
-            if isinstance(step, _ValidatedLeaf):
-                ordinal = gate_base + local_ordinal
+    def gate_at(self, root: ValidatedDefinition, gate_ordinal: int) -> FlatGate:
+        """Return one conceptual primitive without flattening the circuit.
+
+        The descent keeps a chain of call frames instead of materializing each
+        call's argument list, so a lookup costs ``O(depth * arity)`` regardless
+        of how many arguments the enclosing calls take.
+        """
+
+        self.require_validated_definition(root)
+        if type(gate_ordinal) is not int or not 0 <= gate_ordinal < root.gate_count:
+            raise KernelReject("gate ordinal is out of range")
+        root_input_count = root.input_count
+        frame = _Frame(root, 0, None, ())
+        local_ordinal = gate_ordinal
+        while True:
+            step = frame.definition.step_owning(local_ordinal)
+            if isinstance(step, ValidatedLeaf):
+                ordinal = frame.gate_base + local_ordinal
                 return FlatGate(
                     ordinal=ordinal,
                     write=root_input_count + ordinal,
                     function=step.gate.name,
                     reads=tuple(
-                        self._global_location(
-                            arg,
-                            input_context=input_context,
-                            gate_base=gate_base,
-                            root_input_count=root_input_count,
-                        )
-                        for arg in step.args
+                        frame.resolve(arg, root_input_count) for arg in step.args
                     ),
                 )
-            child_context = tuple(
-                self._global_location(
-                    arg,
-                    input_context=input_context,
-                    gate_base=gate_base,
-                    root_input_count=root_input_count,
-                )
-                for arg in step.args
+            frame = _Frame(
+                step.child, frame.gate_base + step.gate_start, frame, step.args
             )
-            return self._gate_at(
-                step.child,
-                local_ordinal - step.gate_start,
-                input_context=child_context,
-                gate_base=gate_base + step.gate_start,
-                root_input_count=root_input_count,
-            )
-        raise RuntimeError("validated definition did not contain requested gate")
-
-    def gate_at(self, root: ValidatedDefinition, gate_ordinal: int) -> FlatGate:
-        """Return one conceptual primitive without flattening the circuit."""
-
-        self.require_validated_definition(root)
-        if type(gate_ordinal) is not int or not 0 <= gate_ordinal < root.gate_count:
-            raise KernelReject("gate ordinal is out of range")
-        return self._gate_at(
-            root,
-            gate_ordinal,
-            input_context=tuple(range(root.input_count)),
-            gate_base=0,
-            root_input_count=root.input_count,
-        )
+            local_ordinal -= step.gate_start
 
     def apply_gate(self, function: str, args: Sequence[int]) -> int:
         return self.relation_evaluator.evaluate_operation(function, args)
@@ -1823,10 +1675,6 @@ class CallDagCircuit:
         return self._kernel.value_codec
 
     @property
-    def codec(self) -> WordValueCodec:
-        return self.value_codec
-
-    @property
     def relation_evaluator(self) -> TrustedRelationEvaluator:
         return self._kernel.relation_evaluator
 
@@ -1877,8 +1725,32 @@ class CallDagCircuit:
             metadata={"arity": spec.arity, "cost": spec.cost},
         )
 
-    def evaluate_relation(self, relation_id: str, args: Sequence[int]) -> int:
-        return self.relation_evaluator.evaluate(relation_id, args)
+    # -- trusted semantics (core.ExecutableCircuit) --------------------------
+
+    def _require_value_type(self, value_type: str) -> None:
+        if value_type != self.value_codec.value_type_id:
+            raise KernelReject(f"unknown value type {value_type!r}")
+
+    def encode_value(self, value_type: str, value: object) -> bytes:
+        self._require_value_type(value_type)
+        return self.value_codec.encode(value)
+
+    def decode_value(self, value_type: str, payload: bytes) -> int:
+        self._require_value_type(value_type)
+        return self.value_codec.decode(payload)
+
+    def evaluate_relation(self, relation_id: str, arguments: Sequence[object]) -> int:
+        return self.relation_evaluator.evaluate(
+            relation_id, tuple(self.value_codec.validate(item) for item in arguments)
+        )
+
+    def check_relation(
+        self,
+        relation_id: str,
+        arguments: Sequence[object],
+        output: object,
+    ) -> bool:
+        return self.evaluate_relation(relation_id, arguments) == output
 
     def flatten(self) -> FlatCircuit:
         return self._kernel.flatten(self._root)
@@ -1926,7 +1798,7 @@ def construct(
 
 
 # ---------------------------------------------------------------------------
-# Self-contained demo constructor used by examples and downstream plug-ins
+# Modular word arithmetic: the trusted semantics shared by the built-in plug-ins
 # ---------------------------------------------------------------------------
 
 
@@ -1977,132 +1849,3 @@ def make_word_kernel(
         ),
         limits=limits,
     )
-
-
-@dataclass(frozen=True, slots=True)
-class DotRequest:
-    accumulator: int
-    values: tuple[int, ...]
-    weights: tuple[int, ...]
-
-    @property
-    def length(self) -> int:
-        return len(self.values)
-
-    def cells(self) -> tuple[int, ...]:
-        if len(self.values) != len(self.weights):
-            raise ProducerError("dot-product values and weights have different lengths")
-        return (self.accumulator, *self.values, *self.weights)
-
-
-@dataclass(frozen=True, slots=True)
-class BatchInput:
-    requests: tuple[DotRequest, ...]
-
-    def cells(self) -> tuple[int, ...]:
-        return tuple(cell for request in self.requests for cell in request.cells())
-
-
-class DemoG:
-    """A memoized demo constructor whose emitted bytes remain pure."""
-
-    def __init__(self, cell_bits: int = 8) -> None:
-        self.cell_bits = cell_bits
-        self.producer = Producer(cell_bits)
-
-        @self.producer.gate(name="add")
-        def add(left: int, right: int) -> int:
-            return left + right
-
-        @self.producer.gate(name="mul")
-        def mul(left: int, right: int) -> int:
-            return left * right
-
-        self.add = add
-        self.mul = mul
-
-        @self.producer.circuit(key=("mac",), input_count=3)
-        def mac(accumulator: Wire, value: Wire, weight: Wire) -> Wire:
-            return add(accumulator, mul(value, weight))
-
-        self.mac = mac
-
-    def dot(self, length: int) -> ProducerDefinition:
-        if type(length) is not int or length < 0:
-            raise ProducerError("dot length must be a nonnegative integer")
-        input_count = 1 + 2 * length
-
-        @self.producer.circuit(key=("dot", length), input_count=input_count)
-        def dot_definition(*inputs: Wire) -> Wire:
-            accumulator = inputs[0]
-            values = inputs[1 : 1 + length]
-            weights = inputs[1 + length :]
-            for value, weight in zip(values, weights, strict=True):
-                accumulator = cast(Wire, self.mac(accumulator, value, weight))
-            return accumulator
-
-        return dot_definition
-
-    def batch(self, lengths: tuple[int, ...]) -> ProducerDefinition:
-        input_count = sum(1 + 2 * length for length in lengths)
-
-        @self.producer.circuit(key=("batch", lengths), input_count=input_count)
-        def batch_definition(*inputs: Wire) -> tuple[Wire, ...]:
-            outputs: list[Wire] = []
-            offset = 0
-            for length in lengths:
-                child = self.dot(length)
-                child_input_count = 1 + 2 * length
-                outputs.append(
-                    cast(
-                        Wire,
-                        child(*inputs[offset : offset + child_input_count]),
-                    )
-                )
-                offset += child_input_count
-            return tuple(outputs)
-
-        return batch_definition
-
-    def __call__(self, x: object, a: bytes) -> bytes:
-        if not isinstance(x, BatchInput):
-            raise ProducerError("DemoG expects BatchInput")
-        if type(a) is not bytes:
-            raise ProducerError("DemoG advice must be bytes")
-        for request in x.requests:
-            request.cells()
-        root = self.batch(tuple(request.length for request in x.requests))
-        return self.producer.serialize(root)
-
-
-def expected_dot_outputs(batch: BatchInput, cell_bits: int) -> tuple[int, ...]:
-    mask = (1 << cell_bits) - 1
-    outputs = []
-    for request in batch.requests:
-        accumulator = request.accumulator
-        for value, weight in zip(request.values, request.weights, strict=True):
-            accumulator = (accumulator + value * weight) & mask
-        outputs.append(accumulator)
-    return tuple(outputs)
-
-
-def make_demo_request(
-    length: int,
-    seed: int,
-    cell_bits: int = 8,
-) -> DotRequest:
-    mask = (1 << cell_bits) - 1
-    values = tuple((seed + 3 * index + 1) & mask for index in range(length))
-    weights = tuple((2 * seed + 5 * index + 1) & mask for index in range(length))
-    return DotRequest(seed & mask, values, weights)
-
-
-# Private compatibility names make adapting prototype invariants straightforward.
-_canonical_json = canonical_call_dag_json
-_definition_digest = definition_digest
-
-# Public spellings let callers inspect validated occurrence trees without
-# depending on implementation-private class names.
-ValidatedLeaf = _ValidatedLeaf
-ValidatedCall = _ValidatedCall
-

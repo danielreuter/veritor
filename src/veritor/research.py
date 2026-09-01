@@ -2,18 +2,17 @@
 
 The facade keeps the repository's three artifact kinds distinct:
 
-* DemoG compiles to an executable protocol circuit;
+* DemoG and matmul compile to an executable protocol circuit;
 * GPT-2 compiles to indexed structural metadata; and
 * Kimi-K3, DeepSeek-V4-Pro, and Inkling compile to aggregate bound models.
 
-Only the first kind can be adapted to staged transcript semantics.  Static
-capacity analysis remains available for all artifacts when their certified
-preconditions hold.
+Only the first kind carries a :class:`~veritor.core.CompiledArtifact` that
+the protocol can verify.  Static capacity analysis remains available for all
+artifacts when their certified preconditions hold.
 """
 
 from __future__ import annotations
 
-import secrets
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -38,9 +37,9 @@ from veritor.analysis import (
     exhaustive_finite_bound,
     optimize_policy_grid,
 )
-from veritor.commitment import MERKLE_SHA256_V1, ValueCommitmentRegistry
 from veritor.core import (
     Capability,
+    CompiledArtifact,
     ProbabilityInput,
     Unsupported,
     VerificationLimits,
@@ -63,26 +62,15 @@ from veritor.plugins import (
     TraceBinding,
     compile_architecture,
 )
-from veritor.staged import (
-    TRANSPARENT_LOCAL_CHECK_V1,
-    InteractionError,
-    InteractionPhase,
-    InteractiveProtocolRun,
-    InteractivePublicContext,
-    InteractiveVerificationResult,
-    ResolvedExecutableArtifact,
-    SampleEvidenceRegistry,
-    StagedProverSession,
-    StagedVerifierSession,
-    TrustedArtifactRegistry,
-    TrustedVerificationContext,
+from veritor.protocol import (
+    Expectation,
+    ProtocolRun,
     VerificationCode,
-    VerificationExpectation,
     VerificationReport,
-    VerificationStatus,
-    build_transcript_bytes,
-    run_interactive_protocol,
-    verify_transcript_bytes,
+    encode_transcript,
+    make_expectation,
+    run_protocol,
+    verify_transcript,
 )
 
 
@@ -195,7 +183,6 @@ class BoundOptionOverrides(TypedDict, total=False):
 type BoundOptionsInput = BoundOptions | Mapping[str, object] | None
 type BoundResult = FixedPolicyBoundResult | Unsupported
 type OptimizationResult = PolicyGridOptimizationResult | Unsupported
-type ExecutableArtifactResult = ResolvedExecutableArtifact | Unsupported
 
 DEFAULT_CONFORMANCE_POLICY = VerificationPolicy(1, 1, 0)
 _DEFAULT_BOUND_OPTIONS = BoundOptions()
@@ -327,25 +314,18 @@ def Compile(
 
 def Verify(
     transcript_bytes: bytes,
-    expectation: VerificationExpectation,
-    trust: TrustedVerificationContext,
+    expectation: Expectation,
+    artifact: CompiledArtifact,
     *,
     limits: VerificationLimits | None = None,
 ) -> VerificationReport:
-    """Purely verify canonical staged transcript bytes against local trust.
+    """Purely verify canonical transcript bytes against a trusted artifact.
 
-    ``expectation`` and ``trust`` are mandatory verifier-local inputs.  In
-    particular, both 32-byte phase seeds must already be present in the
-    expectation; no transcript field is treated as their source of truth.
+    ``expectation`` carries both 32-byte verifier seeds; no transcript field
+    is ever treated as their source of truth.
     """
 
-    checked_limits = VerificationLimits() if limits is None else limits
-    return verify_transcript_bytes(
-        transcript_bytes,
-        expectation,
-        trust,
-        checked_limits,
-    )
+    return verify_transcript(transcript_bytes, expectation, artifact, limits)
 
 
 def _finite_bound(
@@ -500,11 +480,9 @@ def Optimize(
         return error.outcome
 
 
-def adapt_protocol_artifact(
+def _executable(
     artifact: CompileResult,
-) -> ExecutableArtifactResult:
-    """Attach only the executable services trusted by a protocol artifact."""
-
+) -> ProtocolCircuitArtifact | Unsupported:
     if not isinstance(
         artifact,
         (
@@ -516,50 +494,7 @@ def adapt_protocol_artifact(
         raise TypeError("artifact must be a Compile result")
     if not isinstance(artifact, ProtocolCircuitArtifact):
         return _unsupported_from_capability(artifact, Capability.VERIFY)
-    return ResolvedExecutableArtifact.from_uniform_circuit(
-        artifact.circuit,
-        artifact.replay_partition,
-        artifact.verification_partition,
-        codec=artifact.circuit.value_codec,
-        relation_evaluator=artifact.circuit.relation_evaluator,
-    )
-
-
-def create_trusted_artifact_registry(
-    artifact: CompileResult,
-) -> TrustedArtifactRegistry | Unsupported:
-    """Create a content-addressed verifier-local registry for one artifact."""
-
-    resolved = adapt_protocol_artifact(artifact)
-    if isinstance(resolved, Unsupported):
-        return resolved
-    return TrustedArtifactRegistry((resolved,))
-
-
-def create_trusted_verification_context(
-    artifact: CompileResult,
-    *,
-    value_commitment_backends: ValueCommitmentRegistry | None = None,
-    sample_evidence_backends: SampleEvidenceRegistry | None = None,
-) -> TrustedVerificationContext | Unsupported:
-    """Create local artifact and backend trust roots for staged verification."""
-
-    registry = create_trusted_artifact_registry(artifact)
-    if isinstance(registry, Unsupported):
-        return registry
-    return TrustedVerificationContext(
-        artifact_resolver=registry,
-        value_commitment_backends=(
-            ValueCommitmentRegistry.with_defaults()
-            if value_commitment_backends is None
-            else value_commitment_backends
-        ),
-        sample_evidence_backends=(
-            SampleEvidenceRegistry.with_defaults()
-            if sample_evidence_backends is None
-            else sample_evidence_backends
-        ),
-    )
+    return artifact
 
 
 def make_verification_expectation(
@@ -571,56 +506,33 @@ def make_verification_expectation(
     session_id: bytes | None = None,
     q_seed: bytes | None = None,
     s_seed: bytes | None = None,
-    value_commitment_backend_id: str = MERKLE_SHA256_V1,
-    sample_evidence_backend_id: str = TRANSPARENT_LOCAL_CHECK_V1,
-) -> VerificationExpectation | Unsupported:
-    """Build a verifier-local expectation with fresh CSPRNG seeds by default."""
+) -> Expectation | Unsupported:
+    """Build a verifier-local expectation for an executable compile result.
 
-    if not isinstance(
-        artifact,
-        (
-            ProtocolCircuitArtifact,
-            IndexedStructureArtifact,
-            AggregateBoundArtifact,
-        ),
-    ):
-        raise TypeError("artifact must be a Compile result")
-    if not isinstance(artifact, ProtocolCircuitArtifact):
-        return _unsupported_from_capability(artifact, Capability.VERIFY)
-    return VerificationExpectation(
-        session_id=secrets.token_bytes(32) if session_id is None else session_id,
-        compiled_result_digest=str(artifact.compiled_identity.digest),
-        policy=policy,
-        public_inputs=(
-            tuple(artifact.public_inputs)
-            if public_inputs is None
-            else tuple(public_inputs)
-        ),
-        claimed_outputs=(
-            tuple(artifact.expected_outputs)
-            if claimed_outputs is None
-            else tuple(claimed_outputs)
-        ),
-        q_seed=secrets.token_bytes(32) if q_seed is None else q_seed,
-        s_seed=secrets.token_bytes(32) if s_seed is None else s_seed,
-        value_commitment_backend_id=value_commitment_backend_id,
-        sample_evidence_backend_id=sample_evidence_backend_id,
+    Public inputs and claimed outputs default to the values bound into the
+    artifact; seeds are drawn from the CSPRNG unless given.
+    """
+
+    executable = _executable(artifact)
+    if isinstance(executable, Unsupported):
+        return executable
+    return make_expectation(
+        executable.compiled,
+        policy,
+        executable.public_inputs if public_inputs is None else public_inputs,
+        executable.expected_outputs if claimed_outputs is None else claimed_outputs,
+        session_id=session_id,
+        q_seed=q_seed,
+        s_seed=s_seed,
     )
 
 
 @dataclass(frozen=True, slots=True)
 class ExecutableConformanceTranscript:
-    """One-shot fixture, not evidence of interactive phase ordering."""
+    """One-shot honest fixture, not evidence of interactive phase ordering."""
 
     transcript_bytes: bytes
-    expectation: VerificationExpectation
-    trust: TrustedVerificationContext
-
-    @property
-    def data(self) -> bytes:
-        """Concise alias for the canonical transcript bytes."""
-
-        return self.transcript_bytes
+    expectation: Expectation
 
 
 def build_executable_conformance_transcript(
@@ -633,85 +545,39 @@ def build_executable_conformance_transcript(
     s_seed: bytes | None = None,
     limits: VerificationLimits | None = None,
 ) -> ExecutableConformanceTranscript | Unsupported:
-    """Build a complete honest executable transcript for local conformance.
+    """Run an honest prover against the verifier in one process.
 
-    This helper evaluates the trusted tape, constructs transparent evidence,
-    and serializes every phase in one process.  It is deliberately not a
-    secure interaction and cannot prove that ``q`` was withheld until the
-    boundary was fixed or that ``s`` was withheld until selected-unit roots
-    were fixed.
+    The trusted tape is evaluated, the claimed outputs are read from it, and
+    both protocol parties run locally via :func:`run_protocol`.  This cannot
+    demonstrate that either seed was withheld until the message it depends on
+    was fixed; it is a conformance fixture for :func:`Verify`.
     """
 
-    if not isinstance(
-        artifact,
-        (
-            ProtocolCircuitArtifact,
-            IndexedStructureArtifact,
-            AggregateBoundArtifact,
-        ),
-    ):
-        raise TypeError("artifact must be a Compile result")
-    if not isinstance(artifact, ProtocolCircuitArtifact):
-        return _unsupported_from_capability(artifact, Capability.VERIFY)
-    resolved = adapt_protocol_artifact(artifact)
-    if isinstance(resolved, Unsupported):
-        return resolved
+    executable = _executable(artifact)
+    if isinstance(executable, Unsupported):
+        return executable
+    compiled = executable.compiled
     inputs = (
-        tuple(artifact.public_inputs)
-        if public_inputs is None
-        else tuple(public_inputs)
+        executable.public_inputs if public_inputs is None else tuple(public_inputs)
     )
-    tape = artifact.circuit.evaluate_tape(inputs)
-    assignment = dict(enumerate(tape))
-    outputs = tuple(
-        assignment[int(port.position)] for port in artifact.circuit.output_ports
-    )
-    expectation = make_verification_expectation(
-        artifact,
+    values = dict(enumerate(compiled.circuit.evaluate_tape(inputs)))
+    outputs = tuple(values[int(port.position)] for port in compiled.circuit.output_ports)
+    expectation = make_expectation(
+        compiled,
         policy,
-        public_inputs=inputs,
-        claimed_outputs=outputs,
+        inputs,
+        outputs,
         session_id=session_id,
         q_seed=q_seed,
         s_seed=s_seed,
     )
-    if isinstance(expectation, Unsupported):
-        return expectation
-    trust = create_trusted_verification_context(artifact)
-    if isinstance(trust, Unsupported):
-        return trust
-    checked_limits = VerificationLimits() if limits is None else limits
-    data = build_transcript_bytes(
-        resolved,
-        expectation,
-        assignment,
-        limits=checked_limits,
-    )
-    return ExecutableConformanceTranscript(data, expectation, trust)
-
-
-def build_demo_conformance_transcript(
-    artifact: CompileResult | None = None,
-    policy: VerificationPolicy = DEFAULT_CONFORMANCE_POLICY,
-    *,
-    public_inputs: Sequence[int] | None = None,
-    session_id: bytes | None = None,
-    q_seed: bytes | None = None,
-    s_seed: bytes | None = None,
-    limits: VerificationLimits | None = None,
-) -> ExecutableConformanceTranscript | Unsupported:
-    """Compatibility wrapper defaulting the generic builder to DemoG."""
-
-    selected = Compile(ArchitectureId.DEMO_G) if artifact is None else artifact
-    return build_executable_conformance_transcript(
-        selected,
-        policy,
-        public_inputs=public_inputs,
-        session_id=session_id,
-        q_seed=q_seed,
-        s_seed=s_seed,
-        limits=limits,
-    )
+    run = run_protocol(compiled, expectation, values, limits=limits)
+    if run.transcript is None:
+        raise RuntimeError(
+            f"honest conformance run was rejected: {run.report.code.value}: "
+            f"{run.report.detail}"
+        )
+    return ExecutableConformanceTranscript(encode_transcript(run.transcript), expectation)
 
 
 __all__ = [
@@ -727,10 +593,11 @@ __all__ = [
     "BoundResult",
     "Compile",
     "CompileResult",
+    "CompiledArtifact",
     "DeepSeekV4ProCompileRequest",
     "DemoGCompileRequest",
-    "ExecutableArtifactResult",
     "ExecutableConformanceTranscript",
+    "Expectation",
     "FiniteBoundSolver",
     "FixedPolicyBoundResult",
     "GPT2ClassGranularity",
@@ -738,36 +605,22 @@ __all__ = [
     "GreedyTextExecutionShape",
     "IndexedStructureArtifact",
     "InklingCompileRequest",
-    "InteractionError",
-    "InteractionPhase",
-    "InteractiveProtocolRun",
-    "InteractivePublicContext",
-    "InteractiveVerificationResult",
     "KimiK3CompileRequest",
     "MatmulCompileRequest",
     "OptimizationResult",
+    "Optimize",
     "PolicyGridOptimizationResult",
     "ProtocolCircuitArtifact",
+    "ProtocolRun",
     "RationalPolicyGrid",
-    "ResolvedExecutableArtifact",
-    "StagedProverSession",
-    "StagedVerifierSession",
     "TraceBinding",
-    "TrustedArtifactRegistry",
-    "TrustedVerificationContext",
     "Unsupported",
     "VerificationCode",
-    "VerificationExpectation",
     "VerificationLimits",
     "VerificationPolicy",
     "VerificationReport",
-    "VerificationStatus",
     "Verify",
-    "adapt_protocol_artifact",
-    "build_demo_conformance_transcript",
     "build_executable_conformance_transcript",
-    "create_trusted_artifact_registry",
-    "create_trusted_verification_context",
     "make_verification_expectation",
-    "run_interactive_protocol",
+    "run_protocol",
 ]

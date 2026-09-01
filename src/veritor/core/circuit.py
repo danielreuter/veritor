@@ -195,14 +195,28 @@ class StructuralCircuit(Protocol):
 
 @runtime_checkable
 class ExecutableCircuit(StructuralCircuit, Protocol):
-    """A structural circuit that also exposes trusted local relations."""
+    """A structural circuit that also carries its trusted local semantics.
+
+    ``encode_value``/``decode_value`` define the canonical byte form of every
+    value type the circuit uses; ``decode_value`` must reject any payload that
+    ``encode_value`` would not produce.  ``evaluate_relation`` computes a gate's
+    output (used by an honest prover to replay) and ``check_relation`` decides
+    whether a claimed output satisfies the relation (used by the verifier).
+    """
 
     def executable_gate_at(self, position: Position) -> ExecutableGate: ...
 
+    def encode_value(self, value_type: str, value: object) -> bytes: ...
 
-CircuitAccess = StructuralCircuit
-StructuralCircuitAccess = StructuralCircuit
-ExecutableCircuitAccess = ExecutableCircuit
+    def decode_value(self, value_type: str, payload: bytes) -> object: ...
+
+    def evaluate_relation(
+        self, relation_id: str, arguments: tuple[object, ...]
+    ) -> object: ...
+
+    def check_relation(
+        self, relation_id: str, arguments: tuple[object, ...], output: object
+    ) -> bool: ...
 
 
 def ordered_output_positions(circuit: StructuralCircuit) -> tuple[Position, ...]:

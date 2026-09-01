@@ -122,22 +122,34 @@ def test_compiled_identity_binds_ordered_component_roles():
         PartitionKind.VERIFICATION,
         "verification",
     )
+    boundary = digest("boundary")
 
-    compiled = CompiledResultIdentity.from_components(
-        structure_identity,
-        replay,
-        verification,
-    )
+    def compiled(**changes):
+        fields = {
+            "schema_version": "1",
+            "structure_digest": structure_identity.digest,
+            "replay_partition_digest": replay.digest,
+            "verification_partition_digest": verification.digest,
+            "boundary_digest": boundary,
+        }
+        fields.update(changes)
+        return CompiledResultIdentity(**fields)
 
-    assert compiled.structure_digest == structure_identity.digest
-    assert compiled.replay_partition_digest == replay.digest
-    assert compiled.verification_partition_digest == verification.digest
-    with pytest.raises(InvalidArtifact, match="wrong partition kind"):
-        CompiledResultIdentity.from_components(
-            structure_identity,
-            verification,
-            replay,
-        )
+    identity = compiled()
+
+    assert identity.structure_digest == structure_identity.digest
+    assert identity.replay_partition_digest == replay.digest
+    assert identity.verification_partition_digest == verification.digest
+    assert identity.boundary_digest == boundary
+    assert identity.manifest["boundary_digest"] == boundary
+    assert identity == compiled()
+    assert identity.digest != compiled(boundary_digest=digest("other-boundary")).digest
+    assert identity.digest != compiled(
+        replay_partition_digest=verification.digest,
+        verification_partition_digest=replay.digest,
+    ).digest
+    with pytest.raises(InvalidArtifact):
+        compiled(boundary_digest="not-a-digest")
 
 
 def test_digest_validation_rejects_noncanonical_sha256_text():

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from circuit_cut_analysis.capacity import LogCardinality
-from veritor.core import Capability, validate_compiled_result
+from veritor.core import Capability, CompiledArtifact
 from veritor.plugins import (
     ArchitectureId,
     CapacityClaimKind,
@@ -32,15 +32,14 @@ def _request(*, marker: int = 1, cell_bits: int = 8) -> MatmulCompileRequest:
     )
 
 
-def test_matmul_plugin_exposes_literal_executable_tuple() -> None:
+def test_matmul_plugin_exposes_the_compiled_artifact() -> None:
     request = _request()
     artifact = compile_matmul(request)
 
     assert isinstance(artifact, ProtocolCircuitArtifact)
     assert artifact.architecture_id is ArchitectureId.MATMUL
-    assert artifact.compiled_identity == validate_compiled_result(
-        *artifact.literal_tuple
-    )
+    assert isinstance(artifact.compiled, CompiledArtifact)
+    assert artifact.compiled_identity == artifact.compiled.identity
     assert artifact.public_inputs == matmul_public_inputs(request)
     assert artifact.expected_outputs == matmul_expected_outputs(request)
     assert artifact.execute() == request.expected_outputs

@@ -14,12 +14,10 @@ from veritor import (
     ProtocolCircuitArtifact,
     Unsupported,
     VerificationPolicy,
-    adapt_protocol_artifact,
-    build_demo_conformance_transcript,
-    create_trusted_verification_context,
+    build_executable_conformance_transcript,
     make_verification_expectation,
 )
-from veritor.staged import StagedProtocolError
+from veritor.protocol import ProtocolError
 
 
 @pytest.mark.parametrize(
@@ -33,7 +31,7 @@ from veritor.staged import StagedProtocolError
         (ArchitectureId.INKLING, AggregateBoundArtifact),
     ),
 )
-def test_compile_delegates_all_five_closed_registry_artifacts(
+def test_compile_delegates_all_six_closed_registry_artifacts(
     architecture_id: ArchitectureId,
     expected_type: type[object],
 ) -> None:
@@ -64,10 +62,8 @@ def test_non_executable_artifacts_have_typed_transcript_outcomes(
     artifact = Compile(architecture_id)
 
     outcomes = (
-        adapt_protocol_artifact(artifact),
-        create_trusted_verification_context(artifact),
         make_verification_expectation(artifact, VerificationPolicy(1, 1, 0)),
-        build_demo_conformance_transcript(artifact),
+        build_executable_conformance_transcript(artifact),
     )
 
     assert all(isinstance(outcome, Unsupported) for outcome in outcomes)
@@ -83,11 +79,13 @@ def test_expectation_generates_mandatory_verifier_seeds() -> None:
     assert not isinstance(second, Unsupported)
     assert len(first.q_seed) == len(first.s_seed) == 32
     assert (first.q_seed, first.s_seed) != (second.q_seed, second.s_seed)
+    assert first.session_id != second.session_id
     assert first.public_inputs == artifact.public_inputs
     assert first.claimed_outputs == artifact.expected_outputs
-    with pytest.raises(StagedProtocolError, match="expected q seed"):
+    assert first.compiled_digest == artifact.compiled.identity.digest
+    with pytest.raises(ProtocolError, match="expected q seed"):
         replace(first, q_seed=None)  # type: ignore[arg-type]
-    with pytest.raises(StagedProtocolError, match="expected s seed"):
+    with pytest.raises(ProtocolError, match="expected s seed"):
         replace(first, s_seed=b"short")
 
 
@@ -104,7 +102,9 @@ def test_matmul_request_is_exported_and_compiles_through_public_facade() -> None
 
 
 def test_paper_level_api_is_exported() -> None:
-    names = {"Bound", "Compile", "Optimize", "Verify"}
+    names = {"Bound", "Compile", "Optimize", "Verify", "run_protocol"}
 
     assert names <= set(veritor.__all__)
     assert all(hasattr(veritor, name) for name in names)
+    assert set(veritor.__all__) == set(veritor.research.__all__)
+    assert all(hasattr(veritor.research, name) for name in veritor.research.__all__)

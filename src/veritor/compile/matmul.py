@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TypeAlias, cast
 
-from veritor.core import JSONValue, validate_compiled_result
+from veritor.core import CompiledArtifact, JSONValue
 
 from .call_dag import (
     CallDagCircuit,
@@ -19,12 +19,7 @@ from .call_dag import (
     construct,
     make_word_kernel,
 )
-from .compiler import CompiledCallDag
-from .partitions import (
-    PARTITION_POLICY_VERSION,
-    derive_replay_partition_from_occurrences,
-    derive_verification_partition_from_occurrences,
-)
+from .partitions import compile_partitions
 
 MATMUL_REPLAY_PARTITION_ALGORITHM_ID = (
     "veritor.compile.matmul.replay-per-matrix-multiplication"
@@ -323,50 +318,40 @@ def compile_matmul_workload(
     workload: MatmulWorkload,
     *,
     limits: CompilationLimits | None = None,
-) -> CompiledCallDag:
+) -> CompiledArtifact:
     """Compile the concrete matmul circuit and its two fixed partitions."""
 
     if not isinstance(workload, MatmulWorkload):
         raise TypeError("workload must be MatmulWorkload")
     kernel = make_word_kernel(workload.cell_bits, limits=limits)
-    constructor = MatmulG(workload.cell_bits)
     construction = construct(
         kernel,
-        constructor,
+        MatmulG(workload.cell_bits),
         workload,
         b"",
         input_cells=workload.public_inputs,
         advice_bound_bits=0,
     )
-    circuit = CallDagCircuit(kernel, construction.load.root)
     partition_manifest: dict[str, JSONValue] = {
         "activation_shapes": [list(shape) for shape in workload.activation_shapes],
         "cell_bits": workload.cell_bits,
         "weight_shape": list(workload.weight_shape),
     }
-    replay = derive_replay_partition_from_occurrences(
-        circuit,
+    return compile_partitions(
+        CallDagCircuit(kernel, construction.load.root),
         matmul_replay_occurrence_paths(workload),
-        algorithm_id=MATMUL_REPLAY_PARTITION_ALGORITHM_ID,
-        algorithm_version=PARTITION_POLICY_VERSION,
-        configuration={
+        matmul_verification_occurrence_paths(workload),
+        replay_algorithm_id=MATMUL_REPLAY_PARTITION_ALGORITHM_ID,
+        verification_algorithm_id=MATMUL_VERIFICATION_PARTITION_ALGORITHM_ID,
+        replay_configuration={
             **partition_manifest,
             "granularity": "one-matmul-per-replay-unit",
         },
-    )
-    verification = derive_verification_partition_from_occurrences(
-        circuit,
-        replay,
-        matmul_verification_occurrence_paths(workload),
-        algorithm_id=MATMUL_VERIFICATION_PARTITION_ALGORITHM_ID,
-        algorithm_version=PARTITION_POLICY_VERSION,
-        configuration={
+        verification_configuration={
             **partition_manifest,
             "granularity": "one-inner-product-per-verification-unit",
         },
     )
-    validate_compiled_result(circuit, replay, verification)
-    return circuit, replay, verification
 
 
 __all__ = [

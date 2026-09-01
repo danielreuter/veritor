@@ -20,7 +20,7 @@ type JSONValue = JSONScalar | Mapping[str, JSONValue] | Sequence[JSONValue]
 _TAGGED_HASH_PREFIX = b"veritor/tagged-sha256/v1\0"
 STRUCTURE_IDENTITY_TAG = "veritor/structure-identity/v1"
 PARTITION_IDENTITY_TAG = "veritor/partition-identity/v1"
-COMPILED_RESULT_IDENTITY_TAG = "veritor/compiled-result-identity/v1"
+COMPILED_RESULT_IDENTITY_TAG = "veritor/compiled-result-identity/v2"
 
 
 def _normalize_json(value: object, path: str = "$") -> JSONValue:
@@ -314,12 +314,13 @@ class PartitionIdentity:
 
 @dataclass(frozen=True, slots=True, init=False)
 class CompiledResultIdentity:
-    """Identity of the literal ``(C, replay, verification)`` result tuple."""
+    """Identity of a compiled ``(C, replay, verification, boundary)`` result."""
 
     schema_version: str
     structure_digest: Digest
     replay_partition_digest: Digest
     verification_partition_digest: Digest
+    boundary_digest: Digest
     digest: Digest = field(init=False)
 
     def __init__(
@@ -329,6 +330,7 @@ class CompiledResultIdentity:
         structure_digest: Digest | str,
         replay_partition_digest: Digest | str,
         verification_partition_digest: Digest | str,
+        boundary_digest: Digest | str,
     ) -> None:
         checked_schema = _required_text(schema_version, "schema_version")
         checked_structure = validate_digest(structure_digest, "structure_digest")
@@ -338,10 +340,12 @@ class CompiledResultIdentity:
         checked_verification = validate_digest(
             verification_partition_digest, "verification_partition_digest"
         )
+        checked_boundary = validate_digest(boundary_digest, "boundary_digest")
         object.__setattr__(self, "schema_version", checked_schema)
         object.__setattr__(self, "structure_digest", checked_structure)
         object.__setattr__(self, "replay_partition_digest", checked_replay)
         object.__setattr__(self, "verification_partition_digest", checked_verification)
+        object.__setattr__(self, "boundary_digest", checked_boundary)
         object.__setattr__(
             self,
             "digest",
@@ -351,33 +355,9 @@ class CompiledResultIdentity:
     @property
     def manifest(self) -> dict[str, JSONValue]:
         return {
+            "boundary_digest": self.boundary_digest,
             "replay_partition_digest": self.replay_partition_digest,
             "schema_version": self.schema_version,
             "structure_digest": self.structure_digest,
             "verification_partition_digest": self.verification_partition_digest,
         }
-
-    @classmethod
-    def from_components(
-        cls,
-        structure: StructureIdentity,
-        replay: PartitionIdentity,
-        verification: PartitionIdentity,
-    ) -> CompiledResultIdentity:
-        """Construct the tuple identity from its three validated identities."""
-
-        if replay.partition_kind is not PartitionKind.REPLAY:
-            raise InvalidArtifact("replay identity has the wrong partition kind")
-        if verification.partition_kind is not PartitionKind.VERIFICATION:
-            raise InvalidArtifact("verification identity has the wrong partition kind")
-        if (
-            replay.structure_digest != structure.digest
-            or verification.structure_digest != structure.digest
-        ):
-            raise InvalidArtifact("compiled result contains mixed structure identities")
-        return cls(
-            schema_version=structure.schema_version,
-            structure_digest=structure.digest,
-            replay_partition_digest=replay.digest,
-            verification_partition_digest=verification.digest,
-        )

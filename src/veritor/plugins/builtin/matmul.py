@@ -19,7 +19,6 @@ from veritor.core import (
     ClaimStatus,
     EvidenceStatus,
     SupportState,
-    validate_compiled_result,
 )
 
 from .._common import (
@@ -226,7 +225,6 @@ def compile_matmul(
         selected.workload,
         limits=selected.limits,
     )
-    compiled_identity = validate_compiled_result(*compiled)
     artifact_identity = ArchitectureArtifactIdentity.build(
         architecture_id=ArchitectureId.MATMUL,
         plugin_id=PLUGIN_ID,
@@ -234,7 +232,7 @@ def compile_matmul(
         artifact_kind=ArtifactKind.EXECUTABLE_CIRCUIT,
         request_manifest=manifest_value(_request_manifest(selected)),
         representation_manifest={
-            "compiled_result_digest": compiled_identity.digest,
+            "compiled_result_digest": compiled.identity.digest,
             "expected_outputs": list(selected.expected_outputs),
             "output_shapes": [list(shape) for shape in selected.output_shapes],
             "public_inputs": list(selected.public_inputs),
@@ -253,12 +251,11 @@ def compile_matmul(
         plugin_id=PLUGIN_ID,
         plugin_version=PLUGIN_VERSION,
         identity=artifact_identity,
-        compiled_identity=compiled_identity,
         capabilities=_capabilities(),
-        _protocol_tuple=compiled,
+        compiled=compiled,
         public_inputs=selected.public_inputs,
         expected_outputs=selected.expected_outputs,
-        bound_provider=CallDagCapacityBoundProvider(compiled[0]),
+        bound_provider=CallDagCapacityBoundProvider(compiled.circuit),
         assumptions=assumption_records(
             assumptions,
             source="veritor.compile.matmul",
@@ -277,7 +274,7 @@ def compile_matmul(
                 claim=ClaimStatus.EXACT,
                 evidence=EvidenceStatus.BY_CONSTRUCTION,
                 detail="inner-product verification units exactly refine matmul replay units",
-                source="veritor.core.validate_compiled_result",
+                source="veritor.core.CompiledArtifact",
             ),
         ),
     )

@@ -13,18 +13,20 @@ from .capabilities import (
     Unsupported,
 )
 from .circuit import (
-    CircuitAccess,
     ExecutableCircuit,
-    ExecutableCircuitAccess,
     ExecutableGate,
     Port,
     StructuralCircuit,
-    StructuralCircuitAccess,
     StructuralGate,
     ordered_output_positions,
     validate_circuit_contract,
 )
-from .compiled import compiled_result_identity, validate_compiled_result
+from .compiled import (
+    BOUNDARY_OWNER,
+    CompiledArtifact,
+    derive_replay_boundary,
+    validate_replay_boundary,
+)
 from .errors import (
     BackendUnavailable,
     CoreContractError,
@@ -69,6 +71,7 @@ from .indexed import (
     ExplicitIndexedDomain,
     FiniteIndexedDomain,
     IndexedDomain,
+    IntervalDomain,
     LazyIndexedDomain,
     RangeDomain,
     RangeIndexedDomain,
@@ -82,7 +85,7 @@ from .partitions import (
     ReplayUnit,
     VerificationPartition,
     VerificationUnit,
-    validate_refinement,
+    contiguous_span,
     validate_verification_refines_replay,
 )
 from .policy import (
@@ -95,6 +98,7 @@ from .policy import (
 )
 
 __all__ = [
+    "BOUNDARY_OWNER",
     "COMPILED_RESULT_IDENTITY_TAG",
     "PARTITION_IDENTITY_TAG",
     "STRUCTURE_IDENTITY_TAG",
@@ -104,19 +108,19 @@ __all__ = [
     "Capability",
     "CapabilityReport",
     "CapabilityStatus",
-    "CircuitAccess",
     "ClaimStatus",
+    "CompiledArtifact",
     "CompiledResultIdentity",
     "CoreContractError",
     "Digest",
     "EvidenceStatus",
     "ExecutableCircuit",
-    "ExecutableCircuitAccess",
     "ExecutableGate",
     "ExplicitDomain",
     "ExplicitIndexedDomain",
     "FiniteIndexedDomain",
     "IndexedDomain",
+    "IntervalDomain",
     "InvalidArtifact",
     "JSONScalar",
     "JSONValue",
@@ -136,7 +140,6 @@ __all__ = [
     "ResourceLimit",
     "ResourceLimitExceeded",
     "StructuralCircuit",
-    "StructuralCircuitAccess",
     "StructuralGate",
     "StructureIdentity",
     "SupportState",
@@ -155,7 +158,8 @@ __all__ = [
     "canonical_json_bytes",
     "canonical_json_text",
     "canonical_manifest_digest",
-    "compiled_result_identity",
+    "contiguous_span",
+    "derive_replay_boundary",
     "domains_equal",
     "exact_fraction",
     "identity_digest",
@@ -169,8 +173,7 @@ __all__ = [
     "tagged_sha256",
     "unit_index",
     "validate_circuit_contract",
-    "validate_compiled_result",
     "validate_digest",
-    "validate_refinement",
+    "validate_replay_boundary",
     "validate_verification_refines_replay",
 ]

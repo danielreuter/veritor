@@ -2,31 +2,41 @@ from __future__ import annotations
 
 from circuit_cut_analysis.capacity import LogCardinality
 from veritor.compile import CallDagCircuit
-from veritor.core import validate_compiled_result
+from veritor.core import CompiledArtifact
 from veritor.plugins import (
+    BatchInput,
     CapacityClaimKind,
     DemoGCompileRequest,
     ProtocolCircuitArtifact,
     compile_demo_g,
     demo_expected_outputs,
     demo_public_inputs,
+    make_demo_request,
 )
 
 
-def test_demo_g_exposes_literal_validated_protocol_tuple() -> None:
+def test_demo_g_exposes_the_compiled_artifact() -> None:
     request = DemoGCompileRequest()
     artifact = compile_demo_g(request)
     assert isinstance(artifact, ProtocolCircuitArtifact)
-    assert artifact.literal_tuple is artifact.compiled_tuple
-    assert artifact.as_protocol_tuple() is artifact.literal_tuple
-    assert artifact.circuit is artifact.literal_tuple[0]
-    assert artifact.replay_partition is artifact.literal_tuple[1]
-    assert artifact.verification_partition is artifact.literal_tuple[2]
-    assert artifact.verification_access() is artifact.literal_tuple
-    assert artifact.compiled_identity == validate_compiled_result(
-        *artifact.literal_tuple
-    )
+    assert isinstance(artifact.compiled, CompiledArtifact)
+    assert artifact.verification_access() is artifact.compiled
+    assert artifact.circuit is artifact.compiled.circuit
+    assert artifact.replay_partition is artifact.compiled.replay
+    assert artifact.verification_partition is artifact.compiled.verification
+    assert artifact.compiled_identity == artifact.compiled.identity
     assert isinstance(artifact.circuit, CallDagCircuit)
+
+
+def test_demo_g_request_binds_batch_into_identity() -> None:
+    default = compile_demo_g()
+    other = compile_demo_g(
+        DemoGCompileRequest(batch=BatchInput((make_demo_request(2, 7, 8),)))
+    )
+
+    assert default.identity.request_digest != other.identity.request_digest
+    assert default.compiled.identity != other.compiled.identity
+    assert other.execute() == other.expected_outputs
 
 
 def test_demo_g_public_inputs_expected_outputs_and_execution() -> None:

@@ -8,12 +8,7 @@ from fractions import Fraction
 
 from circuit_cut_analysis.capacity import LogCardinality
 from veritor.analysis.capacity import CapacityEvidence
-from veritor.core.identity import (
-    CompiledResultIdentity,
-    Digest,
-    identity_digest,
-    validate_digest,
-)
+from veritor.core.identity import Digest, identity_digest, validate_digest
 from veritor.core.partitions import ReplayPartition, VerificationPartition
 from veritor.core.policy import VerificationPolicy
 
@@ -226,14 +221,17 @@ def finite_bound_identities(
 ) -> BoundIdentities:
     """Bind a finite result to the literal ``(structure, R, V)`` tuple."""
 
-    compiled = CompiledResultIdentity.from_components(
-        replay_partition.structure_identity,
-        replay_partition.identity,
-        verification_partition.identity,
+    tuple_identity = identity_digest(
+        "veritor/analysis/finite-bound-tuple/v1",
+        {
+            "structure_digest": replay_partition.structure_identity.digest,
+            "replay_partition_digest": replay_partition.identity.digest,
+            "verification_partition_digest": verification_partition.identity.digest,
+        },
     )
     return BoundIdentities(
         policy_identity=policy.digest,
-        tuple_identity=compiled.digest,
+        tuple_identity=tuple_identity,
         structure_identity=replay_partition.structure_identity.digest,
         replay_partition_identity=replay_partition.identity.digest,
         verification_partition_identity=verification_partition.identity.digest,
@@ -283,10 +281,7 @@ def derive_claim_strength(
         return BoundClaimStrength.CERTIFIED_UPPER
     if assumptions:
         return BoundClaimStrength.CONDITIONAL
-    if (
-        termination_status is TerminationStatus.COMPLETE
-        and lower_bound == upper_bound
-    ):
+    if termination_status is TerminationStatus.COMPLETE and lower_bound == upper_bound:
         return BoundClaimStrength.EXACT
     return BoundClaimStrength.CERTIFIED_BRACKET
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from sys import maxsize
@@ -188,6 +189,129 @@ class RangeIndexedDomain:
     def __len__(self) -> int:
         if self.count > maxsize:
             raise OverflowError("domain is too large for len(); use .count")
+        return self.count
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class IntervalDomain:
+    """A sorted union of disjoint half-open position intervals.
+
+    Rank, unrank, and membership cost ``O(log k)`` in the number of intervals,
+    so a replay boundary made of a few long runs is cheap even when it holds
+    millions of positions.  ``intervals`` is canonical: sorted, disjoint,
+    nonempty, and never adjacent.
+    """
+
+    intervals: tuple[tuple[int, int], ...]
+    _starts: tuple[int, ...] = field(repr=False, compare=False, hash=False)
+    _prefix: tuple[int, ...] = field(repr=False, compare=False, hash=False)
+    count: int
+    identity_digest: Digest
+
+    def __init__(self, intervals: Iterable[tuple[int, int]]) -> None:
+        merged: list[list[int]] = []
+        for start, stop in sorted(intervals):
+            if type(start) is not int or type(stop) is not int or start < 0:
+                raise InvalidArtifact("interval bounds must be nonnegative integers")
+            if stop <= start:
+                if stop == start:
+                    continue
+                raise InvalidArtifact("interval stop must not precede start")
+            if merged and start <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], stop)
+            else:
+                merged.append([start, stop])
+        canonical = tuple((start, stop) for start, stop in merged)
+        prefix: list[int] = [0]
+        for start, stop in canonical:
+            prefix.append(prefix[-1] + stop - start)
+        object.__setattr__(self, "intervals", canonical)
+        object.__setattr__(self, "_starts", tuple(start for start, _ in canonical))
+        object.__setattr__(self, "_prefix", tuple(prefix))
+        object.__setattr__(self, "count", prefix[-1])
+        object.__setattr__(
+            self,
+            "identity_digest",
+            identity_digest(
+                "veritor/indexed-domain/intervals/v1",
+                {"intervals": [list(item) for item in canonical]},
+            ),
+        )
+
+    @classmethod
+    def from_positions(cls, positions: Iterable[int]) -> IntervalDomain:
+        """Coalesce arbitrary positions into runs."""
+
+        return cls((item, item + 1) for item in positions)
+
+    @classmethod
+    def from_range(cls, start: int, stop: int) -> IntervalDomain:
+        return cls(((start, stop),))
+
+    @property
+    def digest(self) -> Digest:
+        return self.identity_digest
+
+    def _interval_index(self, item: int) -> int | None:
+        index = bisect_right(self._starts, item) - 1
+        if index >= 0 and item < self.intervals[index][1]:
+            return index
+        return None
+
+    def contains(self, item: int) -> bool:
+        return type(item) is int and self._interval_index(item) is not None
+
+    def __contains__(self, item: object) -> bool:
+        return self.contains(item)  # type: ignore[arg-type]
+
+    def rank(self, item: int) -> int:
+        index = self._interval_index(item) if type(item) is int else None
+        if index is None:
+            raise KeyError(item)
+        return self._prefix[index] + item - self.intervals[index][0]
+
+    def unrank(self, rank: int) -> Position:
+        checked = _checked_rank(rank, self.count)
+        index = bisect_right(self._prefix, checked) - 1
+        return Position(self.intervals[index][0] + checked - self._prefix[index])
+
+    def count_below(self, item: int) -> int:
+        """Return how many members are strictly less than ``item``."""
+
+        index = bisect_right(self._starts, item) - 1
+        if index < 0:
+            return 0
+        start, stop = self.intervals[index]
+        return self._prefix[index] + min(item, stop) - start
+
+    def intersect(self, start: int, stop: int) -> IntervalDomain:
+        """Return the members inside ``[start, stop)``."""
+
+        return IntervalDomain(
+            (max(a, start), min(b, stop))
+            for a, b in self.intervals
+            if a < stop and b > start
+        )
+
+    def complement_within(self, start: int, stop: int) -> IntervalDomain:
+        """Return ``[start, stop)`` minus this domain."""
+
+        gaps: list[tuple[int, int]] = []
+        cursor = start
+        for a, b in self.intersect(start, stop).intervals:
+            if a > cursor:
+                gaps.append((cursor, a))
+            cursor = b
+        if cursor < stop:
+            gaps.append((cursor, stop))
+        return IntervalDomain(gaps)
+
+    def __iter__(self) -> Iterator[Position]:
+        for start, stop in self.intervals:
+            for item in range(start, stop):
+                yield Position(item)
+
+    def __len__(self) -> int:
         return self.count
 
 

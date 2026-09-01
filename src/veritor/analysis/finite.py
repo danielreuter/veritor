@@ -76,8 +76,6 @@ class _FiniteContext:
             raise TypeError("verification must be a VerificationPartition")
         if not isinstance(policy, VerificationPolicy):
             raise TypeError("policy must be a VerificationPolicy")
-        replay.validate()
-        verification.validate(replay)
         owners = tuple(int(unit.replay_unit) for unit in verification.units)
         positions = tuple(
             tuple(int(position) for position in iter_domain(unit.members))

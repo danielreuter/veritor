@@ -4,27 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from veritor.core import (
-    JSONValue,
-    ReplayPartition,
-    VerificationPartition,
-    validate_compiled_result,
-)
+from veritor.core import CompiledArtifact, JSONValue
 
 from .call_dag import CallDagCircuit, Kernel, construct
 from .partitions import (
     DEFAULT_REPLAY_POLICY,
     DEFAULT_VERIFICATION_POLICY,
     PartitionPolicy,
-    derive_replay_partition,
-    derive_verification_partition,
+    compile_partitions_for_policies,
 )
-
-type CompiledCallDag = tuple[
-    CallDagCircuit,
-    ReplayPartition,
-    VerificationPartition,
-]
 
 
 def compile_call_dag(
@@ -39,8 +27,8 @@ def compile_call_dag(
     verification_policy: PartitionPolicy | str = DEFAULT_VERIFICATION_POLICY,
     replay_configuration: JSONValue | None = None,
     verification_configuration: JSONValue | None = None,
-) -> CompiledCallDag:
-    """Run ``G`` and return the validated literal ``(C, replay, verification)``.
+) -> CompiledArtifact:
+    """Run ``G`` and return the compiled ``(C, replay, verification, boundary)``.
 
     Constructor code is outside the trust boundary.  Its only trusted output
     is the canonical byte document accepted by ``kernel.load``.
@@ -54,18 +42,10 @@ def compile_call_dag(
         input_cells=input_cells,
         advice_bound_bits=advice_bound_bits,
     )
-    circuit = CallDagCircuit(kernel, construction.load.root)
-    replay = derive_replay_partition(
-        circuit,
+    return compile_partitions_for_policies(
+        CallDagCircuit(kernel, construction.load.root),
         replay_policy,
-        configuration=replay_configuration,
-    )
-    verification = derive_verification_partition(
-        circuit,
-        replay,
         verification_policy,
-        configuration=verification_configuration,
+        replay_configuration=replay_configuration,
+        verification_configuration=verification_configuration,
     )
-    validate_compiled_result(circuit, replay, verification)
-    return circuit, replay, verification
-

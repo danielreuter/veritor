@@ -7,10 +7,8 @@ import pytest
 
 from veritor.compile import (
     FORMAT_VERSION,
-    BatchInput,
     CallDagCircuit,
     CompilationLimits,
-    DemoG,
     FlatGate,
     GateSpec,
     Kernel,
@@ -23,12 +21,11 @@ from veritor.compile import (
     canonical_call_dag_json,
     construct,
     definition_digest,
-    expected_dot_outputs,
-    make_demo_request,
     make_word_kernel,
     trusted_word_registry,
 )
 from veritor.core import ExecutableCircuit, validate_circuit_contract
+from veritor.plugins import BatchInput, DemoG, expected_dot_outputs, make_demo_request
 
 CELL_BITS = 8
 
@@ -530,7 +527,7 @@ def test_zero_gate_definition_evaluates_passthrough_and_has_no_leaves():
     assert kernel.flatten(root).gates == ()
     assert kernel.leaf_occurrence_paths(root) == ()
     assert kernel.evaluate(root, (13,)) == (13, 13)
-    assert kernel.derive_replay_plan(root, ()).boundary == (0,)
+    assert tuple(kernel.derive_replay_plan(root, ()).boundary) == (0,)
     with pytest.raises(KernelReject, match="contains no conceptual gates"):
         kernel.derive_replay_plan(root, ((),))
 

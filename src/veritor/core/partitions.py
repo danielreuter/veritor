@@ -1,7 +1,14 @@
-"""Concrete finite replay and verification partitions."""
+"""Concrete finite replay and verification partitions.
+
+Both partitions are exact covers of one eligible position domain by nonempty
+units.  When every unit is a contiguous run of positions (the common case for
+compiled circuits) ownership lookups bisect over unit starts, so the verifier
+never scans units or positions.
+"""
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
@@ -23,8 +30,9 @@ from .ids import (
 )
 from .ids import position as _as_position
 from .indexed import (
-    ExplicitIndexedDomain,
     IndexedDomain,
+    IntervalDomain,
+    RangeIndexedDomain,
     domains_equal,
     iter_domain,
     position_domain,
@@ -35,6 +43,16 @@ def _relation(value: str | None, field_name: str) -> RelationId | None:
     if value is None:
         return None
     return RelationId(nonempty_identifier(value, field_name=field_name))
+
+
+def contiguous_span(domain: IndexedDomain[Position]) -> tuple[int, int] | None:
+    """Return ``(start, stop)`` when ``domain`` is exactly one run of positions."""
+
+    if isinstance(domain, RangeIndexedDomain) and domain.step == 1:
+        return (domain.start, domain.stop)
+    if isinstance(domain, IntervalDomain) and len(domain.intervals) == 1:
+        return domain.intervals[0]
+    return None
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -84,14 +102,6 @@ class ReplayUnit:
     @property
     def count(self) -> int:
         return self.members.count
-
-    @property
-    def identity(self) -> Digest:
-        return self.identity_digest
-
-    @property
-    def unit_id(self) -> UnitIndex:
-        return self.index
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -143,20 +153,11 @@ class VerificationUnit:
     def count(self) -> int:
         return self.members.count
 
-    @property
-    def identity(self) -> Digest:
-        return self.identity_digest
 
-    @property
-    def unit_id(self) -> UnitIndex:
-        return self.index
-
-    @property
-    def replay_unit_index(self) -> UnitIndex:
-        return self.replay_unit
+type _Unit = ReplayUnit | VerificationUnit
 
 
-def _validate_unit_indices(units: tuple[ReplayUnit | VerificationUnit, ...]) -> None:
+def _validate_unit_indices(units: tuple[_Unit, ...]) -> None:
     for expected, unit in enumerate(units):
         if unit.index != expected:
             raise InvalidArtifact(
@@ -164,9 +165,24 @@ def _validate_unit_indices(units: tuple[ReplayUnit | VerificationUnit, ...]) -> 
             )
 
 
+def _span_table(units: tuple[_Unit, ...]) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Return ``(starts, unit indices)`` sorted by start, or empty tuples."""
+
+    spans: list[tuple[int, int]] = []
+    for unit in units:
+        span = contiguous_span(unit.members)
+        if span is None:
+            return ((), ())
+        spans.append((span[0], unit.index))
+    spans.sort()
+    return (tuple(start for start, _ in spans), tuple(index for _, index in spans))
+
+
 def _validate_exact_cover(
     eligible: IndexedDomain[Position],
-    units: tuple[ReplayUnit | VerificationUnit, ...],
+    units: tuple[_Unit, ...],
+    starts: tuple[int, ...],
+    order: tuple[int, ...],
     *,
     label: str,
 ) -> None:
@@ -176,10 +192,20 @@ def _validate_exact_cover(
         return
     if not units:
         raise InvalidArtifact(f"{label} does not cover any eligible positions")
+    eligible_span = contiguous_span(eligible)
+    if starts and eligible_span is not None:
+        cursor = eligible_span[0]
+        for index in order:
+            span = contiguous_span(units[index].members)
+            assert span is not None
+            if span[0] != cursor:
+                raise InvalidArtifact(f"{label} does not tile the eligible positions")
+            cursor = span[1]
+        if cursor != eligible_span[1]:
+            raise InvalidArtifact(f"{label} does not tile the eligible positions")
+        return
     owners_by_rank: dict[int, UnitIndex] = {}
     for unit in units:
-        if unit.members.count == 0:
-            raise InvalidArtifact(f"{label} contains an empty unit")
         for member in iter_domain(unit.members):
             try:
                 rank = eligible.rank(member)
@@ -187,8 +213,6 @@ def _validate_exact_cover(
                 raise InvalidArtifact(
                     f"{label} unit {unit.index} contains ineligible position {member}"
                 ) from error
-            if not 0 <= rank < eligible.count or eligible.unrank(rank) != member:
-                raise InvalidArtifact(f"{label} eligible domain violates rank/unrank")
             if rank in owners_by_rank:
                 raise InvalidArtifact(
                     f"{label} assigns position {member} to multiple units"
@@ -198,6 +222,29 @@ def _validate_exact_cover(
         raise InvalidArtifact(
             f"{label} covers {len(owners_by_rank)} of {eligible.count} positions"
         )
+
+
+def _owner_of(
+    eligible: IndexedDomain[Position],
+    units: tuple[_Unit, ...],
+    starts: tuple[int, ...],
+    order: tuple[int, ...],
+    position: int,
+    *,
+    label: str,
+) -> UnitIndex:
+    checked = _as_position(position, field_name="owner lookup position")
+    if not eligible.contains(checked):
+        raise KeyError(position)
+    if starts:
+        index = order[bisect_right(starts, checked) - 1]
+        if units[index].members.contains(checked):
+            return units[index].index
+        raise InvalidArtifact(f"{label} no longer has deterministic ownership")
+    owners = tuple(unit.index for unit in units if unit.members.contains(checked))
+    if len(owners) != 1:
+        raise InvalidArtifact(f"{label} no longer has deterministic ownership")
+    return owners[0]
 
 
 def _configuration_digest(
@@ -232,6 +279,8 @@ class ReplayPartition:
     eligible_positions: IndexedDomain[Position]
     units: tuple[ReplayUnit, ...]
     identity: PartitionIdentity
+    _starts: tuple[int, ...] = field(repr=False, compare=False, hash=False)
+    _order: tuple[int, ...] = field(repr=False, compare=False, hash=False)
 
     def __init__(
         self,
@@ -255,14 +304,13 @@ class ReplayPartition:
         if any(not isinstance(unit, ReplayUnit) for unit in checked_units):
             raise InvalidArtifact("replay partition units must be ReplayUnit values")
         _validate_unit_indices(checked_units)
-        _validate_exact_cover(checked_eligible, checked_units, label="replay partition")
+        starts, order = _span_table(checked_units)
+        _validate_exact_cover(
+            checked_eligible, checked_units, starts, order, label="replay partition"
+        )
         checked_algorithm = nonempty_identifier(algorithm_id, field_name="algorithm_id")
         checked_version = nonempty_identifier(
             algorithm_version, field_name="algorithm_version"
-        )
-        representation_digest = identity_digest(
-            "veritor/replay-partition-representation/v1",
-            _replay_representation_manifest(checked_eligible, checked_units),
         )
         expected_identity = PartitionIdentity(
             partition_kind=PartitionKind.REPLAY,
@@ -272,7 +320,10 @@ class ReplayPartition:
             configuration_digest=_configuration_digest(
                 PartitionKind.REPLAY, configuration
             ),
-            representation_digest=representation_digest,
+            representation_digest=identity_digest(
+                "veritor/replay-partition-representation/v1",
+                _replay_representation_manifest(checked_eligible, checked_units),
+            ),
         )
         if identity is not None and identity != expected_identity:
             raise InvalidArtifact(
@@ -282,6 +333,8 @@ class ReplayPartition:
         object.__setattr__(self, "eligible_positions", checked_eligible)
         object.__setattr__(self, "units", checked_units)
         object.__setattr__(self, "identity", expected_identity)
+        object.__setattr__(self, "_starts", starts)
+        object.__setattr__(self, "_order", order)
 
     @property
     def unit_count(self) -> int:
@@ -298,35 +351,14 @@ class ReplayPartition:
         return self.units[checked]
 
     def owner_of(self, position: int) -> UnitIndex:
-        checked = _as_position(position, field_name="owner lookup position")
-        if not self.eligible_positions.contains(checked):
-            raise KeyError(position)
-        owners = tuple(
-            unit.index for unit in self.units if unit.members.contains(checked)
+        return _owner_of(
+            self.eligible_positions,
+            self.units,
+            self._starts,
+            self._order,
+            position,
+            label="replay partition",
         )
-        if len(owners) != 1:
-            raise InvalidArtifact(
-                "replay partition no longer has deterministic ownership"
-            )
-        return owners[0]
-
-    def validate(self) -> None:
-        """Recheck exact-cover and representation-integrity invariants."""
-
-        _validate_unit_indices(self.units)
-        _validate_exact_cover(
-            self.eligible_positions, self.units, label="replay partition"
-        )
-        expected_representation = identity_digest(
-            "veritor/replay-partition-representation/v1",
-            _replay_representation_manifest(self.eligible_positions, self.units),
-        )
-        if (
-            self.identity.partition_kind is not PartitionKind.REPLAY
-            or self.identity.structure_digest != self.structure_identity.digest
-            or self.identity.representation_digest != expected_representation
-        ):
-            raise InvalidArtifact("replay partition identity is inconsistent")
 
 
 def _verification_representation_manifest(
@@ -352,6 +384,11 @@ class VerificationPartition:
     units: tuple[VerificationUnit, ...]
     identity: PartitionIdentity
     replay_unit_count: int
+    _starts: tuple[int, ...] = field(repr=False, compare=False, hash=False)
+    _order: tuple[int, ...] = field(repr=False, compare=False, hash=False)
+    _by_replay: tuple[tuple[UnitIndex, ...], ...] = field(
+        repr=False, compare=False, hash=False
+    )
 
     def __init__(
         self,
@@ -380,20 +417,17 @@ class VerificationPartition:
                 "verification partition units must be VerificationUnit values"
             )
         _validate_unit_indices(checked_units)
+        starts, order = _span_table(checked_units)
         _validate_exact_cover(
-            checked_eligible, checked_units, label="verification partition"
+            checked_eligible,
+            checked_units,
+            starts,
+            order,
+            label="verification partition",
         )
         checked_algorithm = nonempty_identifier(algorithm_id, field_name="algorithm_id")
         checked_version = nonempty_identifier(
             algorithm_version, field_name="algorithm_version"
-        )
-        representation_digest = identity_digest(
-            "veritor/verification-partition-representation/v1",
-            _verification_representation_manifest(
-                checked_eligible,
-                replay_partition.identity,
-                checked_units,
-            ),
         )
         expected_identity = PartitionIdentity(
             partition_kind=PartitionKind.VERIFICATION,
@@ -403,18 +437,35 @@ class VerificationPartition:
             configuration_digest=_configuration_digest(
                 PartitionKind.VERIFICATION, configuration
             ),
-            representation_digest=representation_digest,
+            representation_digest=identity_digest(
+                "veritor/verification-partition-representation/v1",
+                _verification_representation_manifest(
+                    checked_eligible, replay_partition.identity, checked_units
+                ),
+            ),
         )
         if identity is not None and identity != expected_identity:
             raise InvalidArtifact(
                 "provided verification partition identity does not match its contents"
             )
+        grouped: list[list[UnitIndex]] = [
+            [] for _ in range(replay_partition.unit_count)
+        ]
+        for unit in checked_units:
+            if unit.replay_unit >= replay_partition.unit_count:
+                raise InvalidArtifact(
+                    f"verification unit {unit.index} names a missing replay unit"
+                )
+            grouped[unit.replay_unit].append(unit.index)
         object.__setattr__(self, "structure_identity", structure_identity)
         object.__setattr__(self, "replay_partition_identity", replay_partition.identity)
         object.__setattr__(self, "eligible_positions", checked_eligible)
         object.__setattr__(self, "units", checked_units)
         object.__setattr__(self, "identity", expected_identity)
         object.__setattr__(self, "replay_unit_count", replay_partition.unit_count)
+        object.__setattr__(self, "_starts", starts)
+        object.__setattr__(self, "_order", order)
+        object.__setattr__(self, "_by_replay", tuple(tuple(g) for g in grouped))
         validate_verification_refines_replay(replay_partition, self)
 
     @property
@@ -432,52 +483,20 @@ class VerificationPartition:
         return self.units[checked]
 
     def owner_of(self, position: int) -> UnitIndex:
-        checked = _as_position(position, field_name="owner lookup position")
-        if not self.eligible_positions.contains(checked):
-            raise KeyError(position)
-        owners = tuple(
-            unit.index for unit in self.units if unit.members.contains(checked)
+        return _owner_of(
+            self.eligible_positions,
+            self.units,
+            self._starts,
+            self._order,
+            position,
+            label="verification partition",
         )
-        if len(owners) != 1:
-            raise InvalidArtifact(
-                "verification partition no longer has deterministic ownership"
-            )
-        return owners[0]
 
-    def units_in_replay_unit(
-        self, replay_unit: int
-    ) -> ExplicitIndexedDomain[UnitIndex]:
+    def units_in_replay_unit(self, replay_unit: int) -> tuple[UnitIndex, ...]:
         checked = unit_index(replay_unit, field_name="replay unit index")
         if checked >= self.replay_unit_count:
             raise KeyError(replay_unit)
-        return ExplicitIndexedDomain(
-            unit.index for unit in self.units if unit.replay_unit == checked
-        )
-
-    def validate(self, replay_partition: ReplayPartition) -> None:
-        """Recheck exact-cover, identity, and refinement invariants."""
-
-        _validate_unit_indices(self.units)
-        _validate_exact_cover(
-            self.eligible_positions,
-            self.units,
-            label="verification partition",
-        )
-        validate_verification_refines_replay(replay_partition, self)
-        expected_representation = identity_digest(
-            "veritor/verification-partition-representation/v1",
-            _verification_representation_manifest(
-                self.eligible_positions,
-                replay_partition.identity,
-                self.units,
-            ),
-        )
-        if (
-            self.identity.partition_kind is not PartitionKind.VERIFICATION
-            or self.identity.structure_digest != self.structure_identity.digest
-            or self.identity.representation_digest != expected_representation
-        ):
-            raise InvalidArtifact("verification partition identity is inconsistent")
+        return self._by_replay[checked]
 
 
 def validate_verification_refines_replay(
@@ -509,18 +528,16 @@ def validate_verification_refines_replay(
         raise InvalidArtifact(
             "verification and replay partitions have different eligible positions"
         )
-    for verification_unit in verification_partition.units:
-        try:
-            replay_partition.unit_at(verification_unit.replay_unit)
-        except KeyError as error:
-            raise InvalidArtifact(
-                f"verification unit {verification_unit.index} names a missing replay unit"
-            ) from error
-        for member in iter_domain(verification_unit.members):
-            if replay_partition.owner_of(member) != verification_unit.replay_unit:
+    for unit in verification_partition.units:
+        span = contiguous_span(unit.members)
+        if span is not None and contiguous_span(
+            replay_partition.unit_at(unit.replay_unit).members
+        ):
+            probes: Iterable[int] = (span[0], span[1] - 1)
+        else:
+            probes = iter_domain(unit.members)
+        for member in probes:
+            if replay_partition.owner_of(member) != unit.replay_unit:
                 raise InvalidArtifact(
-                    f"verification unit {verification_unit.index} crosses replay units"
+                    f"verification unit {unit.index} crosses replay units"
                 )
-
-
-validate_refinement = validate_verification_refines_replay
