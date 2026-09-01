@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 from dataclasses import replace
 
 import pytest
@@ -20,7 +19,6 @@ from veritor import (
     create_trusted_verification_context,
     make_verification_expectation,
 )
-from veritor.research import compile as research_compile
 from veritor.staged import StagedProtocolError
 
 
@@ -43,7 +41,7 @@ def test_compile_delegates_all_five_closed_registry_artifacts(
 
     assert isinstance(artifact, expected_type)
     assert artifact.architecture_id is architecture_id
-    assert research_compile(architecture_id).identity == artifact.identity
+    assert Compile(architecture_id).identity == artifact.identity
 
 
 def test_compile_rejects_unknown_architecture_without_fabricating_artifact() -> None:
@@ -105,46 +103,8 @@ def test_matmul_request_is_exported_and_compiles_through_public_facade() -> None
     assert artifact.expected_outputs == (2,)
 
 
-def test_every_legacy_top_level_symbol_remains_exported() -> None:
-    legacy = {
-        "CELL_BYTES",
-        "PRIMITIVES",
-        "Commitment",
-        "Instruction",
-        "InstructionOpening",
-        "LEAF_INSTRUCTION",
-        "LEAF_VALUE",
-        "MerkleTree",
-        "Operand",
-        "Primitive",
-        "Program",
-        "Prover",
-        "TraceError",
-        "Transcript",
-        "ValueOpening",
-        "Verifier",
-        "apply_primitive",
-        "decode_cell",
-        "decode_instruction",
-        "encode_cell",
-        "encode_instruction",
-        "execute",
-        "primitive",
-        "run_protocol",
-        "trace",
-        "verify_leaf",
-    }
-    modern = {
-        "Bound",
-        "Compile",
-        "Optimize",
-        "Verify",
-        "bound",
-        "optimize",
-        "verify",
-    }
+def test_paper_level_api_is_exported() -> None:
+    names = {"Bound", "Compile", "Optimize", "Verify"}
 
-    assert legacy | modern <= set(veritor.__all__)
-    assert all(hasattr(veritor, name) for name in legacy | modern)
-    assert veritor.compile is importlib.import_module("veritor.compile")
-    assert research_compile is Compile
+    assert names <= set(veritor.__all__)
+    assert all(hasattr(veritor, name) for name in names)

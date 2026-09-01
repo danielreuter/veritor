@@ -623,9 +623,6 @@ class ExecutableConformanceTranscript:
         return self.transcript_bytes
 
 
-DemoConformanceTranscript = ExecutableConformanceTranscript
-
-
 def build_executable_conformance_transcript(
     artifact: CompileResult,
     policy: VerificationPolicy = DEFAULT_CONFORMANCE_POLICY,
@@ -702,7 +699,7 @@ def build_demo_conformance_transcript(
     q_seed: bytes | None = None,
     s_seed: bytes | None = None,
     limits: VerificationLimits | None = None,
-) -> DemoConformanceTranscript | Unsupported:
+) -> ExecutableConformanceTranscript | Unsupported:
     """Compatibility wrapper defaulting the generic builder to DemoG."""
 
     selected = Compile(ArchitectureId.DEMO_G) if artifact is None else artifact
@@ -715,16 +712,6 @@ def build_demo_conformance_transcript(
         s_seed=s_seed,
         limits=limits,
     )
-
-
-# Paper spellings and Python-style spellings are intentionally identical.
-compile = Compile
-verify = Verify
-bound = Bound
-optimize = Optimize
-resolve_executable_artifact = adapt_protocol_artifact
-create_verification_expectation = make_verification_expectation
-build_conformance_transcript = build_demo_conformance_transcript
 
 
 __all__ = [
@@ -741,7 +728,6 @@ __all__ = [
     "Compile",
     "CompileResult",
     "DeepSeekV4ProCompileRequest",
-    "DemoConformanceTranscript",
     "DemoGCompileRequest",
     "ExecutableArtifactResult",
     "ExecutableConformanceTranscript",
@@ -778,17 +764,10 @@ __all__ = [
     "VerificationStatus",
     "Verify",
     "adapt_protocol_artifact",
-    "bound",
-    "build_conformance_transcript",
     "build_demo_conformance_transcript",
     "build_executable_conformance_transcript",
-    "compile",
     "create_trusted_artifact_registry",
     "create_trusted_verification_context",
-    "create_verification_expectation",
     "make_verification_expectation",
-    "optimize",
-    "resolve_executable_artifact",
     "run_interactive_protocol",
-    "verify",
 ]

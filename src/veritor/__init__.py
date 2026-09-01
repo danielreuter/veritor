@@ -1,42 +1,9 @@
-"""veritor: sampled verification research facade and teaching protocol.
+"""veritor: sampled verification of large circuits.
 
 The paper-level API is ``Compile`` -> ``Verify`` / ``Bound`` -> ``Optimize``.
-The original scalar tape API remains available for teaching compatibility:
-
-    tracer.trace(f, x)          -> Program        (the instruction tape + views)
-    machine.execute(program, x) -> value cells    (the value tape)
-    protocol.Prover             -> commits to both tapes (Merkle roots)
-    protocol.Verifier           -> samples instructions, checks them locally
-
-Run `python -m veritor.demo` for a narrated walkthrough, and
-`python -m veritor.experiment` for the detection-probability experiment.
+See ``veritor.research`` for the facade and ``docs/`` for the protocol.
 """
 
-from veritor.machine import (
-    CELL_BYTES,
-    PRIMITIVES,
-    Instruction,
-    Operand,
-    Primitive,
-    Program,
-    apply_primitive,
-    decode_cell,
-    decode_instruction,
-    encode_cell,
-    encode_instruction,
-    execute,
-    primitive,
-)
-from veritor.merkle import LEAF_INSTRUCTION, LEAF_VALUE, MerkleTree, verify_leaf
-from veritor.protocol import (
-    Commitment,
-    InstructionOpening,
-    Prover,
-    Transcript,
-    ValueOpening,
-    Verifier,
-    run_protocol,
-)
 from veritor.research import (
     DEFAULT_CONFORMANCE_POLICY,
     AdditiveExpectedCost,
@@ -51,7 +18,6 @@ from veritor.research import (
     Compile,
     CompileResult,
     DeepSeekV4ProCompileRequest,
-    DemoConformanceTranscript,
     DemoGCompileRequest,
     ExecutableArtifactResult,
     ExecutableConformanceTranscript,
@@ -89,27 +55,16 @@ from veritor.research import (
     VerificationStatus,
     Verify,
     adapt_protocol_artifact,
-    bound,
-    build_conformance_transcript,
     build_demo_conformance_transcript,
     build_executable_conformance_transcript,
     create_trusted_artifact_registry,
     create_trusted_verification_context,
-    create_verification_expectation,
     make_verification_expectation,
-    optimize,
-    resolve_executable_artifact,
     run_interactive_protocol,
-    verify,
 )
-from veritor.tracer import TraceError, trace
 
 __all__ = [
-    "CELL_BYTES",
     "DEFAULT_CONFORMANCE_POLICY",
-    "LEAF_INSTRUCTION",
-    "LEAF_VALUE",
-    "PRIMITIVES",
     "AdditiveExpectedCost",
     "AggregateBoundArtifact",
     "ArchitectureCompileRequest",
@@ -119,11 +74,9 @@ __all__ = [
     "BoundOptions",
     "BoundOptionsInput",
     "BoundResult",
-    "Commitment",
     "Compile",
     "CompileResult",
     "DeepSeekV4ProCompileRequest",
-    "DemoConformanceTranscript",
     "DemoGCompileRequest",
     "ExecutableArtifactResult",
     "ExecutableConformanceTranscript",
@@ -134,8 +87,6 @@ __all__ = [
     "GreedyTextExecutionShape",
     "IndexedStructureArtifact",
     "InklingCompileRequest",
-    "Instruction",
-    "InstructionOpening",
     "InteractionError",
     "InteractionPhase",
     "InteractiveProtocolRun",
@@ -143,55 +94,30 @@ __all__ = [
     "InteractiveVerificationResult",
     "KimiK3CompileRequest",
     "MatmulCompileRequest",
-    "MerkleTree",
-    "Operand",
     "OptimizationResult",
     "Optimize",
     "PolicyGridOptimizationResult",
-    "Primitive",
-    "Program",
     "ProtocolCircuitArtifact",
-    "Prover",
     "RationalPolicyGrid",
     "ResolvedExecutableArtifact",
     "StagedProverSession",
     "StagedVerifierSession",
     "TraceBinding",
-    "TraceError",
-    "Transcript",
     "TrustedArtifactRegistry",
     "TrustedVerificationContext",
     "Unsupported",
-    "ValueOpening",
     "VerificationCode",
     "VerificationExpectation",
     "VerificationLimits",
     "VerificationPolicy",
     "VerificationReport",
     "VerificationStatus",
-    "Verifier",
     "Verify",
     "adapt_protocol_artifact",
-    "apply_primitive",
-    "bound",
-    "build_conformance_transcript",
     "build_demo_conformance_transcript",
     "build_executable_conformance_transcript",
     "create_trusted_artifact_registry",
     "create_trusted_verification_context",
-    "create_verification_expectation",
-    "decode_cell",
-    "decode_instruction",
-    "encode_cell",
-    "encode_instruction",
-    "execute",
     "make_verification_expectation",
-    "optimize",
-    "primitive",
-    "resolve_executable_artifact",
     "run_interactive_protocol",
-    "run_protocol",
-    "trace",
-    "verify",
-    "verify_leaf",
 ]
