@@ -1,18 +1,37 @@
 [project]
 name = "veritor"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "Research toolkit for sampled computation verification and circuit capacity analysis"
 readme = "README.md"
 authors = [
     { name = "danielreuter", email = "dreuter14@gmail.com" }
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "jax[metal]>=0.7.2",
-    "python-fasthtml>=0.12.29",
-    "tensorboard>=2.20.0",
+    "jax>=0.7",
+    "networkx>=3.6.1",
+    "scipy>=1.17.1",
 ]
 
+[project.scripts]
+circuit-cut = "circuit_cut_analysis.cli:main"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.5",
+    "scipy-stubs>=1.17.1.5",
+    "types-networkx>=3.6.1.20260728",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+
 [build-system]
-requires = ["uv_build>=0.8.17,<0.9.0"]
+requires = ["uv_build>=0.8.22,<0.9.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = ["veritor", "circuit_cut_analysis"]
