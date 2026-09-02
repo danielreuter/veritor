@@ -263,3 +263,37 @@ def make_word_gate_set(width: int = 8) -> GateSet:
         name="veritor.word-arithmetic",
         version="2",
     )
+
+
+def make_isa_gate_set(width: int = 16) -> GateSet:
+    """The toy ISA: what a decoder needs, all on ``width``-bit unsigned words.
+
+    ``add``, ``sub`` and ``mul`` are modular; ``lt`` and ``eq`` are the
+    comparisons ``a < b`` and ``a == b`` as full-width words holding ``0`` or
+    ``1``; ``shr`` is ``a >> b`` (``0`` once ``b >= width``) so activations
+    can be scaled down.  ``in`` and ``weight`` are the sources, as in
+    :func:`make_word_gate_set`.  Toy numerics in ``Z_{2^width}``: nothing
+    here approximates real arithmetic, it only has the shape of it.
+    """
+
+    if type(width) is not int or width <= 0:
+        raise ValueError("width must be a positive bit count")
+    mask = (1 << width) - 1
+
+    def word(name: str, cost: int, evaluate: Callable[[tuple[int, ...]], int]) -> Gate:
+        return Gate(name, 2, width, replay_cost=cost, proof_cost=cost, evaluate=evaluate)
+
+    return GateSet(
+        (
+            word("add", 1, lambda args: (args[0] + args[1]) & mask),
+            word("sub", 1, lambda args: (args[0] - args[1]) & mask),
+            word("mul", 2, lambda args: (args[0] * args[1]) & mask),
+            word("lt", 1, lambda args: int(args[0] < args[1])),
+            word("eq", 1, lambda args: int(args[0] == args[1])),
+            word("shr", 1, lambda args: args[0] >> args[1] if args[1] < width else 0),
+            Gate("in", 0, width, replay_cost=0, proof_cost=1, source=INPUT_SOURCE),
+            Gate("weight", 0, width, replay_cost=0, proof_cost=1, source=WEIGHT_SOURCE),
+        ),
+        name="veritor.toy-isa",
+        version="1",
+    )

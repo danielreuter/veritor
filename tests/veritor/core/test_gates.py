@@ -6,6 +6,7 @@ from veritor.core import (
     InvalidArtifact,
     decode_value,
     encode_value,
+    make_isa_gate_set,
     make_word_gate_set,
 )
 
@@ -42,6 +43,34 @@ def test_word_gate_set_has_an_input_and_a_weight_source_gate():
     assert gates["add"].source is None and gates["add"].manifest["source"] is None
     assert make_word_gate_set(8).digest == gates.digest
     assert make_word_gate_set(16).digest != gates.digest
+
+
+def test_toy_isa_extends_the_word_arithmetic_with_what_a_decoder_needs():
+    gates = make_isa_gate_set(16)
+    top = (1 << 16) - 1
+
+    assert [gate.name for gate in gates] == ["add", "eq", "in", "lt", "mul", "shr", "sub", "weight"]
+    assert gates.id == "veritor.toy-isa@1"
+    assert gates.digest != make_word_gate_set(16).digest
+    assert make_isa_gate_set(16).digest == gates.digest
+    assert (gates.input_gates, gates.weight_gates) == (("in",), ("weight",))
+    assert all(gate.width == 16 for gate in gates)
+    assert {gate.name: gate.replay_cost for gate in gates} == {
+        "add": 1, "sub": 1, "mul": 2, "lt": 1, "eq": 1, "shr": 1, "in": 0, "weight": 0,
+    }
+    assert all(gate.proof_cost == gate.replay_cost for gate in gates if gate.source is None)
+    assert gates["add"].evaluate((top, 2)) == 1
+    assert gates["sub"].evaluate((0, 1)) == top and gates["sub"].evaluate((5, 3)) == 2
+    assert gates["mul"].evaluate((1 << 8, 1 << 8)) == 0
+    assert gates["lt"].evaluate((3, 4)) == 1 and gates["lt"].evaluate((4, 4)) == 0
+    assert gates["lt"].evaluate((4, 3)) == 0
+    assert gates["eq"].evaluate((4, 4)) == 1 and gates["eq"].evaluate((4, 5)) == 0
+    assert gates["shr"].evaluate((top, 4)) == top >> 4
+    assert gates["shr"].evaluate((top, 15)) == 1
+    assert gates["shr"].evaluate((top, 16)) == 0 and gates["shr"].evaluate((top, top)) == 0
+    assert make_isa_gate_set(4)["shr"].evaluate((15, 4)) == 0
+    with pytest.raises(ValueError, match="positive bit count"):
+        make_isa_gate_set(0)
 
 
 def test_source_gates_are_exactly_the_zero_arity_gates():

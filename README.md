@@ -17,7 +17,8 @@ at the same point in the interaction.
   has an arity, an output width in bits, a replay cost, a proof cost, and
   modular semantics. `make_word_gate_set(B)` is `add`/`mul` over `Z_{2^B}`
   plus two zero-arity *source* gates, `in` and `weight`, whose values come
-  from the environment rather than from a relation.
+  from the environment rather than from a relation; `make_isa_gate_set(B)`
+  adds `sub`, `lt`, `eq`, `shr` for the toy decoder.
 - **Description**: the wire format a constructor `G` produces. A hash-consed
   sequence of definitions built from three steps, `gate`, `call`, and
   `repeat`, with relative range arguments, so a transformer-sized circuit is a
@@ -78,7 +79,7 @@ src/veritor/
                  Compilation: the record of one Compile(G, x, a)
   protocol/      the two-stage protocol, Merkle commitments, wire format  (trusted)
   analysis/      Bound, Cost, Optimize as folds over the kinds of I
-  constructors/  Tracer, DemoG, MatmulG                                   (untrusted)
+  constructors/  Tracer, DemoG, MatmulG, the toy LM and ClusterG         (untrusted)
   research.py    the paper-level facade
 src/circuit_cut_analysis/
                  exact downstream cuts on explicit DAGs (the Bound reference)
@@ -159,6 +160,46 @@ other gate. Values must flow in as source gates or arguments, not constants:
 copies are the same kind only when their values do. A definition's declared
 outputs must be distinct gates: `Compile` rejects a definition whose output
 ranges resolve to the same gate (source gates included) twice.
+
+## A toy inference cluster
+
+`make_isa_gate_set(B)` is the toy ISA: `add`, `sub`, `mul`, `lt`, `eq`, `shr`
+over `Z_{2^B}` beside the `in`/`weight` sources -- what a decoder needs and
+nothing that approximates real arithmetic.  `veritor.constructors.lm` traces
+a shape-faithful decoder-only transformer over it (`LMShape`, `Parameters`,
+the sequential oracle `reference_generate`): token embedding by one-hot
+against a constant table, per layer `q, k, v` matvecs, attention over the KV
+cache with the polynomial softmax `w_j = s_j^2` and a right shift, an MLP
+with squares, an argmax chain for the LM head.  Constants are weights: the
+grammar has no immediates.  Toy numerics, faithful structure.
+
+`ClusterG(shape, pods, slots, steps)` runs it as a cluster with continual
+batching.  The public inputs `x` are the requests; the advice `a` is a
+`Schedule` -- the joins of requests to slots -- and it fixes everything about
+the circuit that `x` does not: which prompts are prefilled together, how many
+slots each decode step batches, where a request is cut short.  The root calls
+the `weights` unit once and then one `step` per occupied `(pod, step)`; a
+step is a replay unit ("replay decode step `t` of pod `p`") whose declared
+outputs are the new KV-cache entries and tokens the next step reads through
+ports, so the KV cache is exactly the cross-step state.  Verification units
+are row-sized kinds: `dot_k`, `onehot`, `attend_head_c`, `argmax`, the
+residual and square cells.  Two steps with the same occupant shapes are one
+kind, so the description is `O(distinct prompt lengths + distinct context
+lengths + distinct step shapes + |schedule|)`, and the circuit's outputs equal
+`reference_generate` for every schedule: batching is semantically transparent.
+
+~~~python
+from veritor import Compile
+from veritor.constructors import ClusterG, LMShape, Request, random_parameters, schedule_fcfs
+from veritor.core import make_isa_gate_set
+
+shape = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=6, width=16)
+requests = (Request((1, 2, 3), max_new=3), Request((5,), max_new=2))
+advice = schedule_fcfs(requests, pods=1, slots=2, steps=3).encode()   # the client's schedule
+compilation = Compile(ClusterG(shape, 1, 2, 3), requests, advice, make_isa_gate_set(16), max_advice_bits=1024)
+circuit = compilation.compiled.circuit
+values = circuit.evaluate(compilation.inputs, random_parameters(shape, seed=0).flatten())
+~~~
 
 ## Verify
 
