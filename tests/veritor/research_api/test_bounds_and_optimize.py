@@ -32,7 +32,8 @@ def test_demo_bound_folds_over_the_compiled_index() -> None:
     assert result.digest == compiled.digest
     assert result.policy == POLICY and result.eta == ETA
     assert 0 <= result.bits <= result.out_bits
-    assert result.bits == min(result.knapsack_bits, result.laplace_bits, result.out_bits)
+    raw = min(result.knapsack_bits, result.laplace_bits, result.out_bits)
+    assert raw - 1e-9 <= result.bits <= raw  # tightened to an integer count of outputs
 
 
 def test_matmul_bound_is_zero_under_full_checking_and_capped_under_none() -> None:
@@ -41,7 +42,7 @@ def test_matmul_bound_is_zero_under_full_checking_and_capped_under_none() -> Non
     exact = Bound(compiled, VerificationPolicy(1, 1), 0)
     nothing = Bound(compiled, VerificationPolicy(0, 1), Fraction(1, 2))
 
-    assert 0 <= exact.bits < 1e-9 and not exact.capped  # one honest output, rounded up
+    assert exact.bits == 0.0 and not exact.capped  # one honest output, an exact count
     assert nothing.bits == nothing.out_bits == 8 and nothing.capped
 
 

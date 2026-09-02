@@ -96,7 +96,8 @@ class BoundResult:
     """``U`` in bits with the relaxations that produced it.
 
     ``bits`` is the certified capacity: ``min(knapsack_bits, laplace_bits,
-    out_bits)``; ``capped`` says the circuit interface was the minimum.
+    out_bits)`` tightened to an integer count of outputs (a fully checked run
+    is exactly ``0.0``); ``capped`` says the circuit interface was the minimum.
     ``cost_step`` (nats) and ``buckets`` describe the knapsack grid,
     ``errors_limit`` the error-count truncation; ``policy`` and ``eta`` are
     the ``theta`` and threshold bounded.  The result is always an upper
@@ -142,7 +143,7 @@ def bound(
     laplace = fold.laplace(replay)
     bits = min(knapsack, laplace, float(out_bits))
     return BoundResult(
-        bits=max(bits, 0.0),
+        bits=_integer_count(max(bits, 0.0)),
         capped=bits >= out_bits,
         out_bits=out_bits,
         knapsack_bits=knapsack,
@@ -154,6 +155,23 @@ def bound(
         eta=eta,
         digest=compiled.digest,
     )
+
+
+def _integer_count(bits: float) -> float:
+    """``log2`` of the largest integer count consistent with ``bits``.
+
+    ``|Y_eta|`` is an integer, so ``|Y_eta| <= 2**bits`` implies
+    ``|Y_eta| <= floor(2**bits)``.  The power is rounded up before the floor,
+    so the result is still an upper bound; it removes the upward-rounding
+    slack of the fold where that slack is visible, e.g. a fully checked run
+    is exactly ``0.0`` rather than ``1e-14`` bits.  Above ``2**53`` the count
+    is not an exact float and ``bits`` is returned unchanged.
+    """
+
+    if not bits < 53.0:
+        return bits
+    count = math.floor(math.nextafter(2.0**bits, math.inf))
+    return math.log2(count) if count > 1 else 0.0
 
 
 class _Fold:

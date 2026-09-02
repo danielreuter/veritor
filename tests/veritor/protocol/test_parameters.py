@@ -312,6 +312,21 @@ def test_runs_whose_bound_exceeds_u_max_are_rejected_before_any_commitment(
         assert run.report.accepted and run.transcript is not None
 
 
+def test_u_max_zero_admits_a_fully_checked_run(compiled, honest_values, expect) -> None:
+    """``Bound`` of ``theta = (1, 1)`` is exactly zero bits, so ``U_max = 0`` is satisfiable."""
+
+    everything = VerificationPolicy(1, 1)
+    assert bound(compiled, everything, Fraction(1, 4)).bits == 0.0
+
+    run = run_protocol(
+        compiled,
+        expect(everything, parameters=VerifierParameters(Fraction(1, 4), max_capacity=0)),
+        honest_values,
+    )
+
+    assert run.report.accepted and run.transcript is not None
+
+
 def test_u_max_is_checked_at_the_verifiers_eta(compiled, honest_values, expect) -> None:
     """A smaller ``eta`` admits more error sets, so the same ``theta`` bounds higher."""
 

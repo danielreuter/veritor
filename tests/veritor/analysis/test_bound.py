@@ -56,7 +56,8 @@ def test_fold_sits_between_the_union_and_the_relaxed_per_set_sum(make_compiled, 
     assert result.digest == compiled.digest
     assert result.policy == policy and result.eta == eta
     assert 0 <= result.bits <= result.out_bits == 8 * sum(sizes)
-    assert result.bits == min(result.knapsack_bits, result.laplace_bits, result.out_bits)
+    raw = min(result.knapsack_bits, result.laplace_bits, result.out_bits)
+    assert raw - 1e-9 <= result.bits <= raw  # tightened to an integer count of outputs
     assert result.capped == (result.bits == result.out_bits)
     # The grid admits at most the sets admissible at the relaxed threshold,
     # and distinct covers never weigh more than the per-set sum ...
