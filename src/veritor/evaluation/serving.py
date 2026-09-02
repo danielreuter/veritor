@@ -47,6 +47,25 @@ from the builder's own wiring: a kind's ports are the weights it is handed
 and the activations it reads, and every call site says where each group
 comes from.  The weights, the root, a request, a prefill and a prefill step
 are closed; anything reading a token, an activation or the cache is not.
+
+Each kind also records its *reach* (:attr:`~veritor.core.KindSummary.reach_bits`):
+the width of the circuit outputs a copy can influence, the third downstream
+cut ``Bound`` may charge a replay unit (RU) or a verification unit (VU) in
+place of its interface.  The builder
+reproduces what :meth:`~veritor.core.Index.kinds` computes for the compiled
+toy at *step granularity* (a call is one node: any input to it may reach
+any of its outputs), from the dataflow of the run.  At the ``request``
+level the root's outputs are the requests' tokens and requests never read
+each other, so a request reaches exactly its own ``generated`` tokens, and
+so does everything inside it -- a decode step, a layer, a matvec or a dot
+whose interface is far wider.  At the ``step`` level the steps of one wave
+of ``batch`` requests are chained through the tokens and the cache: a step
+reaches the tokens of every step from itself to the end of its wave, the
+prefill step the whole wave's, and the next wave's prefill step reads only
+the weights, so nothing reaches across waves.  The weights RU is read by
+everything and reaches the whole output.  Tracking dataflow per slot of a
+step rather than per step would be a further refinement; in this wave model
+the ``batch`` slots of a step advance together, so the two coincide.
 """
 
 from __future__ import annotations
@@ -199,7 +218,10 @@ class _Row:
 
     ``ports`` counts the ``W`` and ``A`` groups; ``feeds`` records, per child
     kind, what this kind feeds each group of the child (united over the call
-    sites inside one copy).
+    sites inside one copy).  ``reaches`` records, per child kind, the bits of
+    the circuit output the child's copies here can reach when that is less
+    than what this kind reaches; a child not named inherits this kind's
+    reach (a call is one node at step granularity).
     """
 
     key: str
@@ -213,6 +235,7 @@ class _Row:
     source_weights: int = 0
     children: dict[str, int] = field(default_factory=dict)
     feeds: dict[str, _Feed] = field(default_factory=dict)
+    reaches: dict[str, int] = field(default_factory=dict)
     verification_units: int = 0
     verification_kinds: dict[str, int] = field(default_factory=dict)
 
@@ -266,18 +289,22 @@ class _Builder:
         gates: dict[str, int] | None = None,
         calls: dict[str, int] | None = None,
         feeds: dict[str, _Feed] | None = None,
+        reaches: dict[str, int] | None = None,
     ) -> str:
         """Define (or reuse) the kind ``key`` with its own ``gates`` and its ``calls``.
 
         ``w`` and ``a`` are the sizes of its port groups; ``feeds`` says, per
         called kind, what this kind passes to each group of the child (see
         :func:`_feed`) and must name exactly the child's nonempty groups.
+        ``reaches`` says, per called kind, how many bits of the circuit
+        output the child's outputs here can reach when that is less than
+        this kind's own reach (see :class:`_Row`).
         """
 
         name = repr(key)
         if name in self.rows:
             return name
-        row = _Row(name, role, {W: w, A: a}, outputs)
+        row = _Row(name, role, {W: w, A: a}, outputs, reaches=dict(reaches or {}))
         for gate, count in (gates or {}).items():
             row.size += count
             row.replay_cost += count * _REPLAY_COST[gate]
@@ -646,16 +673,21 @@ class _Builder:
             feeds=feeds,
         )
 
-    def steps(self) -> tuple[dict[str, int], dict[str, dict[str, frozenset[str]]]]:
+    def steps(self) -> tuple[dict[str, int], dict[str, _Feed], dict[str, int]]:
         """The ``step`` layout: a prefill step then a decode step per token, per wave of ``batch`` requests.
 
         A prefill step's ports are the weights; a decode step's are the
         weights and each occupant's token and cache, produced by the earlier
-        steps of the run.
+        steps of the run.  Returns the calls, their feeds and their reaches:
+        the steps of a wave are chained, each reading the tokens and cache of
+        those before it, so the step at context ``c`` reaches the ``batch``
+        tokens of every step from ``c`` to the end of the wave and the
+        prefill step the whole wave's; the next wave starts from the weights
+        alone, so no step reaches another wave's tokens.
         """
 
         shape = self.shape
-        b, waves = shape.batch, shape.requests // shape.batch
+        b, waves, width = shape.batch, shape.requests // shape.batch, shape.width
         prefill = self.prefill(_IN_REPLAY)
         step = self.define(
             ("prefill_step", b),
@@ -666,6 +698,7 @@ class _Builder:
             feeds={prefill: _feed(w=W)},
         )
         calls, feeds = {step: waves}, {step: _feed(w=SOURCE)}
+        reaches = {step: b * shape.generated * width}
         for c in range(shape.prompt + 1, shape.prompt + shape.generated):
             decode = self.decode(c, _IN_REPLAY)
             step = self.define(
@@ -679,33 +712,47 @@ class _Builder:
             )
             calls[step] = waves
             feeds[step] = _feed(w=SOURCE, a=COMPUTED)
-        return calls, feeds
+            reaches[step] = b * (shape.prompt + shape.generated - c) * width
+        return calls, feeds, reaches
 
     def root(self) -> str:
-        """The run: the weights unit, then the requests or the steps, handed the weight cells."""
+        """The run: the weights RU, then the requests or the steps, handed the weight cells.
+
+        The weights are read by every request or step and reach the whole
+        output; a request reaches its own ``generated`` tokens, requests
+        never reading each other; a step reaches what :meth:`steps` says.
+        """
 
         shape = self.shape
         calls: dict[str, int] = {self.weights(): 1}
         feeds: dict[str, _Feed] = {}
+        reaches: dict[str, int] = {}
         if self.ru == "step":
-            step_calls, feeds = self.steps()
+            step_calls, feeds, reaches = self.steps()
             calls.update(step_calls)
         else:
             request = self.request()
             calls[request] = shape.requests
             feeds[request] = _feed(w=SOURCE)
-        return self.define(("root",), None, outputs=shape.output_count, calls=calls, feeds=feeds)
+            reaches[request] = shape.generated * shape.width
+        return self.define(
+            ("root",), None, outputs=shape.output_count, calls=calls, feeds=feeds, reaches=reaches
+        )
 
     # -- the table -----------------------------------------------------------------------
 
     def table(self) -> KindTable:
         root = self.root()
+        width = self.shape.width
         copies = {root: 1}
         min_depth = {root: 0}
         max_depth = {root: 0}
         # a port group is retained iff every caller feeds it source gates or its own
         # retained groups: callers are settled before their callees, so one pass
         retained: dict[str, dict[str, bool]] = {root: {}}
+        # a kind reaches the most any call site lets it: what the caller reaches, unless the
+        # caller's dataflow says the child's outputs reach less (the root's requests and steps)
+        reach: dict[str, int] = {root: self.rows[root].out_count * width}
         for name in self.parents_first(root):
             row = self.rows[name]
             own = retained.setdefault(name, {})
@@ -719,7 +766,8 @@ class _Builder:
                 for group, sources in row.feeds[child].items():
                     fed = all(source == SOURCE or own.get(source, False) for source in sources)
                     target[group] = target.get(group, True) and fed
-        width = self.shape.width
+                site = min(reach[name], row.reaches.get(child, reach[name]))
+                reach[child] = max(reach.get(child, 0), site)
         rows = tuple(
             KindSummary(
                 kind=row.key,
@@ -731,6 +779,7 @@ class _Builder:
                 input_count=row.input_count,
                 out_count=row.out_count,
                 out_bits=row.out_count * width,
+                reach_bits=reach[row.key],
                 source_inputs=row.source_inputs,
                 source_weights=row.source_weights,
                 min_depth=min_depth[row.key],

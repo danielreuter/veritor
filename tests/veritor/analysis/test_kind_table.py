@@ -7,6 +7,7 @@ priced exactly like a profiled one; the table checks its own consistency.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from fractions import Fraction
 
 import pytest
@@ -82,3 +83,23 @@ def test_a_table_checks_its_kinds() -> None:
             2,
             table.digest,
         )
+
+
+def test_a_table_checks_the_reach_against_the_root() -> None:
+    """No kind reaches more than the whole output, and the root reaches exactly that."""
+
+    table = build_compiled((2, 3)).kind_table()
+    root = next(row for row in table.rows if row.kind == table.root)
+    other = next(row for row in table.rows if row.kind != table.root)
+
+    def rebuild(rows: tuple) -> KindTable:
+        return KindTable(rows, table.root, table.n, table.input_count, table.weight_count, 2, table.digest)
+
+    assert root.reach_bits == root.out_bits == 40
+    with pytest.raises(ValueError, match="reaches exactly its own outputs"):
+        rebuild(tuple(replace(row, reach_bits=8) if row is root else row for row in table.rows))
+    for bad in (root.out_bits + 1, -1):
+        with pytest.raises(ValueError, match=r"reaches .* bits of a 40-bit output"):
+            rebuild(tuple(replace(row, reach_bits=bad) if row is other else row for row in table.rows))
+    # anything in between is a table
+    rebuild(tuple(replace(row, reach_bits=0) if row is other else row for row in table.rows))

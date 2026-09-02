@@ -67,21 +67,44 @@ def out_bits(circuit: Circuit, node: IndexNode) -> int:
     return sum(circuit[address].width for address in circuit.Out(node))
 
 
+def reach_bits(circuit: Circuit, node: IndexNode) -> int:
+    """The width of the circuit outputs reachable from the node's gates, in bits.
+
+    Forward along argument reads from every gate of the node but its source
+    gates (which hold their pinned values): the exact value of what
+    :attr:`~veritor.core.KindSummary.reach_bits` bounds over the copies of
+    a kind.  Those outputs are a downstream cut for the node, like its
+    interface.
+    """
+
+    reached = bytearray(circuit.n)
+    for address in node.interval:
+        reached[address] = not circuit[address].is_source
+    for address in range(node.interval.stop, circuit.n):
+        reached[address] = any(reached[arg] for arg in circuit[address].args)
+    return sum(circuit[address].width for address in circuit.outputs if reached[address])
+
+
 def cover_bits(compiled: Compiled, errors: ErrorSet) -> int:
     """``kappa(E)``: the cheapest cover of ``E`` by index nodes, in bits.
 
-    A node is covered either by its own interface or by covering the
-    children that contain errors; a verification unit is covered by itself.
+    A node is covered either by itself -- charged the narrower of its
+    interface and the circuit outputs it reaches, both downstream cuts --
+    or by covering the children that contain errors; a verification unit
+    (VU) is covered by itself.
     """
 
     owner = unit_owner(compiled.index)
     circuit = compiled.circuit
 
+    def charge(node: IndexNode) -> int:
+        return min(out_bits(circuit, node), reach_bits(circuit, node))
+
     def value(node: IndexNode) -> int:
         if node.role == VERIFICATION:
-            return out_bits(circuit, node) if owner[node.interval.start] in errors else 0
+            return charge(node) if owner[node.interval.start] in errors else 0
         below = sum(value(child) for child in node.children())
-        return min(below, out_bits(circuit, node)) if below else 0
+        return min(below, charge(node)) if below else 0
 
     return value(compiled.index.root)
 

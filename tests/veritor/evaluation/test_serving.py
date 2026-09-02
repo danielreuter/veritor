@@ -53,6 +53,7 @@ def rows_of(table: KindTable) -> list[tuple[object, ...]]:
             row.size,
             row.out_count,
             row.out_bits,
+            row.reach_bits,
             row.input_count,
             row.verification_units,
             row.replay_cost,
@@ -207,6 +208,42 @@ def test_closed_kinds_are_the_weights_the_root_the_requests_and_the_prefills() -
         # everything reading an activation, a token or the cache is open
         assert not any(row.closed for row in table.rows if row.kind.startswith("('decode"))
         assert not any(row.closed for row in table.rows if row.kind.startswith("('matvec"))
+
+
+def test_reach_is_the_requests_tokens_or_the_rest_of_the_wave() -> None:
+    """At every partition a kind reaches its request's tokens, or its wave's from its step on."""
+
+    tokens = TOY.generated * TOY.width
+    wave = TOY.batch * tokens
+    wide_partitions = set()
+    for levels in partitions():
+        table = serving_table(TOY, *levels)
+        rows = {row.kind: row for row in table.rows}
+        root = rows[table.root]
+        assert root.reach_bits == root.out_bits == TOY.requests * tokens
+        assert all(0 <= row.reach_bits <= root.out_bits for row in table.rows)
+        # the weights RU and its cells are read by everything; the prompt cells by their request or wave
+        weights = (table.root, "('weights',)", "('source', 'weight')")
+        assert all(rows[kind].reach_bits == root.out_bits for kind in weights)
+        below = [row for row in table.rows if row.kind not in weights]
+        if levels[0] == "step":
+            # the steps of a wave are chained: the step at context ``c`` reaches the tokens of the
+            # ``batch`` requests from ``c`` on, the prefill step the whole wave's
+            for c in range(TOY.prompt + 1, TOY.prompt + TOY.generated):
+                step = rows[f"('decode_step', {c}, {TOY.batch})"]
+                assert step.reach_bits == TOY.batch * (TOY.prompt + TOY.generated - c) * TOY.width < step.out_bits
+            assert rows[f"('prefill_step', {TOY.batch})"].reach_bits == wave
+            assert all(row.reach_bits <= wave for row in below)
+            assert max(row.reach_bits for row in below) == wave
+        else:
+            assert all(row.reach_bits == tokens for row in below), levels
+        # wide interfaces inside a request or a step are charged the tokens, cells their word
+        wide = [row for row in below if row.role and row.out_bits > wave]
+        wide_partitions.update({levels} if wide else set())
+        assert all(min(row.out_bits, row.reach_bits) <= wave for row in wide)
+        assert all(min(row.out_bits, row.reach_bits) == row.out_bits for row in below if row.out_bits <= TOY.width)
+    assert {("request", "row"), ("step", "row"), ("layer", "row"), ("request", "layer")} <= wide_partitions
+    assert ("cell", "gate") not in wide_partitions  # no RU or VU wider than a word there
 
 
 def test_the_shape_is_checked() -> None:

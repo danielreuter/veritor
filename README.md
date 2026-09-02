@@ -273,7 +273,11 @@ than `max_advice_bits` is rejected at admission, before any commitment.
 `Bound(C, I, θ)` certifies `U`, a bound in bits on the outputs an adversary
 can reach with acceptance probability above `η`. It is a fold over the kinds
 of `I`: every error set is assigned a cover by index nodes, the reachable
-outputs of a cover are at most `2^{Σ out_bits}` (the downstream cut), and the
+outputs of a cover are at most `2^{Σ min(out_bits, reach_bits)}` (a node's
+interface and the circuit outputs it can reach are both downstream cuts; the
+reach is computed at step granularity, so a replay unit (RU) or verification
+unit (VU) inside one request of a serving run is charged that request's
+tokens, not its interface), and the
 distinct covers of admissible error sets are summed. Admissibility is a
 knapsack over replay units against the budget `ln(1/η)`, solved on a cost
 grid that only ever admits more; a grid-free Laplace bound is taken alongside

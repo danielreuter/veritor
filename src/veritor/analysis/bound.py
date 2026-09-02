@@ -2,22 +2,32 @@
 
 Statement.  Let ``Y_eta`` be the set of outputs of transcripts the verifier
 accepts with probability above its threshold ``eta``.  Every such transcript has an error
-set ``E`` (verification units holding an incorrect gate) with survival
-``sigma(E) > eta`` (see :mod:`veritor.analysis.probability`), and if all
-incorrect gates lie inside a union of index nodes ``S_1, ..., S_m`` then at
-most ``2**(sum_j out_bits(S_j))`` outputs are reachable (downstream cut).
-Assign every subset ``E'`` of a replay unit a cover ``c(E')`` by index
-nodes, so that ``E`` is covered by the union of the ``c(E ∩ R_r)``; then
+set ``E`` (verification units (VUs) holding an incorrect gate) with
+survival ``sigma(E) > eta`` (see :mod:`veritor.analysis.probability`), and
+if all incorrect gates lie inside a union of index nodes ``S_1, ..., S_m``
+then at most ``2**(sum_j kappa(S_j))`` outputs are reachable, where
+``kappa(S)`` is the width of any downstream cut for ``S``.  Two cuts are
+read off the kind table: the node's interface ``Out(S)`` (``out_bits``,
+every path out of the node leaves through a declared output) and the
+circuit outputs reachable from the node (``reach_bits``, every path from
+the node to the output ends at one of them), so a node is charged
+``kappa(S) = min(out_bits, reach_bits)``; the whole output ``out_bits(C)``
+caps everything.  Assign every subset ``E'`` of a replay unit (RU) a cover
+``c(E')`` by index nodes, so that ``E`` is covered by the union of the
+``c(E ∩ R_r)``; then
 
     |Y_eta| <= sum over admissible (l_r)_r of prod_r V_r(l_r),
 
 where ``V_r(l)`` is the total ``2**kappa`` of the *distinct* covers assigned
 to the ``l``-subsets of ``R_r``.  The fold chooses covers per kind: the
 ``l``-subsets of a kind are covered either by the node itself (one cover,
-``2**out_bits``) or by the covers of their pieces in the child kinds (a
+``2**kappa``) or by the covers of their pieces in the child kinds (a
 convolution over child copies), whichever total is smaller.  This is at
 most the per-set sum ``sum_E 2**kappa(E)`` and can be far below it when
-whole units may be corrupted.
+whole RUs may be corrupted.  The reach matters where the interface is
+wide but the influence narrow: a decode step, a layer or a matvec inside
+one request of a serving run has an interface of the activations and cache
+entries it writes, yet can only change that request's remaining tokens.
 
 Admissibility is a knapsack over replay units with costs ``c(l_r)`` and
 budget ``Lambda``.  It is solved on a grid of ``buckets`` cost steps of
@@ -178,6 +188,17 @@ def bound(
     )
 
 
+def cut_bits(row: KindSummary) -> int:
+    """``kappa`` of a node of the kind: the narrower of its two downstream cuts.
+
+    The interface ``Out`` (``out_bits``) and the circuit outputs the node can
+    reach (``reach_bits``) are both downstream cuts for every gate of the
+    node, so the node may be charged either; the fold charges the smaller.
+    """
+
+    return min(row.out_bits, row.reach_bits)
+
+
 def _integer_count(bits: float) -> float:
     """``log2`` of the largest integer count consistent with ``bits``.
 
@@ -269,7 +290,7 @@ class _Fold:
                 # nothing but source gates: never incorrect, so only l = 0
                 result = empty_series()
             else:
-                result = unit_series(row.out_bits)
+                result = unit_series(cut_bits(row))
         else:
             result = empty_series()
             for child, count in row.children:
@@ -277,7 +298,7 @@ class _Fold:
                     continue
                 piece = power(self.series(child), count, self.limit)
                 result = piece if len(result.head) == 1 else multiply(result, piece, self.limit)
-            result = cap(result, row.out_bits)
+            result = cap(result, cut_bits(row))
         self._series[kind] = result
         return result
 
@@ -361,4 +382,4 @@ def _pad(values: np.ndarray, length: int) -> np.ndarray:
     return np.concatenate([values, np.full(length - len(values), NEG_INF)])
 
 
-__all__ = ["BoundOptions", "BoundResult", "bound"]
+__all__ = ["BoundOptions", "BoundResult", "bound", "cut_bits"]

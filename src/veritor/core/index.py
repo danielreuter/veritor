@@ -16,7 +16,20 @@ address sets built the same way; nothing about them is stored.
 The per-kind table (:meth:`Index.kinds`) also records which kinds are
 *closed*: fed nothing but source gates at every call site, hence
 re-executable from the inputs and the weights alone.  That is what the cost
-model needs to price the recomputation behind a sampled replay unit.
+model needs to price the recomputation behind a sampled replay unit (RU).
+
+It records, too, how much of the circuit's output a copy of each kind can
+*reach* (``reach_bits``): the width of the circuit outputs that lie forward
+of any gate of the copy, along argument reads.  Those outputs are a
+downstream cut for the copy, so ``Bound`` may charge an unsampled RU or
+verification unit (VU) ``min(out_bits, reach_bits)`` in place of its
+interface.  The reach is computed at *step granularity*: within a
+definition, a step (a gate, a call or a whole ``repeat``) depends on every
+earlier step whose slots any of its arguments read, and everything
+reachable from a step is charged to it; the result is an upper bound that
+never enumerates copies (see :func:`output_reach`).  Tracking dataflow
+through the individual outputs of a step -- per slot of a batched decode
+step, say -- would be a further refinement.
 
 Canonical chunking of long step lists (so a cut can fall inside a definition)
 is a later phase: today a unit is always a whole copy of a definition.
@@ -31,6 +44,7 @@ from math import gcd
 
 from .description import (
     INPUT,
+    LOCAL,
     REPLAY,
     VERIFICATION,
     CallStep,
@@ -233,6 +247,16 @@ class KindSummary:
     keeps (the circuit's inputs and the weights); anything else needs the
     values of the computation around it.  The root has no ports and is
     closed; so is every kind without ports.
+
+    ``reach_bits`` is an upper bound, over the copies of the kind, on the
+    width in bits of the circuit outputs reachable from the copy's gates
+    along argument reads (:func:`output_reach`).  The reachable outputs are
+    a downstream cut for the copy, so a node may be charged
+    ``min(out_bits, reach_bits)`` by ``Bound``; the reach may be far below
+    the interface (a decode step of one request reaches only that request's
+    remaining tokens) and is never above the root's ``out_bits``, which is
+    the root's own ``reach_bits``.  It is computed at step granularity and
+    is ``0`` for a kind whose copies never reach an output.
     """
 
     kind: str
@@ -244,6 +268,7 @@ class KindSummary:
     input_count: int
     out_count: int
     out_bits: int
+    reach_bits: int
     source_inputs: int
     source_weights: int
     min_depth: int
@@ -274,17 +299,22 @@ class KindTable:
     digest: Digest
 
     def __post_init__(self) -> None:
-        kinds = {row.kind for row in self.rows}
+        kinds = {row.kind: row for row in self.rows}
         if len(kinds) != len(self.rows):
             raise ValueError("kind table rows must have distinct kinds")
         if self.root not in kinds:
             raise ValueError("kind table root must be one of its rows")
+        total = kinds[self.root].out_bits
+        if kinds[self.root].reach_bits != total:
+            raise ValueError("the root reaches exactly its own outputs")
         for row in self.rows:
             for child, _ in row.children:
                 if child not in kinds:
                     raise ValueError(f"kind {row.kind} calls unknown kind {child}")
             if row.input_count == 0 and not row.closed:
                 raise ValueError(f"kind {row.kind} has no ports and must be closed")
+            if not 0 <= row.reach_bits <= total:
+                raise ValueError(f"kind {row.kind} reaches {row.reach_bits} bits of a {total}-bit output")
 
 
 class Index:
@@ -386,12 +416,14 @@ class Index:
         definition DAG, so a kind reached through many paths is still visited
         once, and every row is a per-definition summary (declared interfaces
         as runs, never enumerated).  ``closed`` comes from
-        :func:`transient_ports`, the same top-down pass over the DAG.
+        :func:`transient_ports` and ``reach_bits`` from :func:`output_reach`,
+        two more top-down passes over the DAG.
         """
 
         root = self._frame.definition
         parents_first = _reachable(root)[::-1]
         transient = transient_ports(root)
+        reach = output_reach(root)
         copies: dict[str, int] = {root.digest: 1}
         min_depth: dict[str, int] = {root.digest: 0}
         max_depth: dict[str, int] = {root.digest: 0}
@@ -423,6 +455,7 @@ class Index:
                 input_count=definition.input_count,
                 out_count=definition.out_count,
                 out_bits=definition.out_bits,
+                reach_bits=reach[definition.digest],
                 source_inputs=definition.input_total,
                 source_weights=definition.weight_total,
                 min_depth=min_depth[definition.digest],
@@ -796,6 +829,149 @@ def transient_ports(root: Definition) -> dict[str, tuple[Run, ...]]:
                         for first, taken in _transient_stretches(definition, own, start, count, stride):
                             found.extend(_port_runs(base, item.count, k0, kstep, first, taken, 1))
     return result
+
+
+# -- output reach ------------------------------------------------------------------
+#
+# For a set of gates ``A``, the circuit outputs reachable from ``A`` along
+# argument reads are a downstream cut for ``A``: every path from ``A`` to an
+# output ends at one of them.  Their width therefore bounds the capacity of
+# ``A`` (paper, section 5.4), beside the two cuts the fold already knows, the
+# interface ``Out(A)`` and the whole output.  Any superset of the reachable
+# outputs is a cut as well, so a structural over-approximation of the reach is
+# sound.
+#
+# The reach is computed at *step granularity*, per definition, top-down over the
+# DAG.  Inside a definition ``D`` a step ``k`` depends on an earlier step ``j``
+# when any argument run of ``k`` (over every copy of a ``repeat``) meets the
+# slots of ``j``; a call or repeat step is one node, so any input to it may reach
+# any of its outputs.  ``Down(j)`` is the transitive closure.  The grammar lets a
+# step read only the slots of *earlier* steps, so the copies of one ``repeat``
+# never read each other: a chain of decode steps is a sequence of call steps,
+# which the closure follows, while the copies of a ``repeat`` are independent
+# and one copy's reach is computed from the outputs attributable to one copy.
+#
+# What a step reaches is measured in bits of the *caller's* declared outputs.
+# At the root those are the circuit outputs, cut at step boundaries into
+# segments whose widths (through ``_call_pieces``) sum to ``out_bits``; a copy
+# of a ``repeat`` is charged at most the widest share one copy can hold of each
+# segment.  Below the root all of a definition's outputs at a call site share
+# the reach ``R_D`` the caller assigned to the copy (every path out of the copy
+# leaves through a declared output, so ``R_D`` bounds what any of them reaches),
+# and a step reaches ``R_D`` or nothing.  A child called at step ``j`` of ``D``
+# receives ``reach_D(j)``; its own ``reach_bits`` is the maximum over its call
+# sites.  Everything inside a copy inherits at most the copy's reach, but is
+# still computed through the copy's own steps: a child may reach only some of
+# the copy's outputs, or none.
+
+
+def _segment_bits(definition: Definition, index: int, first: int, taken: int, stride: int) -> tuple[int, int]:
+    """Bits of the declared-output slots ``first + t * stride`` (``t < taken``) inside step ``index``.
+
+    Returns ``(width, share)``: the width of the gates the segment resolves
+    to (pinned gates and pass-through ports carry nothing) and an upper
+    bound on the part of it that lies in any one copy of the step.  The
+    copies of a ``repeat`` are independent, so one copy owns at most
+    ``ceil(outputs / stride)`` elements of a strided segment (all of them
+    when the stride is ``0``), each no wider than the widest gate the
+    segment resolves to; for a gate step or a single call the share is the
+    width.
+    """
+
+    step = definition.steps[index]
+    if isinstance(step, GateStep):
+        width = 0 if step.pinned else taken * step.gate.width
+        return width, width
+    slot = first - definition.step_slot[index]
+    base = definition.step_address[index]
+    runs = [
+        run for kind, run in _call_pieces(definition, step, base, slot, taken, stride) if kind is PieceKind.GATE
+    ]
+    width = sum(run.count * run.width for run in runs)
+    if step.count == 1 or not runs:
+        return width, width
+    outputs = step.child.output_count
+    per_copy = taken if stride == 0 else min(taken, -(-outputs // stride))
+    return width, min(width, per_copy * max(run.width for run in runs))
+
+
+def _step_reach(definition: Definition, total: int, exact: bool) -> list[int]:
+    """Per step of ``definition``, the bits of its declared outputs reachable from one copy of the step.
+
+    ``total`` is the reach of a copy of ``definition`` itself.  With ``exact``
+    (the root) the declared outputs are the circuit outputs and their
+    segments are weighed by :func:`_segment_bits`; otherwise every output
+    segment weighs ``total`` and a step reaches ``total`` or nothing.  Steps
+    are processed last to first, so ``Down`` of a step is the union of the
+    ``Down`` of the steps that read it, as bitmasks over the steps.
+    """
+
+    steps = definition.steps
+    count = len(steps)
+    readers = [0] * count  # step j -> the later steps whose arguments read a slot of j
+    for k, step in enumerate(steps):
+        copies = step.count if isinstance(step, CallStep) else 1
+        for item in step.args:
+            if item.space != LOCAL:
+                continue
+            for start, run, stride, _, _ in _argument_grid(item, copies):
+                for index, _, _ in _split(definition.step_slot, start, run, stride):
+                    readers[index] |= 1 << k
+    out = [0] * count  # bits of declared outputs held by every copy of the step
+    share = [0] * count  # ... and by any one copy of it
+    for item in definition.outputs:
+        if item.space != LOCAL:
+            continue
+        for index, first, taken in _split(definition.step_slot, item.start, item.count, item.stride):
+            if exact:
+                width, single = _segment_bits(definition, index, item.element(first), taken, item.stride)
+            else:
+                width = single = total
+            out[index] += width
+            share[index] += single
+    down = [0] * count
+    reach = [0] * count
+    for j in reversed(range(count)):
+        mask = 1 << j
+        rest = readers[j]
+        while rest:
+            low = rest & -rest
+            mask |= down[low.bit_length() - 1]
+            rest ^= low
+        down[j] = mask
+        bits = share[j]
+        rest = mask ^ (1 << j)
+        while rest and bits < total:
+            low = rest & -rest
+            bits += out[low.bit_length() - 1]
+            rest ^= low
+        reach[j] = min(bits, total)
+    return reach
+
+
+def output_reach(root: Definition) -> dict[str, int]:
+    """Per reachable definition, an upper bound on the circuit output bits a copy of it can reach.
+
+    The root reaches its whole output, ``out_bits``.  Top-down over the DAG,
+    in reverse post-order, so a definition's reach is final when its own
+    call steps are processed: a child called at step ``j`` receives the reach
+    of that step (:func:`_step_reach`) and keeps the maximum over its call
+    sites.  ``O(|description|)`` up to the number of progressions the
+    argument grids cut into and the closure over the steps of one
+    definition; copies are never enumerated.
+    """
+
+    reach: dict[str, int] = {root.digest: root.out_bits}
+    for definition in _reachable(root)[::-1]:
+        own = reach[definition.digest]
+        if not any(isinstance(step, CallStep) for step in definition.steps):
+            continue
+        per_step = _step_reach(definition, own, definition is root)
+        for index, step in enumerate(definition.steps):
+            if isinstance(step, CallStep):
+                child = step.child.digest
+                reach[child] = max(reach.get(child, 0), per_step[index])
+    return reach
 
 
 def _short(definition: Definition) -> str:

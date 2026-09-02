@@ -190,6 +190,7 @@ def test_kinds_table_summarizes_each_definition_once(helpers):
         input_count=k + k * cols,
         out_count=cols,
         out_bits=cols * 8,
+        reach_bits=cols * 8,  # a row's dots are circuit outputs and nothing reads them
         source_inputs=0,
         source_weights=0,
         min_depth=1,
@@ -209,6 +210,7 @@ def test_kinds_table_summarizes_each_definition_once(helpers):
         input_count=0,
         out_count=0,  # every declared output is an input gate: pinned, not in Out
         out_bits=0,
+        reach_bits=rows * cols * 8,  # every row reads the activations: structurally they reach everything
         source_inputs=rows * k,
         source_weights=0,
         min_depth=1,
@@ -228,6 +230,7 @@ def test_kinds_table_summarizes_each_definition_once(helpers):
         input_count=0,
         out_count=0,  # every declared output is a weight gate: pinned, not in Out
         out_bits=0,
+        reach_bits=rows * cols * 8,
         source_inputs=0,
         source_weights=k * cols,
         min_depth=1,
