@@ -2,7 +2,7 @@ from fractions import Fraction
 
 import pytest
 
-from veritor import ArchitectureId, Compile
+from veritor import compile_matmul
 from veritor.analysis import CostParameters, ExpectedCost, cost
 from veritor.core import Compiled, VerificationPolicy
 
@@ -42,7 +42,7 @@ def test_cost_fold_matches_the_unit_by_unit_sum(make_compiled, sizes, policy):
 def test_cost_fold_matches_on_nested_indices(make_paper_example):
     policy = VerificationPolicy(Fraction(2, 3), Fraction(1, 5), Fraction(1, 10))
     parameters = CostParameters(2, 1)
-    for compiled in (make_paper_example(2, False), make_paper_example(2, True), Compile(ArchitectureId.MATMUL)):
+    for compiled in (make_paper_example(2, False), make_paper_example(2, True), compile_matmul()):
         assert isinstance(compiled, Compiled)
         assert cost(compiled, policy, parameters) == explicit_cost(compiled, policy, parameters)
 

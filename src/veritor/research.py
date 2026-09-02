@@ -1,10 +1,11 @@
-"""Paper-level research facade: ``Compile`` -> ``Verify`` / ``Bound`` / ``Cost`` / ``Optimize``.
+"""The paper-level API: ``Compile`` -> ``Verify`` / ``Bound`` / ``Cost`` / ``Optimize``.
 
-DemoG and matmul compile to :class:`~veritor.core.Compiled`, the executable
-``(C, I)`` the protocol verifies and the folds analyse.  The LLM plug-ins
-carry model configurations only; until a constructor writes their
-descriptions, ``Compile`` returns :class:`~veritor.core.Unsupported` and so
-does anything asked of that result.
+``Compile`` is the trusted half of compilation: it takes the description
+bytes an untrusted constructor ``G`` produced (see
+:mod:`veritor.constructors`), the public inputs and the advice, and returns
+the ``(C, I)`` pair every other function consumes.  ``Verify`` and ``Bound``
+are the verifier's; ``Cost`` and ``Optimize`` are the client's advisory
+tools.
 """
 
 from __future__ import annotations
@@ -23,32 +24,22 @@ from veritor.analysis import (
     cost,
     optimize,
 )
+from veritor.compile import Compiler
 from veritor.core import (
-    Capability,
+    CompilationLimits,
     Compiled,
+    GateSet,
     ProbabilityInput,
-    Unsupported,
     VerificationLimits,
     VerificationPolicy,
-)
-from veritor.plugins import (
-    ArchitectureCompileRequest,
-    ArchitectureId,
-    CompileResult,
-    DeepSeekV4ProCompileRequest,
-    DemoGCompileRequest,
-    GPT2CompileRequest,
-    GreedyTextExecutionShape,
-    InklingCompileRequest,
-    KimiK3CompileRequest,
-    MatmulCompileRequest,
-    compile_architecture,
 )
 from veritor.protocol import (
     Expectation,
     ProtocolRun,
     VerificationCode,
     VerificationReport,
+    VerifierParameters,
+    Weights,
     encode_transcript,
     make_expectation,
     run_protocol,
@@ -59,26 +50,25 @@ DEFAULT_CONFORMANCE_POLICY = VerificationPolicy(1, 1, 0)
 
 
 def Compile(
-    architecture_id: ArchitectureId | str,
-    request: ArchitectureCompileRequest | None = None,
-) -> CompileResult:
-    """Compile one registered architecture or executable workload."""
+    description: bytes,
+    inputs: Sequence[int],
+    gate_set: GateSet,
+    *,
+    advice: bytes | None = None,
+    advice_bound_bits: int = 0,
+    limits: CompilationLimits | None = None,
+) -> Compiled:
+    """``Compile(G, x, a) -> (C, I)`` for description bytes already produced by ``G``."""
 
-    return compile_architecture(architecture_id, request)
+    return Compiler(gate_set, limits).compile(
+        description, inputs, advice, advice_bound_bits=advice_bound_bits
+    )
 
 
-def _executable(artifact: CompileResult, capability: Capability) -> Compiled | Unsupported:
-    if isinstance(artifact, Compiled):
-        return artifact
-    if isinstance(artifact, Unsupported):
-        return Unsupported(
-            capability=capability,
-            plugin_id=artifact.plugin_id,
-            reason_code=artifact.reason_code,
-            detail=f"no compiled description: {artifact.detail}",
-            artifact_kind=artifact.artifact_kind,
-        )
-    raise TypeError("artifact must be a Compile result")
+def _compiled(value: object) -> Compiled:
+    if not isinstance(value, Compiled):
+        raise TypeError("expected a Compiled (C, I) from Compile")
+    return value
 
 
 def Verify(
@@ -94,37 +84,31 @@ def Verify(
     is ever treated as their source of truth.
     """
 
-    return verify_transcript(transcript_bytes, expectation, compiled, limits)
+    return verify_transcript(transcript_bytes, expectation, _compiled(compiled), limits)
 
 
 def Bound(
-    artifact: CompileResult,
+    compiled: Compiled,
     policy: VerificationPolicy,
     options: BoundOptions | None = None,
-) -> BoundResult | Unsupported:
+) -> BoundResult:
     """``U = Bound(C, I, theta)``: see :mod:`veritor.analysis.bound`."""
 
-    compiled = _executable(artifact, Capability.STATIC_BOUND)
-    if isinstance(compiled, Unsupported):
-        return compiled
-    return bound(compiled, policy, options)
+    return bound(_compiled(compiled), policy, options)
 
 
 def Cost(
-    artifact: CompileResult,
+    compiled: Compiled,
     policy: VerificationPolicy,
     parameters: CostParameters | None = None,
-) -> ExpectedCost | Unsupported:
+) -> ExpectedCost:
     """``Cost(C, I, theta)``: see :mod:`veritor.analysis.cost`."""
 
-    compiled = _executable(artifact, Capability.STATIC_BOUND)
-    if isinstance(compiled, Unsupported):
-        return compiled
-    return cost(compiled, policy, parameters)
+    return cost(_compiled(compiled), policy, parameters)
 
 
 def Optimize(
-    artifact: CompileResult,
+    compiled: Compiled,
     eta: ProbabilityInput,
     grid: PolicyGrid,
     *,
@@ -133,14 +117,11 @@ def Optimize(
     parameters: CostParameters | None = None,
     bound_options: BoundOptions | None = None,
     accept: Callable[[VerificationPolicy], bool] | None = None,
-) -> Optimization | None | Unsupported:
+) -> Optimization | None:
     """The client's advisory search for ``theta``: see :mod:`veritor.analysis.optimize`."""
 
-    compiled = _executable(artifact, Capability.STATIC_BOUND)
-    if isinstance(compiled, Unsupported):
-        return compiled
     return optimize(
-        compiled,
+        _compiled(compiled),
         eta,
         grid,
         max_bits=max_bits,
@@ -152,28 +133,30 @@ def Optimize(
 
 
 def make_verification_expectation(
-    artifact: CompileResult,
+    compiled: Compiled,
     policy: VerificationPolicy,
     public_inputs: Sequence[object],
     claimed_outputs: Sequence[object],
     *,
+    parameters: VerifierParameters | None = None,
+    weights: Weights | None = None,
     session_id: bytes | None = None,
     q_seed: bytes | None = None,
     s_seed: bytes | None = None,
-) -> Expectation | Unsupported:
-    """Build a verifier-local expectation for an executable compile result.
+) -> Expectation:
+    """The verifier's side of one run: the client's ``theta`` admitted under ``parameters``.
 
-    Seeds are drawn from the CSPRNG unless given.
+    Seeds come from the CSPRNG unless given; ``weights`` is the model's
+    pre-committed weight root, if any.
     """
 
-    executable = _executable(artifact, Capability.VERIFY)
-    if isinstance(executable, Unsupported):
-        return executable
     return make_expectation(
-        executable,
+        _compiled(compiled),
         policy,
         public_inputs,
         claimed_outputs,
+        parameters=parameters,
+        weights=weights,
         session_id=session_id,
         q_seed=q_seed,
         s_seed=s_seed,
@@ -189,7 +172,7 @@ class ExecutableConformanceTranscript:
 
 
 def build_executable_conformance_transcript(
-    artifact: CompileResult,
+    compiled: Compiled,
     public_inputs: Sequence[int],
     policy: VerificationPolicy = DEFAULT_CONFORMANCE_POLICY,
     *,
@@ -197,7 +180,7 @@ def build_executable_conformance_transcript(
     q_seed: bytes | None = None,
     s_seed: bytes | None = None,
     limits: VerificationLimits | None = None,
-) -> ExecutableConformanceTranscript | Unsupported:
+) -> ExecutableConformanceTranscript:
     """Run an honest prover against the verifier in one process.
 
     The circuit is evaluated on ``public_inputs``, the claimed outputs are
@@ -207,9 +190,7 @@ def build_executable_conformance_transcript(
     fixture for :func:`Verify`.
     """
 
-    compiled = _executable(artifact, Capability.VERIFY)
-    if isinstance(compiled, Unsupported):
-        return compiled
+    compiled = _compiled(compiled)
     values = compiled.circuit.evaluate(public_inputs)
     outputs = tuple(values[address] for address in compiled.circuit.outputs)
     expectation = make_expectation(
@@ -232,36 +213,29 @@ def build_executable_conformance_transcript(
 
 __all__ = [
     "DEFAULT_CONFORMANCE_POLICY",
-    "ArchitectureCompileRequest",
-    "ArchitectureId",
     "Bound",
     "BoundOptions",
     "BoundResult",
+    "CompilationLimits",
     "Compile",
-    "CompileResult",
     "Compiled",
     "Cost",
     "CostParameters",
-    "DeepSeekV4ProCompileRequest",
-    "DemoGCompileRequest",
     "ExecutableConformanceTranscript",
     "Expectation",
     "ExpectedCost",
-    "GPT2CompileRequest",
-    "GreedyTextExecutionShape",
-    "InklingCompileRequest",
-    "KimiK3CompileRequest",
-    "MatmulCompileRequest",
+    "GateSet",
     "Optimization",
     "Optimize",
     "PolicyGrid",
     "ProtocolRun",
-    "Unsupported",
     "VerificationCode",
     "VerificationLimits",
     "VerificationPolicy",
     "VerificationReport",
+    "VerifierParameters",
     "Verify",
+    "Weights",
     "build_executable_conformance_transcript",
     "make_verification_expectation",
     "run_protocol",

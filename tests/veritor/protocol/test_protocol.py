@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from veritor.compile import expected_matmul_outputs
+from veritor.constructors import expected_matmul_outputs
 from veritor.core import Compiled, VerificationPolicy
 from veritor.protocol import (
     InteriorMessage,

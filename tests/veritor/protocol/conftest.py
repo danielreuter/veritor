@@ -4,7 +4,8 @@ from collections.abc import Callable
 
 import pytest
 
-from veritor.compile import Compiler, MatmulG, MatmulWorkload, expected_matmul_outputs
+from veritor.compile import Compiler
+from veritor.constructors import MatmulG, MatmulWorkload, expected_matmul_outputs
 from veritor.core import Compiled, VerificationPolicy, make_word_gate_set
 from veritor.protocol import Expectation, VerifierParameters, make_expectation
 

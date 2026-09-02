@@ -7,8 +7,8 @@ from collections.abc import Callable
 
 import pytest
 
-from veritor.compile import (
-    Compiler,
+from veritor.compile import Compiler
+from veritor.constructors import (
     MatmulG,
     MatmulWorkload,
     Tracer,

@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import pytest
 
-from veritor.compile import TracerError
-from veritor.core import Compiled, DescriptionCircuit
-from veritor.plugins import (
+from veritor.constructors import (
     BatchInput,
     DemoG,
     DemoGCompileRequest,
     DotRequest,
+    TracerError,
     compile_demo_g,
     expected_dot_outputs,
     make_demo_request,
 )
+from veritor.core import Compiled, DescriptionCircuit
 
 
 def test_demo_g_compiles_to_a_compiled_circuit() -> None:

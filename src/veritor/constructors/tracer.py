@@ -19,10 +19,13 @@ import contextvars
 from collections.abc import Callable, Hashable, Iterator, Sequence
 from dataclasses import dataclass, replace
 
+from veritor.compile.description import (
+    FORMAT_VERSION,
+    canonical_description,
+    definition_digest,
+)
 from veritor.core import Gate, GateSet
 from veritor.core.description import INPUT, LOCAL, ROLES
-
-from .description import FORMAT_VERSION, canonical_description, definition_digest
 
 
 class TracerError(ValueError):

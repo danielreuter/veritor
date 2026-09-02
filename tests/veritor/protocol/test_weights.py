@@ -8,9 +8,9 @@ from dataclasses import replace
 
 import pytest
 
-from veritor.compile import Compiler, MatmulG
+from veritor.compile import Compiler
+from veritor.constructors import MatmulCompileRequest, MatmulG
 from veritor.core import VerificationPolicy, make_word_gate_set
-from veritor.plugins import MatmulCompileRequest
 from veritor.protocol import (
     BOUNDARY_OWNER,
     WEIGHT_OWNER,

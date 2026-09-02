@@ -7,7 +7,8 @@ from collections.abc import Iterable
 
 import pytest
 
-from veritor.compile import Compiler, Tracer
+from veritor.compile import Compiler
+from veritor.constructors import Tracer
 from veritor.core import Compiled, make_word_gate_set
 
 GATE_SET = make_word_gate_set(8)

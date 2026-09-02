@@ -1,8 +1,8 @@
-"""Executable built-in plug-in for the DemoG constructor.
+"""DemoG: a small memoized constructor of chained multiply-accumulates.
 
-``DemoG`` is an untrusted memoized constructor whose only trusted output is
-the canonical description decoded by :mod:`veritor.compile`.  The
-constructor, its request types, and the plug-in wrapper all live here.
+``DemoG`` is untrusted; its only output the compiler reads is the canonical
+description.  The constructor, its input types and ``compile_demo_g`` live
+here.
 """
 
 from __future__ import annotations
@@ -10,20 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from itertools import groupby
 
-from veritor.compile import (
-    Compiler,
-    TracedDefinition,
-    Tracer,
-    TracerError,
-    Wires,
-)
+from veritor.compile import Compiler
 from veritor.core import CompilationLimits, Compiled, make_word_gate_set
 
-from ..api import ArchitectureId
-
-PLUGIN_ID = "veritor.plugins.builtin.demo-g"
-PLUGIN_VERSION = "2"
-DEMO_G_ARCHITECTURE_ID = ArchitectureId.DEMO_G
+from .tracer import TracedDefinition, Tracer, TracerError, Wires
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,7 +138,6 @@ class DemoGCompileRequest:
     width: int = 8
     advice_bound_bits: int = 0
     limits: CompilationLimits | None = None
-    architecture_id: ArchitectureId = field(init=False, default=ArchitectureId.DEMO_G)
 
     def __post_init__(self) -> None:
         if not isinstance(self.batch, BatchInput):
@@ -174,11 +163,11 @@ class DemoGCompileRequest:
 
 
 def compile_demo_g(request: DemoGCompileRequest | None = None) -> Compiled:
-    """Trace the batch with :class:`DemoG` and compile the description."""
+    """Run ``DemoG`` on the batch and compile its description."""
 
     selected = DemoGCompileRequest() if request is None else request
     if not isinstance(selected, DemoGCompileRequest):
-        raise TypeError("DemoG requires DemoGCompileRequest")
+        raise TypeError("compile_demo_g requires a DemoGCompileRequest")
     description = DemoG(selected.width)(selected.batch, selected.advice)
     compiler = Compiler(make_word_gate_set(selected.width), selected.limits)
     return compiler.compile(
@@ -189,19 +178,12 @@ def compile_demo_g(request: DemoGCompileRequest | None = None) -> Compiled:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class DemoGPlugin:
-    architecture_id: ArchitectureId = field(init=False, default=ArchitectureId.DEMO_G)
-    plugin_id: str = field(init=False, default=PLUGIN_ID)
-    plugin_version: str = field(init=False, default=PLUGIN_VERSION)
-
-    def default_request(self) -> DemoGCompileRequest:
-        return DemoGCompileRequest()
-
-    def compile(self, request: object | None = None) -> Compiled:
-        if request is not None and not isinstance(request, DemoGCompileRequest):
-            raise TypeError("DemoG requires DemoGCompileRequest")
-        return compile_demo_g(request)
-
-
-DEMO_G_PLUGIN = DemoGPlugin()
+__all__ = [
+    "BatchInput",
+    "DemoG",
+    "DemoGCompileRequest",
+    "DotRequest",
+    "compile_demo_g",
+    "expected_dot_outputs",
+    "make_demo_request",
+]

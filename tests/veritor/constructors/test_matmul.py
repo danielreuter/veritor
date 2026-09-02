@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from veritor.compile import (
-    Compiler,
+from veritor.compile import Compiler
+from veritor.constructors import (
     MatmulG,
     MatmulWorkload,
     TracerError,

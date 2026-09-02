@@ -7,7 +7,8 @@ from fractions import Fraction
 
 import pytest
 
-from veritor.compile import Compiler, Tracer
+from veritor.compile import Compiler
+from veritor.constructors import Tracer
 from veritor.core import (
     Compiled,
     ResourceLimit,

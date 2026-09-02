@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from veritor.core import Compiled
-from veritor.plugins import (
-    ArchitectureId,
+from veritor.constructors import (
     MatmulCompileRequest,
-    compile_architecture,
     compile_matmul,
     matmul_expected_matrices,
 )
+from veritor.core import Compiled
 
 
 def _request(*, marker: int = 1, width: int = 8) -> MatmulCompileRequest:
@@ -27,7 +25,7 @@ def _request(*, marker: int = 1, width: int = 8) -> MatmulCompileRequest:
     )
 
 
-def test_matmul_plugin_compiles_to_a_compiled_circuit() -> None:
+def test_matmul_request_compiles_to_a_compiled_circuit() -> None:
     request = _request()
     compiled = compile_matmul(request)
 
@@ -55,11 +53,10 @@ def test_matmul_marks_rows_as_replay_and_dots_as_verification() -> None:
     assert all(index.verification_units(r).count == columns for r in range(rows))
 
 
-def test_registry_compiles_matmul_and_binds_only_the_shape() -> None:
-    first = compile_architecture(ArchitectureId.MATMUL, _request(marker=1))
-    second = compile_architecture("matmul", _request(marker=2))
-    wider = compile_architecture("matmul", _request(width=16))
+def test_compiled_digest_binds_the_shape_and_width_but_not_the_values() -> None:
+    first = compile_matmul(_request(marker=1))
+    second = compile_matmul(_request(marker=2))
+    wider = compile_matmul(_request(width=16))
 
-    assert isinstance(first, Compiled)
     assert first.digest == second.digest
     assert first.digest != wider.digest

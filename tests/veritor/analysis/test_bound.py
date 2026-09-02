@@ -19,7 +19,8 @@ from veritor.analysis.reference import (
     subset_sum_bits,
     transcript_outputs,
 )
-from veritor.compile import Compiler, Tracer
+from veritor.compile import Compiler
+from veritor.constructors import Tracer
 from veritor.core import Compiled, VerificationPolicy, make_word_gate_set
 
 TOLERANCE = 1e-6

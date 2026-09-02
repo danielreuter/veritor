@@ -34,27 +34,3 @@ class ResourceLimit(CoreContractError, RuntimeError):
         else:
             message = f"{resource} is {observed}, exceeding limit {limit}"
         super().__init__(message)
-
-
-class UnsupportedCapability(CoreContractError, RuntimeError):
-    """An artifact or plug-in does not implement a requested capability."""
-
-    def __init__(
-        self,
-        capability: object,
-        *,
-        reason_code: str,
-        detail: str,
-    ) -> None:
-        self.capability = capability
-        self.reason_code = reason_code
-        self.detail = detail
-        super().__init__(f"{capability!s} is unsupported ({reason_code}): {detail}")
-
-
-class BackendUnavailable(CoreContractError, RuntimeError):
-    """An optional implementation for a supported operation is unavailable."""
-
-
-# Longer spellings are retained as convenience names for downstream layers.
-ResourceLimitExceeded = ResourceLimit

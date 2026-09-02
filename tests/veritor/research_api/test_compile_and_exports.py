@@ -6,82 +6,64 @@ import pytest
 
 import veritor
 from veritor import (
-    ArchitectureId,
     Compile,
     Compiled,
     DemoGCompileRequest,
     MatmulCompileRequest,
-    Unsupported,
     VerificationPolicy,
-    build_executable_conformance_transcript,
+    compile_demo_g,
+    compile_matmul,
     make_verification_expectation,
+    make_word_gate_set,
 )
-from veritor.core import Capability
-from veritor.plugins import NO_CONSTRUCTOR
+from veritor.compile import CompileError
+from veritor.constructors import DemoG, MatmulG
 from veritor.protocol import ProtocolError
 
-CONFIGURED = (
-    ArchitectureId.GPT2,
-    ArchitectureId.KIMI_K3,
-    ArchitectureId.DEEPSEEK_V4_PRO,
-    ArchitectureId.INKLING,
-)
 
+def test_compile_is_the_trusted_half_of_the_constructors() -> None:
+    """``Compile`` on ``G``'s bytes is exactly what the convenience wrappers do."""
 
-@pytest.mark.parametrize(
-    "architecture_id", (ArchitectureId.DEMO_G, ArchitectureId.MATMUL)
-)
-def test_compile_returns_compiled_for_executable_architectures(
-    architecture_id: ArchitectureId,
-) -> None:
-    compiled = Compile(architecture_id)
+    request = MatmulCompileRequest()
+    description = MatmulG(request.width)(request.workload, b"")
+    gate_set = make_word_gate_set(request.width)
+
+    compiled = Compile(description, request.public_inputs, gate_set)
 
     assert isinstance(compiled, Compiled)
-    assert Compile(architecture_id).digest == compiled.digest
+    assert compiled.digest == compile_matmul(request).digest
+    assert Compile(description, request.public_inputs, gate_set).digest == compiled.digest
 
 
-@pytest.mark.parametrize("architecture_id", CONFIGURED)
-def test_compile_reports_the_missing_constructor_for_configured_architectures(
-    architecture_id: ArchitectureId,
-) -> None:
-    artifact = Compile(architecture_id)
+def test_compile_checks_the_input_count_and_the_advice_bound() -> None:
+    request = DemoGCompileRequest()
+    description = DemoG(request.width)(request.batch, b"")
+    gate_set = make_word_gate_set(request.width)
 
-    assert isinstance(artifact, Unsupported)
-    assert artifact.capability is Capability.COMPILE
-    assert artifact.reason_code == NO_CONSTRUCTOR
-
-
-def test_compile_rejects_unknown_architecture_without_fabricating_artifact() -> None:
-    with pytest.raises(KeyError, match="unknown architecture"):
-        Compile("not-an-architecture")
+    with pytest.raises(CompileError, match="inputs"):
+        Compile(description, request.public_inputs[:-1], gate_set)
+    with pytest.raises(CompileError, match="advice"):
+        Compile(description, request.public_inputs, gate_set, advice=b"x", advice_bound_bits=4)
+    assert isinstance(compile_demo_g(request), Compiled)
 
 
-@pytest.mark.parametrize("architecture_id", CONFIGURED)
-def test_configured_artifacts_have_typed_transcript_outcomes(
-    architecture_id: ArchitectureId,
-) -> None:
-    artifact = Compile(architecture_id)
-
-    outcomes = (
-        make_verification_expectation(artifact, VerificationPolicy(1, 1, 0), (), ()),
-        build_executable_conformance_transcript(artifact, ()),
-    )
-
-    assert all(isinstance(outcome, Unsupported) for outcome in outcomes)
-    assert all(outcome.capability is Capability.VERIFY for outcome in outcomes)
-    assert all(outcome.reason_code == NO_CONSTRUCTOR for outcome in outcomes)
+def test_paper_functions_reject_anything_but_a_compiled() -> None:
+    with pytest.raises(TypeError, match="Compiled"):
+        veritor.Bound(object(), VerificationPolicy(1, 1, 0))  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="Compiled"):
+        veritor.Cost(object(), VerificationPolicy(1, 1, 0))  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="Compiled"):
+        make_verification_expectation(object(), VerificationPolicy(1, 1, 0), (), ())  # type: ignore[arg-type]
 
 
 def test_expectation_generates_mandatory_verifier_seeds() -> None:
     request = DemoGCompileRequest()
-    compiled = Compile(ArchitectureId.DEMO_G, request)
+    compiled = compile_demo_g(request)
     policy = VerificationPolicy(1, 1, 0)
     inputs, outputs = request.public_inputs, request.expected_outputs
     first = make_verification_expectation(compiled, policy, inputs, outputs)
     second = make_verification_expectation(compiled, policy, inputs, outputs)
 
-    assert not isinstance(first, Unsupported)
-    assert not isinstance(second, Unsupported)
     assert len(first.q_seed) == len(first.s_seed) == 32
     assert (first.q_seed, first.s_seed) != (second.q_seed, second.s_seed)
     assert first.session_id != second.session_id
@@ -94,13 +76,13 @@ def test_expectation_generates_mandatory_verifier_seeds() -> None:
         replace(first, s_seed=b"short")
 
 
-def test_matmul_request_is_exported_and_compiles_through_public_facade() -> None:
+def test_matmul_request_compiles_through_the_top_level_package() -> None:
     request = MatmulCompileRequest(
         ((1,),),
         (((2,),),),
     )
 
-    compiled = Compile("matmul", request)
+    compiled = compile_matmul(request)
 
     assert isinstance(compiled, Compiled)
     assert request.expected_outputs == (2,)
@@ -112,5 +94,6 @@ def test_paper_level_api_is_exported() -> None:
 
     assert names <= set(veritor.__all__)
     assert all(hasattr(veritor, name) for name in names)
-    assert set(veritor.__all__) == set(veritor.research.__all__)
+    assert set(veritor.research.__all__) <= set(veritor.__all__)
     assert all(hasattr(veritor.research, name) for name in veritor.research.__all__)
+    assert all(hasattr(veritor, name) for name in veritor.__all__)

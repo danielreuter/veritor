@@ -1,17 +1,5 @@
-"""Stable, stdlib-only contracts for the veritor protocol framework."""
+"""The objects of the paper: gate sets, circuits, the index, ``Compiled``, policies."""
 
-from .capabilities import (
-    ArtifactKind,
-    Availability,
-    Capability,
-    CapabilityReport,
-    CapabilityStatus,
-    ClaimStatus,
-    EvidenceStatus,
-    SupportState,
-    SupportStatus,
-    Unsupported,
-)
 from .circuit import (
     INPUT_OP,
     Circuit,
@@ -21,14 +9,7 @@ from .circuit import (
     GateRef,
 )
 from .compiled import COMPILED_DIGEST_TAG, Compiled
-from .errors import (
-    BackendUnavailable,
-    CoreContractError,
-    InvalidArtifact,
-    ResourceLimit,
-    ResourceLimitExceeded,
-    UnsupportedCapability,
-)
+from .errors import CoreContractError, InvalidArtifact, ResourceLimit
 from .gates import (
     GATE_SET_IDENTITY_TAG,
     Gate,
@@ -81,21 +62,13 @@ __all__ = [
     "COMPILED_DIGEST_TAG",
     "GATE_SET_IDENTITY_TAG",
     "INPUT_OP",
-    "ArtifactKind",
-    "Availability",
-    "BackendUnavailable",
-    "Capability",
-    "CapabilityReport",
-    "CapabilityStatus",
     "Circuit",
-    "ClaimStatus",
     "CompilationLimits",
     "Compiled",
     "CoreContractError",
     "CostKind",
     "DescriptionCircuit",
     "Digest",
-    "EvidenceStatus",
     "ExplicitDomain",
     "ExplicitIndexedDomain",
     "FiniteIndexedDomain",
@@ -118,12 +91,7 @@ __all__ = [
     "RangeDomain",
     "RangeIndexedDomain",
     "ResourceLimit",
-    "ResourceLimitExceeded",
-    "SupportState",
-    "SupportStatus",
     "Units",
-    "Unsupported",
-    "UnsupportedCapability",
     "VerificationLimits",
     "VerificationPolicy",
     "canonical_json",

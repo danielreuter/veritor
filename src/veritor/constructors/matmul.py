@@ -1,4 +1,4 @@
-"""Shared-weight matrix multiplication over modular values: workload and ``G``."""
+"""Shared-weight matrix multiplication over modular values: workload, ``G``, request."""
 
 from __future__ import annotations
 
@@ -6,7 +6,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from veritor.core import JSONValue, make_word_gate_set
+from veritor.compile import Compiler
+from veritor.core import CompilationLimits, Compiled, JSONValue, make_word_gate_set
 
 from .tracer import TracedDefinition, Tracer, TracerError, Wires
 
@@ -232,4 +233,115 @@ class MatmulG:
         return self.tracer.serialize(self.batch(x.activation_shapes, x.weight_shape))
 
 
-__all__ = ["MatmulG", "MatmulWorkload", "WordMatrix", "expected_matmul_outputs"]
+_DEFAULT_WEIGHTS = (
+    (1, 2),
+    (3, 4),
+    (5, 6),
+)
+_DEFAULT_ACTIVATIONS = (
+    (
+        (1, 2, 3),
+        (4, 5, 6),
+    ),
+    ((7, 8, 9),),
+)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class MatmulCompileRequest:
+    """A matmul workload plus the compilation limits to compile it under."""
+
+    workload: MatmulWorkload
+    limits: CompilationLimits | None
+
+    def __init__(
+        self,
+        weights: Sequence[Sequence[int]] = _DEFAULT_WEIGHTS,
+        activations: Sequence[Sequence[Sequence[int]]] = _DEFAULT_ACTIVATIONS,
+        *,
+        width: int = 8,
+        limits: CompilationLimits | None = None,
+    ) -> None:
+        if limits is not None and not isinstance(limits, CompilationLimits):
+            raise TypeError("limits must be CompilationLimits or None")
+        object.__setattr__(self, "workload", MatmulWorkload(weights, activations, width=width))
+        object.__setattr__(self, "limits", limits)
+
+    @property
+    def weights(self) -> WordMatrix:
+        return self.workload.weights
+
+    @property
+    def activations(self) -> tuple[WordMatrix, ...]:
+        return self.workload.activations
+
+    @property
+    def width(self) -> int:
+        return self.workload.width
+
+    @property
+    def public_inputs(self) -> tuple[int, ...]:
+        """Every input value: the weights first, then the activations."""
+
+        return self.workload.public_inputs
+
+    @property
+    def weight_addresses(self) -> range:
+        """The input addresses holding the shared weights, row-major."""
+
+        rows, columns = self.workload.weight_shape
+        return range(rows * columns)
+
+    @property
+    def activation_inputs(self) -> tuple[int, ...]:
+        """The input values outside :attr:`weight_addresses`, in address order."""
+
+        return self.workload.public_inputs[self.weight_addresses.stop :]
+
+    @property
+    def expected_outputs(self) -> tuple[int, ...]:
+        return expected_matmul_outputs(self.workload)
+
+    @property
+    def output_shapes(self) -> tuple[tuple[int, int], ...]:
+        return self.workload.output_shapes
+
+
+def matmul_expected_matrices(request: MatmulCompileRequest) -> tuple[WordMatrix, ...]:
+    """Reshape the canonical flat outputs into output matrices."""
+
+    flat = request.expected_outputs
+    offset = 0
+    matrices: list[WordMatrix] = []
+    for rows, columns in request.output_shapes:
+        matrices.append(
+            tuple(
+                tuple(flat[offset + row * columns : offset + (row + 1) * columns])
+                for row in range(rows)
+            )
+        )
+        offset += rows * columns
+    return tuple(matrices)
+
+
+def compile_matmul(request: MatmulCompileRequest | None = None) -> Compiled:
+    """Run ``MatmulG`` on the workload and compile its description."""
+
+    selected = MatmulCompileRequest() if request is None else request
+    if not isinstance(selected, MatmulCompileRequest):
+        raise TypeError("compile_matmul requires a MatmulCompileRequest")
+    workload = selected.workload
+    description = MatmulG(workload.width)(workload, b"")
+    compiler = Compiler(make_word_gate_set(workload.width), selected.limits)
+    return compiler.compile(description, workload.public_inputs)
+
+
+__all__ = [
+    "MatmulCompileRequest",
+    "MatmulG",
+    "MatmulWorkload",
+    "WordMatrix",
+    "compile_matmul",
+    "expected_matmul_outputs",
+    "matmul_expected_matrices",
+]
