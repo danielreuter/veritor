@@ -12,7 +12,8 @@ from veritor.compile.description import (
     canonical_description,
     definition_digest,
 )
-from veritor.core.description import CallStep, Definition, GateStep, Range
+from veritor.core import INPUT_OP, FlatCircuit, GateRef, GateSet
+from veritor.core.description import CallStep, Definition, Frame, GateStep, Range
 
 
 def rng(space: str, start: int, count: int = 1, stride: int = 0) -> list[object]:
@@ -117,6 +118,26 @@ def expand(root: Definition) -> tuple[list[tuple[str, tuple[int, ...]]], list[in
 
     outputs = emit(root, list(range(root.input_count)))
     return gates, outputs
+
+
+def flatten(root: Definition, gate_set: GateSet) -> FlatCircuit:
+    """The reference :class:`FlatCircuit` of a description's expansion."""
+
+    width = next(iter(gate_set)).width
+    gates, outputs = expand(root)
+    refs = [GateRef(INPUT_OP, (), width) for _ in range(root.input_count)]
+    refs.extend(GateRef(name, args, width) for name, args in gates)
+    return FlatCircuit(refs, outputs, gate_set)
+
+
+def frames(frame: Frame):
+    """Every copy below ``frame`` (inclusive), in layout order."""
+
+    yield frame
+    for index, step in enumerate(frame.definition.steps):
+        if isinstance(step, CallStep):
+            for copy in range(step.count):
+                yield from frames(frame.child(index, copy))
 
 
 @pytest.fixture

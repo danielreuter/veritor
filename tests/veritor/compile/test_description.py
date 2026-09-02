@@ -258,10 +258,6 @@ def test_canonical_encoding_is_enforced(helpers):
             "reaches local coordinate 0; only 0",
         ),
         (
-            {"input_count": 2, "role": None, "steps": [], "outputs": [[IN, 0, 1, 1]]},
-            "count 1 and must use stride 0",
-        ),
-        (
             {"input_count": 2, "role": None, "steps": [], "outputs": [[IN, 0, 2]]},
             "must have 4 elements",
         ),
@@ -330,7 +326,7 @@ def test_malformed_definitions_are_rejected(helpers, definition, message):
         parse(helpers.single(definition))
 
 
-def test_call_arity_bounds_and_repeat_canonical_form(helpers):
+def test_call_arity_and_repeat_bounds(helpers):
     h = helpers
     doc = h.Document()
     add = doc.add(h.body(2, [h.gate("add", h.rng(IN, 0, 2, 1))], [h.rng(LOC, 0)]))
@@ -339,18 +335,6 @@ def test_call_arity_bounds_and_repeat_canonical_form(helpers):
         parse(
             doc.serialize(
                 doc.add(h.body(2, [h.call(add, h.rng(IN, 0))], [h.rng(LOC, 0)]))
-            )
-        )
-    doc = h.Document()
-    add = doc.add(h.body(2, [h.gate("add", h.rng(IN, 0, 2, 1))], [h.rng(LOC, 0)]))
-    with pytest.raises(CompileError, match="repeats once and must use jstride 0"):
-        parse(
-            doc.serialize(
-                doc.add(
-                    h.body(
-                        2, [h.repeat(1, add, h.jrng(IN, 0, 2, 1, 1))], [h.rng(LOC, 0)]
-                    )
-                )
             )
         )
     doc = h.Document()

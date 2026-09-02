@@ -148,10 +148,6 @@ def _range(
     count = _int(items[2], f"{where} count", minimum=1)
     stride = _int(items[3], f"{where} stride")
     jstride = 0 if copies is None else _int(items[4], f"{where} jstride")
-    if count == 1 and stride != 0:
-        raise CompileError(f"{where} has count 1 and must use stride 0")
-    if copies == 1 and jstride != 0:
-        raise CompileError(f"{where} repeats once and must use jstride 0")
     item = Range(str(space), start, count, stride, jstride)
     bound = input_count if space == INPUT else slots
     if item.last(copies or 1) >= bound:
