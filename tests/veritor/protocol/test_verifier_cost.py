@@ -38,7 +38,11 @@ def compile_matmul(workload: MatmulWorkload) -> Compiled:
 
 
 def chain_compiled(blocks: int, width: int = 16) -> Compiled:
-    """One input, one output, ``blocks * width`` gates in one replay unit."""
+    """One input, one output, ``blocks * width`` gates in one replay unit.
+
+    The blocks are one ``repeat`` step, so the description (what the verifier
+    compiles and prices) has the same size for every ``blocks``.
+    """
 
     tracer = Tracer(GATE_SET)
     add = tracer.gate("add")
@@ -52,10 +56,7 @@ def chain_compiled(blocks: int, width: int = 16) -> Compiled:
 
     @tracer.definition(input_count=1, key=("root", blocks), role="replay")
     def root(v):
-        accumulator = v[0]
-        for _ in range(blocks):
-            accumulator = block(accumulator)
-        return accumulator
+        return tracer.repeat(blocks, block, v[0])[-1]
 
     return Compiler(GATE_SET).compile(tracer.serialize(root), (3,))
 

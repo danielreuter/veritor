@@ -24,6 +24,7 @@ from .messages import (
     VerificationCode,
     VerificationReport,
 )
+from .parameters import VerifierParameters, expected_work
 from .phases import boundary_domain, interior_domain
 from .session import (
     Expectation,
@@ -69,6 +70,7 @@ __all__ = [
     "Values",
     "VerificationCode",
     "VerificationReport",
+    "VerifierParameters",
     "VerifierSession",
     "assignment_replay",
     "boundary_domain",
@@ -76,6 +78,7 @@ __all__ = [
     "derive_replay_selection",
     "derive_sample_selection",
     "encode_transcript",
+    "expected_work",
     "interior_domain",
     "make_expectation",
     "replay_unit",

@@ -37,6 +37,8 @@ class VerificationCode(StrEnum):
 
     ACCEPTED = "accepted"
     EXPECTATION_MISMATCH = "expectation_mismatch"
+    POLICY_REJECTED = "policy_rejected"
+    WORK_BUDGET_EXCEEDED = "work_budget_exceeded"
     INVALID_PHASE = "invalid_phase"
     INVALID_COMMITMENT = "invalid_commitment"
     INVALID_OPENING = "invalid_opening"

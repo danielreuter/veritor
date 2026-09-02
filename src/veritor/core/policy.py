@@ -118,6 +118,12 @@ class VerificationPolicy:
         return self.eta
 
     @property
+    def denominator_bits(self) -> int:
+        """Bits of the largest denominator among ``q``, ``s`` and ``eta``."""
+
+        return max(rate.denominator.bit_length() for rate in (self.q, self.s, self.eta))
+
+    @property
     def manifest(self) -> dict[str, JSONValue]:
         return {
             "eta": rational_manifest(self.eta),

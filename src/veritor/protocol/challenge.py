@@ -233,6 +233,9 @@ def bernoulli_subset(
         raise ProtocolError("candidate count must be a nonnegative integer")
     if not isinstance(probability, Fraction) or not 0 <= probability <= 1:
         raise ProtocolError("selection probability must be a Fraction in [0, 1]")
+    limits.enforce(
+        "max_probability_denominator_bits", probability.denominator.bit_length()
+    )
     if count == 0 or probability == 0:
         return ()
     if probability == 1:

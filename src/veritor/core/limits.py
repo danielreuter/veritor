@@ -39,6 +39,12 @@ class VerificationLimits:
     max_proof_bytes: int = 64 << 20
     max_transcript_bytes: int = 128 << 20
     max_nesting_depth: int = 128
+    max_probability_denominator_bits: int = 64
+    """Bits of the largest denominator a policy rate may have.
+
+    Sampling and canonical encoding cost grows with the denominator size, so
+    the client-proposed rates are capped here rather than by the encoder.
+    """
 
     def __post_init__(self) -> None:
         for descriptor in fields(self):

@@ -95,12 +95,13 @@ def _hex(value: object, where: str) -> bytes:
         raise MalformedTranscript(f"{where} is not hexadecimal") from error
 
 
-def _fraction(value: object, where: str) -> Fraction:
+def _fraction(value: object, where: str, limits: VerificationLimits) -> Fraction:
     if type(value) is not list or len(value) != 2:
         raise MalformedTranscript(f"{where} must be [numerator, denominator]")
     numerator, denominator = (_int(item, where) for item in value)
     if denominator == 0:
         raise MalformedTranscript(f"{where} has a zero denominator")
+    limits.enforce("max_probability_denominator_bits", denominator.bit_length())
     return Fraction(numerator, denominator)
 
 
@@ -187,9 +188,9 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
         raise MalformedTranscript("header.compiled_digest must be a string")
     try:
         policy = VerificationPolicy(
-            _fraction(policy_fields["q"], "header.policy.q"),
-            _fraction(policy_fields["s"], "header.policy.s"),
-            _fraction(policy_fields["eta"], "header.policy.eta"),
+            _fraction(policy_fields["q"], "header.policy.q", checked),
+            _fraction(policy_fields["s"], "header.policy.s", checked),
+            _fraction(policy_fields["eta"], "header.policy.eta", checked),
         )
         header = Header(
             _hex(header_fields["session_id"], "header.session_id"),

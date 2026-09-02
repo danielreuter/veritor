@@ -6,7 +6,7 @@ import pytest
 
 from veritor.compile import Compiler, MatmulG, MatmulWorkload, expected_matmul_outputs
 from veritor.core import Compiled, VerificationPolicy, make_word_gate_set
-from veritor.protocol import Expectation, make_expectation
+from veritor.protocol import Expectation, VerifierParameters, make_expectation
 
 Q_SEED = b"Q" * 32
 S_SEED = b"S" * 32
@@ -41,6 +41,7 @@ def expect(compiled: Compiled, workload: MatmulWorkload) -> ExpectationFactory:
     def build(
         policy: VerificationPolicy = CHECK_EVERYTHING,
         *,
+        parameters: VerifierParameters | None = None,
         claimed_outputs: tuple[int, ...] | None = None,
         session_id: bytes = SESSION_ID,
         q_seed: bytes = Q_SEED,
@@ -51,6 +52,7 @@ def expect(compiled: Compiled, workload: MatmulWorkload) -> ExpectationFactory:
             policy,
             workload.public_inputs,
             expected_matmul_outputs(workload) if claimed_outputs is None else claimed_outputs,
+            parameters=parameters,
             session_id=session_id,
             q_seed=q_seed,
             s_seed=s_seed,

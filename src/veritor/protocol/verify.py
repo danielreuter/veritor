@@ -10,7 +10,7 @@ from __future__ import annotations
 from veritor.core import Compiled, ResourceLimit, VerificationLimits
 
 from .messages import Reject, VerificationCode, VerificationReport
-from .session import Expectation, VerifierSession
+from .session import Expectation, VerifierSession, rejection_report
 from .wire import MalformedTranscript, NoncanonicalTranscript, decode_transcript
 
 
@@ -30,13 +30,23 @@ def verify_transcript(
     except ResourceLimit as error:
         return VerificationReport(VerificationCode.RESOURCE_LIMIT, str(error))
 
-    session = VerifierSession(expectation, compiled, limits=checked)
-    if transcript.header != session.header:
-        return VerificationReport(
-            VerificationCode.EXPECTATION_MISMATCH,
-            "transcript header differs from the verifier's expectation",
-        )
     try:
+        session = VerifierSession(expectation, compiled, limits=checked)
+    except Reject as rejection:
+        return rejection_report(rejection, None)
+    try:
+        header = transcript.header
+        if header.policy.eta != expectation.parameters.eta:
+            raise Reject(
+                VerificationCode.POLICY_REJECTED,
+                f"transcript names eta {header.policy.eta}; the verifier's is "
+                f"{expectation.parameters.eta}",
+            )
+        if header != session.header:
+            raise Reject(
+                VerificationCode.EXPECTATION_MISMATCH,
+                "transcript header differs from the verifier's expectation",
+            )
         replay_challenge = session.receive_boundary(transcript.boundary)
         if replay_challenge.seed != transcript.replay_challenge.seed:
             raise Reject(VerificationCode.EXPECTATION_MISMATCH, "q seed differs")
@@ -49,11 +59,4 @@ def verify_transcript(
             raise Reject(VerificationCode.CHALLENGE_MISMATCH, "sample selection differs")
         return session.receive_evidence(transcript.evidence)
     except Reject as rejection:
-        return VerificationReport(
-            rejection.code,
-            rejection.detail,
-            session.selected_replay_units,
-            session.selected_verification_units,
-        )
-    except ResourceLimit as error:
-        return VerificationReport(VerificationCode.RESOURCE_LIMIT, str(error))
+        return rejection_report(rejection, session)
