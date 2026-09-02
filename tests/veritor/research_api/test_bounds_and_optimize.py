@@ -10,12 +10,19 @@ from veritor import (
     BoundOptions,
     BoundResult,
     Compile,
+    Cost,
+    CostParameters,
+    ExpectedCost,
     MatmulCompileRequest,
+    Optimization,
+    Optimize,
+    PolicyGrid,
     Unsupported,
     VerificationPolicy,
 )
 from veritor.core import Capability, Compiled
 from veritor.plugins import NO_CONSTRUCTOR
+from veritor.protocol import expected_work
 
 POLICY = VerificationPolicy(Fraction(1, 2), Fraction(1, 2), Fraction(1, 4))
 
@@ -56,6 +63,30 @@ def test_bound_options_control_the_grid() -> None:
     assert fine.bits <= coarse.bits + 1e-9
 
 
+def test_cost_and_optimize_share_the_compiled_index() -> None:
+    artifact = Compile(ArchitectureId.MATMUL)
+    assert isinstance(artifact, Compiled)
+    parameters = CostParameters(2, 1)
+
+    expected = Cost(artifact, POLICY, parameters)
+    chosen = Optimize(
+        artifact,
+        POLICY.eta,
+        PolicyGrid.uniform(4),
+        max_bits=30,
+        parameters=parameters,
+        accept=lambda policy: expected_work(artifact, policy, 6) <= 400,
+    )
+
+    assert isinstance(expected, ExpectedCost)
+    assert expected.total == expected.boundary + expected.replay + expected.proof
+    assert isinstance(chosen, Optimization)
+    assert chosen.bound.bits <= 30
+    assert chosen.cost == Cost(artifact, chosen.policy, parameters)
+    assert expected_work(artifact, chosen.policy, 6) <= 400
+    assert Optimize(artifact, POLICY.eta, PolicyGrid.uniform(1), max_bits=-1) is None
+
+
 @pytest.mark.parametrize(
     "architecture_id",
     (
@@ -65,20 +96,27 @@ def test_bound_options_control_the_grid() -> None:
         ArchitectureId.INKLING,
     ),
 )
-def test_bound_is_unsupported_without_a_compiled_description(
+def test_analysis_is_unsupported_without_a_compiled_description(
     architecture_id: ArchitectureId,
 ) -> None:
     artifact = Compile(architecture_id)
     assert isinstance(artifact, Unsupported)
 
-    outcome = Bound(artifact, POLICY)
+    outcomes = (
+        Bound(artifact, POLICY),
+        Cost(artifact, POLICY),
+        Optimize(artifact, POLICY.eta, PolicyGrid.uniform(1), max_bits=1),
+    )
 
-    assert isinstance(outcome, Unsupported)
-    assert outcome.capability is Capability.STATIC_BOUND
-    assert outcome.reason_code == NO_CONSTRUCTOR
-    assert outcome.plugin_id == artifact.plugin_id
+    for outcome in outcomes:
+        assert isinstance(outcome, Unsupported)
+        assert outcome.capability is Capability.STATIC_BOUND
+        assert outcome.reason_code == NO_CONSTRUCTOR
+        assert outcome.plugin_id == artifact.plugin_id
 
 
-def test_bound_rejects_things_that_are_not_compile_results() -> None:
+def test_analysis_rejects_things_that_are_not_compile_results() -> None:
     with pytest.raises(TypeError, match="Compile result"):
         Bound(object(), POLICY)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="Compile result"):
+        Cost(object(), POLICY)  # type: ignore[arg-type]

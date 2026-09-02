@@ -1,0 +1,72 @@
+from fractions import Fraction
+
+import pytest
+
+from veritor import ArchitectureId, Compile
+from veritor.analysis import CostParameters, ExpectedCost, cost
+from veritor.core import Compiled, VerificationPolicy
+
+
+def explicit_cost(compiled: Compiled, policy: VerificationPolicy, parameters: CostParameters) -> ExpectedCost:
+    """The formula evaluated unit by unit over the explicit index."""
+
+    index, circuit = compiled.index, compiled.circuit
+    h, c0 = parameters.hash_cost, parameters.proof_overhead
+    replay = sum(
+        circuit.Cost(index.replay_units.unit(r), "replay") + h * index.interior(r).count
+        for r in range(index.replay_units.count)
+    )
+    proof = sum(
+        circuit.Cost(index.verification_unit(v), "proof") + c0
+        for v in range(index.verification_unit_count)
+    )
+    return ExpectedCost(h * index.boundary().count, policy.q * replay, policy.q * policy.s * proof)
+
+
+@pytest.mark.parametrize("sizes", [(1,), (3, 2), (2, 2, 2)])
+@pytest.mark.parametrize(
+    "policy",
+    [
+        VerificationPolicy(Fraction(1, 2), Fraction(1, 3), Fraction(1, 4)),
+        VerificationPolicy(1, 1, 0),
+        VerificationPolicy(0, 1, 0),
+    ],
+)
+def test_cost_fold_matches_the_unit_by_unit_sum(make_compiled, sizes, policy):
+    compiled = make_compiled(sizes)
+    parameters = CostParameters(Fraction(3, 2), 5)
+
+    assert cost(compiled, policy, parameters) == explicit_cost(compiled, policy, parameters)
+
+
+def test_cost_fold_matches_on_nested_indices(make_paper_example):
+    policy = VerificationPolicy(Fraction(2, 3), Fraction(1, 5), Fraction(1, 10))
+    parameters = CostParameters(2, 1)
+    for compiled in (make_paper_example(2, False), make_paper_example(2, True), Compile(ArchitectureId.MATMUL)):
+        assert isinstance(compiled, Compiled)
+        assert cost(compiled, policy, parameters) == explicit_cost(compiled, policy, parameters)
+
+
+def test_cost_terms_and_defaults(make_compiled):
+    compiled = make_compiled((3, 2))  # 5 one-gate units, replay interfaces are the unit outputs
+    full = cost(compiled, VerificationPolicy(1, 1, 0))
+    nothing = cost(compiled, VerificationPolicy(0, 0, 0))
+
+    assert full.boundary == 5 + 5  # inputs plus every replay unit's Out
+    assert full.replay == 5 * 1 and full.proof == 5 * 1  # word gates cost one each
+    assert full.total == 20
+    assert nothing == ExpectedCost(Fraction(10), Fraction(0), Fraction(0))
+    assert cost(compiled, VerificationPolicy(Fraction(1, 2), Fraction(1, 2), 0)).total == 10 + Fraction(5, 2) + Fraction(5, 4)
+
+
+def test_cost_validates_its_inputs(make_compiled):
+    compiled = make_compiled((1,))
+    with pytest.raises(TypeError, match="Compiled"):
+        cost(compiled.circuit, VerificationPolicy(1, 1, 0))  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="VerificationPolicy"):
+        cost(compiled, (1, 1, 0))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="hash_cost"):
+        CostParameters(-1)
+    with pytest.raises(TypeError, match="proof_overhead"):
+        CostParameters(1, 0.5)
+    assert CostParameters("3/2").hash_cost == Fraction(3, 2)

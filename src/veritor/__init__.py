@@ -1,6 +1,6 @@
 """veritor: sampled verification of large circuits.
 
-The paper-level API is ``Compile`` -> ``Verify`` / ``Bound`` -> ``Optimize``.
+The paper-level API is ``Compile`` -> ``Verify`` / ``Bound`` / ``Cost`` -> ``Optimize``.
 See ``veritor.research`` for the facade, ``veritor.protocol`` for the
 two-stage protocol, and ``docs/`` for the paper.
 """
@@ -15,15 +15,21 @@ from veritor.research import (
     Compile,
     Compiled,
     CompileResult,
+    Cost,
+    CostParameters,
     DeepSeekV4ProCompileRequest,
     DemoGCompileRequest,
     ExecutableConformanceTranscript,
     Expectation,
+    ExpectedCost,
     GPT2CompileRequest,
     GreedyTextExecutionShape,
     InklingCompileRequest,
     KimiK3CompileRequest,
     MatmulCompileRequest,
+    Optimization,
+    Optimize,
+    PolicyGrid,
     ProtocolRun,
     Unsupported,
     VerificationCode,
@@ -46,15 +52,21 @@ __all__ = [
     "Compile",
     "CompileResult",
     "Compiled",
+    "Cost",
+    "CostParameters",
     "DeepSeekV4ProCompileRequest",
     "DemoGCompileRequest",
     "ExecutableConformanceTranscript",
     "Expectation",
+    "ExpectedCost",
     "GPT2CompileRequest",
     "GreedyTextExecutionShape",
     "InklingCompileRequest",
     "KimiK3CompileRequest",
     "MatmulCompileRequest",
+    "Optimization",
+    "Optimize",
+    "PolicyGrid",
     "ProtocolRun",
     "Unsupported",
     "VerificationCode",

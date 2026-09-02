@@ -1,7 +1,7 @@
-"""Paper-level research facade: ``Compile`` -> ``Verify`` / ``Bound``.
+"""Paper-level research facade: ``Compile`` -> ``Verify`` / ``Bound`` / ``Cost`` / ``Optimize``.
 
 DemoG and matmul compile to :class:`~veritor.core.Compiled`, the executable
-``(C, I)`` the protocol verifies and the fold bounds.  The LLM plug-ins
+``(C, I)`` the protocol verifies and the folds analyse.  The LLM plug-ins
 carry model configurations only; until a constructor writes their
 descriptions, ``Compile`` returns :class:`~veritor.core.Unsupported` and so
 does anything asked of that result.
@@ -9,13 +9,24 @@ does anything asked of that result.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from veritor.analysis import BoundOptions, BoundResult, bound
+from veritor.analysis import (
+    BoundOptions,
+    BoundResult,
+    CostParameters,
+    ExpectedCost,
+    Optimization,
+    PolicyGrid,
+    bound,
+    cost,
+    optimize,
+)
 from veritor.core import (
     Capability,
     Compiled,
+    ProbabilityInput,
     Unsupported,
     VerificationLimits,
     VerificationPolicy,
@@ -97,6 +108,47 @@ def Bound(
     if isinstance(compiled, Unsupported):
         return compiled
     return bound(compiled, policy, options)
+
+
+def Cost(
+    artifact: CompileResult,
+    policy: VerificationPolicy,
+    parameters: CostParameters | None = None,
+) -> ExpectedCost | Unsupported:
+    """``Cost(C, I, theta)``: see :mod:`veritor.analysis.cost`."""
+
+    compiled = _executable(artifact, Capability.STATIC_BOUND)
+    if isinstance(compiled, Unsupported):
+        return compiled
+    return cost(compiled, policy, parameters)
+
+
+def Optimize(
+    artifact: CompileResult,
+    eta: ProbabilityInput,
+    grid: PolicyGrid,
+    *,
+    max_bits: float | None = None,
+    max_cost: ProbabilityInput | None = None,
+    parameters: CostParameters | None = None,
+    bound_options: BoundOptions | None = None,
+    accept: Callable[[VerificationPolicy], bool] | None = None,
+) -> Optimization | None | Unsupported:
+    """The client's advisory search for ``theta``: see :mod:`veritor.analysis.optimize`."""
+
+    compiled = _executable(artifact, Capability.STATIC_BOUND)
+    if isinstance(compiled, Unsupported):
+        return compiled
+    return optimize(
+        compiled,
+        eta,
+        grid,
+        max_bits=max_bits,
+        max_cost=max_cost,
+        parameters=parameters,
+        bound_options=bound_options,
+        accept=accept,
+    )
 
 
 def make_verification_expectation(
@@ -188,15 +240,21 @@ __all__ = [
     "Compile",
     "CompileResult",
     "Compiled",
+    "Cost",
+    "CostParameters",
     "DeepSeekV4ProCompileRequest",
     "DemoGCompileRequest",
     "ExecutableConformanceTranscript",
     "Expectation",
+    "ExpectedCost",
     "GPT2CompileRequest",
     "GreedyTextExecutionShape",
     "InklingCompileRequest",
     "KimiK3CompileRequest",
     "MatmulCompileRequest",
+    "Optimization",
+    "Optimize",
+    "PolicyGrid",
     "ProtocolRun",
     "Unsupported",
     "VerificationCode",

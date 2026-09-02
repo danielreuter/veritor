@@ -108,7 +108,7 @@ def test_matmul_request_is_exported_and_compiles_through_public_facade() -> None
 
 
 def test_paper_level_api_is_exported() -> None:
-    names = {"Bound", "Compile", "Verify", "run_protocol"}
+    names = {"Bound", "Compile", "Cost", "Optimize", "Verify", "run_protocol"}
 
     assert names <= set(veritor.__all__)
     assert all(hasattr(veritor, name) for name in names)

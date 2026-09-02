@@ -1,12 +1,8 @@
-"""Static analysis of a compiled ``(C, I)`` under a policy ``theta``.
-
-``bound`` folds the capacity bound ``U`` over the kinds of the index;
-``probability`` holds the survival function the bound rests on; and
-``reference`` enumerates everything explicitly on tiny circuits so the
-fold can be tested against the definitions.
-"""
+"""Static analysis of ``(C, I, theta)``: ``Bound``, ``Cost`` and ``Optimize``."""
 
 from veritor.analysis.bound import BoundOptions, BoundResult, bound
+from veritor.analysis.cost import CostParameters, ExpectedCost, cost
+from veritor.analysis.optimize import Optimization, PolicyGrid, optimize
 from veritor.analysis.probability import (
     admissible,
     budget,
@@ -19,9 +15,15 @@ from veritor.analysis.probability import (
 __all__ = [
     "BoundOptions",
     "BoundResult",
+    "CostParameters",
+    "ExpectedCost",
+    "Optimization",
+    "PolicyGrid",
     "admissible",
     "bound",
     "budget",
+    "cost",
+    "optimize",
     "saturation_cost",
     "survival",
     "survival_factor",
