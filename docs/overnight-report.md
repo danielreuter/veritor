@@ -215,6 +215,16 @@ Findings and what was done:
 - **F5 κ_W is not self-describing** (by design): the root binds the gate set and the vector,
   not a model name; the header binds it to the run.
 - **F6** `VerificationLimits.max_nesting_depth` / `max_artifact_bytes` declared but unused.
+- **F7 output over-resolution** (medium, fixed ba43d29, 3fcbebc): the within-copy branch of the
+  run resolver added for the fan-out bound (fd478dd) did not clamp to the declared count, so a
+  strided declaration inside one copy resolved to every slot of the copy at that stride. Found
+  at 03:30 by compiling cluster shapes with mixed lifetimes in one pod: 480 of 2 325 small shapes
+  were rejected by the distinctness rule; shapes where the extra gates were distinct compiled
+  with an inflated `Out` (boundary gained undeclared positions, `Bound` looser, `Cost` off; the
+  per-ordinal resolver that places values was right throughout, so no wrong value could be
+  opened). Fixed; the compiler now checks resolved positions against `output_count`; a 400-case
+  fuzzer compares the run resolver with the per-ordinal one on strided declarations over
+  permuted-output children. Lesson: fuzz every run-typed summary against its per-element path.
 
 Not achieved, and said so: no sandbox for `G` (only output limits; `SystemExit` is caught,
 `os._exit` is not); κ_W provenance and timing are the operator's; retries must be bounded
@@ -317,6 +327,22 @@ Exact per-unit reach on the default fixture (BFS on the flat circuit):
 | 5 | 465 | 144 | 48 |
 | 6 | 481 | 144 | 32 |
 | 7 | 497 | 144 | 16 |
+
+What the reach factor buys, estimated offline (the fold rerun with `out_bits := min(out_bits,
+reach_bits)` per kind, reach as the max over copies from the BFS oracle; `Bound` itself is
+unchanged): on a run of 64 one-token requests over 8 pods × 4 slots × 8 steps (56 600 gates,
+41 replay units, 2 032 output bits) every step kind has cut width 576 or 288 bits against a
+reach of 16–144 bits, and at `η = 10⁻²`:
+
+| q | s | cut `Bound` | reach `Bound` |
+|---|---|---|---|
+| 1/2 | 1 | 2 032 (cap) | 869 |
+| 1/2 | 1/2 | 2 032 (cap) | 1 152 |
+| 1/4 | 1/2 | 2 032 (cap) | 2 032 (cap) |
+
+At `η = 10⁻⁶` both are capped: 41 units is still too few (see (a) below). The per-unit factor
+is 4–7× tighter; in a real cluster it is the ratio of KV-state width to downstream tokens,
+several orders of magnitude.
 
 Two things are true at once. (a) Eight or thirty replay units is far below the regime where
 sampling certifies anything: with `Λ = ln(1/η)` and a whole-unit cost of `−ln(1 − q)`, the

@@ -816,6 +816,32 @@ bounded by the fixed schema and Python's recursion limit
 enforced or removed so the limits object does not promise what it does not
 check.
 
+**F7 -- Output over-resolution in the run resolver (medium, fixed ba43d29).**
+The within-copy branch of `_call_pieces` (`core/description.py`), added the
+same night for the fan-out bound (fd478dd), computed the last slot of a copy
+at the declared stride and did not clamp it to the declared count, so a
+strided declaration inside one copy of a child resolved to *every* slot of
+that copy at that stride.  Found by compiling the cluster with occupants of
+different lifetimes in one pod (a step's tokens declared for some occupants
+and not others).  Consequences before the fix: when the extra gates collided
+with other declared gates the distinctness rule rejected a valid description
+(a liveness failure: 480 of 2 325 small cluster shapes did not compile); when
+they did not collide the definition compiled with an `Out` larger than
+declared, so the boundary held undeclared positions, `out_bits` and hence
+`Bound` were inflated (the sound direction) and `Cost` was off.  Nothing let
+a prover open a wrong value: the per-ordinal resolver that places values was
+correct throughout; only the run-typed summary disagreed with it.  Fix: the
+clamp; the compiler now rejects any definition whose resolved positions do
+not number `output_count` (an internal invariant, not a client error);
+`test_a_strided_run_inside_one_copy_stops_at_the_declared_count` and
+`test_random_strided_declarations_match_enumeration` (400 random strided
+declarations over permuted-output children against the per-ordinal
+resolver) in `tests/veritor/compile/test_out_runs.py`;
+`test_mixed_lifetimes_in_one_pod_compile_and_decode_like_the_reference` in
+`tests/veritor/constructors/test_cluster.py`.  Lesson recorded: every
+run-typed summary (`Out`, `In`, source runs) has a per-element reference
+path, and each should be fuzzed against it, not only checked on fixtures.
+
 ---
 
 ## Verdicts
@@ -833,6 +859,7 @@ check.
 | 6 | `eta` the verifier's and in the header; denominators capped; `U_max`, `W_max` from counts before any commitment; other `eta` is `EXPECTATION_MISMATCH` | proved + tested |
 | 6 | `U_max` stated by every verifier (no default) | fixed (F2) |
 | 7 | Deterministic digest and `(C, I)`; non-canonical bytes rejected first; bounded compile work; marks in the digest; canonical transcripts | proved + tested |
+| 7 | Run-typed `Out` equals the per-ordinal resolution | fixed (F7) + fuzzed |
 | 8 | Tiling, refinement, cut through declared outputs | proved + tested (cross-cut read on a forged circuit only) |
 | 9 | Offline verification recomputes every challenge; every post-hoc alteration caught | proved + tested |
 | 10 | Sandbox for `G`, kappa_W provenance, seed freshness, retries, privacy, crypto assumptions, float budget | not achieved / conventional, listed |
