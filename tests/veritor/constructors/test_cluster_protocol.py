@@ -67,7 +67,7 @@ class Deployment:
         arguments = {
             "weights": self.weights,
             "claimed_outputs": self.outputs,
-            "parameters": VerifierParameters(max_advice_bits=4096),
+            "parameters": VerifierParameters(max_advice_bits=4096, max_capacity=None),
             **SEEDS,
             **overrides,
         }
@@ -124,7 +124,7 @@ def test_an_honest_cluster_run_is_accepted_and_its_transcript_round_trips(
 
 
 def test_the_advice_must_be_admitted_by_the_verifier(deployment: Deployment) -> None:
-    expectation = deployment.expectation(parameters=VerifierParameters(max_advice_bits=8))
+    expectation = deployment.expectation(parameters=VerifierParameters(max_advice_bits=8, max_capacity=None))
 
     run = run_protocol(deployment.compiled, expectation, deployment.values, weight_tree=deployment.tree)
 
