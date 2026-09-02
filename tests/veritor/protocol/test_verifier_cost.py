@@ -22,6 +22,7 @@ from veritor.core import (
 )
 from veritor.protocol import (
     ProverSession,
+    VerifierParameters,
     VerifierSession,
     commit_weights,
     make_expectation,
@@ -30,6 +31,7 @@ from veritor.research import Compile
 
 POLICY = VerificationPolicy(1, 1)
 SEEDS = {"q_seed": b"Q" * 32, "s_seed": b"S" * 32, "session_id": b"cost"}
+NO_CAPACITY = VerifierParameters(max_capacity=None)
 GATE_SET = make_word_gate_set(8)
 HANDMADE = constructor_digest("handmade", "tests", {})
 
@@ -93,7 +95,9 @@ def test_verifier_setup_and_boundary_phase_never_touch_interior_gates(monkeypatc
     boundary_values.update(zip(circuit.outputs, outputs, strict=True))
     weights, tree = commit_weights(GATE_SET, workload.weight_values)
     io = set(circuit.inputs) | set(circuit.outputs)
-    expectation = make_expectation(compilation, POLICY, outputs, weights=weights, **SEEDS)
+    expectation = make_expectation(
+        compilation, POLICY, outputs, parameters=NO_CAPACITY, weights=weights, **SEEDS
+    )
     header = VerifierSession(expectation, compiled).header
     boundary = ProverSession(compiled, header, boundary_values, weight_tree=tree).boundary()
 
@@ -129,7 +133,7 @@ def test_verifier_construction_time_is_flat_in_gate_count() -> None:
     def construction(compilation: Compilation) -> Callable[[], object]:
         compiled: Compiled = compilation.compiled
         outputs = tuple(compiled.circuit.evaluate((3,))[o] for o in compiled.circuit.outputs)
-        expectation = make_expectation(compilation, POLICY, outputs, **SEEDS)
+        expectation = make_expectation(compilation, POLICY, outputs, parameters=NO_CAPACITY, **SEEDS)
         return lambda: VerifierSession(expectation, compiled)
 
     small_time = fastest(construction(small))

@@ -21,6 +21,8 @@ Q_SEED = b"Q" * 32
 S_SEED = b"S" * 32
 SESSION_ID = b"tests/veritor/protocol"
 CHECK_EVERYTHING = VerificationPolicy(1, 1)
+NO_CAPACITY_STATEMENT = VerifierParameters(max_capacity=None)
+"""A verifier that waives U_max: fine for fixtures, never for a verifier."""
 
 type ExpectationFactory = Callable[..., Expectation]
 
@@ -67,7 +69,7 @@ def expect(
     def build(
         policy: VerificationPolicy = CHECK_EVERYTHING,
         *,
-        parameters: VerifierParameters | None = None,
+        parameters: VerifierParameters = NO_CAPACITY_STATEMENT,
         claimed_outputs: tuple[int, ...] | None = None,
         weights: Weights | None = model_weights[0],
         session_id: bytes = SESSION_ID,

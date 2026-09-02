@@ -148,12 +148,9 @@ def test_transcript_with_an_altered_selection_is_challenge_mismatch(honest_run, 
 
 
 def test_make_expectation_draws_fresh_seeds_by_default(model, sec):
-    first = make_expectation(
-        model.compilation(), sec.CHECK_EVERYTHING, model.outputs, weights=model.kappa
-    )
-    second = make_expectation(
-        model.compilation(), sec.CHECK_EVERYTHING, model.outputs, weights=model.kappa
-    )
+    arguments = {"parameters": sec.NO_CAPACITY_STATEMENT, "weights": model.kappa}
+    first = make_expectation(model.compilation(), sec.CHECK_EVERYTHING, model.outputs, **arguments)
+    second = make_expectation(model.compilation(), sec.CHECK_EVERYTHING, model.outputs, **arguments)
     assert len(first.q_seed) == len(first.s_seed) == 32
     assert first.q_seed != second.q_seed and first.s_seed != second.s_seed
     assert first.q_seed != first.s_seed and first.session_id != second.session_id

@@ -28,6 +28,7 @@ from veritor.core import index as core_index
 from veritor.protocol import (
     Expectation,
     ProverSession,
+    VerifierParameters,
     VerifierSession,
     make_expectation,
     run_protocol,
@@ -119,7 +120,9 @@ class Scenario:
         self.values = TileValues(self.compiled)
         outputs = tuple(self.values[o] for o in self.compiled.circuit.outputs)
         policy = VerificationPolicy(Fraction(EXPECTED_SELECTED, units), 1)
-        self.expectation: Expectation = make_expectation(compilation, policy, outputs, **SEEDS)
+        self.expectation: Expectation = make_expectation(
+            compilation, policy, outputs, parameters=VerifierParameters(max_capacity=None), **SEEDS
+        )
         verifier = VerifierSession(self.expectation, self.compiled)
         prover = ProverSession(self.compiled, verifier.header, self.values)
         self.boundary = prover.boundary()

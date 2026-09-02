@@ -36,7 +36,7 @@ def recorded_with_advice():
     compilation = compile_demo_g(DemoGCompileRequest(advice=ADVICE, max_advice_bits=24))
     run = build_executable_conformance_transcript(
         compilation,
-        parameters=VerifierParameters(max_advice_bits=24),
+        parameters=VerifierParameters(max_advice_bits=24, max_capacity=None),
         session_id=b"wire/advice",
         q_seed=b"Q" * 32,
         s_seed=b"S" * 32,

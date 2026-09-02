@@ -207,7 +207,7 @@ def make_verification_expectation(
     policy: VerificationPolicy,
     claimed_outputs: Sequence[object],
     *,
-    parameters: VerifierParameters | None = None,
+    parameters: VerifierParameters,
     weights: Weights | None = None,
     session_id: bytes | None = None,
     q_seed: bytes | None = None,
@@ -216,8 +216,9 @@ def make_verification_expectation(
     """The verifier's side of one run: ``Compile(G, x, a)``, ``y*`` and the client's ``theta``.
 
     ``compilation`` carries ``(C, I)``, ``G``'s digest, the public inputs and
-    the advice the header binds; ``theta`` is admitted under ``parameters``.
-    Seeds come from the CSPRNG unless given; ``weights`` is the model's
+    the advice the header binds; ``theta`` is admitted under ``parameters``,
+    which the verifier always states (there is no default ``U_max``).  Seeds
+    come from the CSPRNG unless given; ``weights`` is the model's
     pre-committed weight root, if any.
     """
 
@@ -260,9 +261,13 @@ def build_executable_conformance_transcript(
     circuit has any, and both protocol parties run locally via
     :func:`run_protocol`.  This cannot demonstrate that either seed was
     withheld until the message it depends on was fixed; it is a conformance
-    fixture for :func:`Verify`.
+    fixture for :func:`Verify`.  Unless ``parameters`` are given it runs under
+    ``VerifierParameters(max_capacity=None)``: no capacity statement, which is
+    fine for a fixture and wrong for a verifier.
     """
 
+    if parameters is None:
+        parameters = VerifierParameters(max_capacity=None)
     compiled = _compilation(compilation).compiled
     values = compiled.circuit.evaluate(compilation.inputs, weights)
     outputs = tuple(values[address] for address in compiled.circuit.outputs)

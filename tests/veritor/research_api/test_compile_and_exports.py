@@ -16,6 +16,7 @@ from veritor import (
     DemoGCompileRequest,
     MatmulCompileRequest,
     VerificationPolicy,
+    VerifierParameters,
     compile_demo_g,
     compile_matmul,
     make_verification_expectation,
@@ -24,6 +25,8 @@ from veritor import (
 from veritor.compile import CompileError, constructor_digest
 from veritor.constructors import DemoG, MatmulG, TracerError
 from veritor.protocol import ProtocolError
+
+NO_CAPACITY = VerifierParameters(max_capacity=None)
 
 GATE_SET = make_word_gate_set(8)
 
@@ -148,9 +151,11 @@ def test_paper_functions_reject_anything_but_what_compile_produced() -> None:
     with pytest.raises(TypeError, match="Compilation"):
         Capacity(compile_demo_g().compiled, VerificationPolicy(1, 1), 0)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="Compilation"):
-        make_verification_expectation(object(), VerificationPolicy(1, 1), ())  # type: ignore[arg-type]
+        make_verification_expectation(object(), VerificationPolicy(1, 1), (), parameters=NO_CAPACITY)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="Compilation"):
-        make_verification_expectation(compile_demo_g().compiled, VerificationPolicy(1, 1), ())  # type: ignore[arg-type]
+        make_verification_expectation(
+            compile_demo_g().compiled, VerificationPolicy(1, 1), (), parameters=NO_CAPACITY  # type: ignore[arg-type]
+        )
 
 
 def test_expectation_generates_mandatory_verifier_seeds() -> None:
@@ -158,8 +163,8 @@ def test_expectation_generates_mandatory_verifier_seeds() -> None:
     compilation = compile_demo_g(request)
     policy = VerificationPolicy(1, 1)
     outputs = request.expected_outputs
-    first = make_verification_expectation(compilation, policy, outputs)
-    second = make_verification_expectation(compilation, policy, outputs)
+    first = make_verification_expectation(compilation, policy, outputs, parameters=NO_CAPACITY)
+    second = make_verification_expectation(compilation, policy, outputs, parameters=NO_CAPACITY)
 
     assert len(first.q_seed) == len(first.s_seed) == 32
     assert (first.q_seed, first.s_seed) != (second.q_seed, second.s_seed)

@@ -53,7 +53,8 @@ at the same point in the interaction.
 - **Policy** `θ = (q, s)`: the client's proposed sampling rates, as exact
   rationals. `η`, the acceptance threshold, belongs to the verifier
   (`VerifierParameters`), together with `U_max`, `A = max_advice_bits` and
-  `W_max`.
+  `W_max`. `U_max` has no default: a verifier states it, and waiving it
+  (`max_capacity=None`) has to be written out.
 
 ## Trust boundary
 
@@ -208,7 +209,7 @@ expectation = make_verification_expectation(       # the verifier's side of one 
     compilation,                                   # (C, I), G's digest, x by rank and a
     VerificationPolicy(q=1, s=1),                  # the client's proposal, theta
     outputs,
-    parameters=VerifierParameters(eta=0),          # eta, U_max, A, W_max are the verifier's
+    parameters=VerifierParameters(eta=0, max_capacity=0),  # eta, U_max, A, W_max are the verifier's
     weights=weights,
 )
 run = run_protocol(compiled, expectation, values, weight_tree=weight_tree)

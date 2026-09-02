@@ -25,6 +25,7 @@ from veritor.constructors import MatmulG
 from veritor.protocol import assignment_replay, commit_weights, encode_transcript
 
 SEEDS = {"session_id": b"research-api/conformance", "q_seed": b"Q" * 32, "s_seed": b"S" * 32}
+NO_CAPACITY = VerifierParameters(max_capacity=None)
 CHECK_EVERYTHING = VerificationPolicy(1, 1)
 WORKLOADS = {
     "demo-g": (DemoGCompileRequest(), compile_demo_g, ()),
@@ -45,7 +46,7 @@ def test_honest_conformance_transcript_verifies_purely(name: str) -> None:
     compiled = compilation.compiled
     assert compiled.index.weight_count == len(weights)
     advice = getattr(request, "advice", b"")
-    parameters = VerifierParameters(max_advice_bits=8 * len(advice))
+    parameters = VerifierParameters(max_advice_bits=8 * len(advice), max_capacity=None)
 
     run = build_executable_conformance_transcript(
         compilation, CHECK_EVERYTHING, weights=weights, parameters=parameters, **SEEDS
@@ -84,7 +85,7 @@ def test_forged_sampled_demo_execution_is_rejected() -> None:
     compilation = compile_demo_g(request)
     compiled = compilation.compiled
     expectation = make_verification_expectation(
-        compilation, CHECK_EVERYTHING, request.expected_outputs, **SEEDS
+        compilation, CHECK_EVERYTHING, request.expected_outputs, parameters=NO_CAPACITY, **SEEDS
     )
 
     values = list(compiled.circuit.evaluate(request.public_inputs))
@@ -106,6 +107,7 @@ def test_verify_rejects_transcript_against_the_wrong_expectation() -> None:
         compilation,
         CHECK_EVERYTHING,
         request.expected_outputs,
+        parameters=NO_CAPACITY,
         session_id=b"research-api/other",
         q_seed=b"Q" * 32,
         s_seed=b"S" * 32,
@@ -121,7 +123,7 @@ def test_the_header_binds_the_constructor_and_the_advice() -> None:
 
     request = DemoGCompileRequest(advice=b"a", max_advice_bits=8)
     compilation = compile_demo_g(request)
-    parameters = VerifierParameters(max_advice_bits=8)
+    parameters = VerifierParameters(max_advice_bits=8, max_capacity=None)
     honest = build_executable_conformance_transcript(compilation, parameters=parameters, **SEEDS)
     assert Verify(honest.transcript_bytes, honest.expectation, compilation.compiled).accepted
 
@@ -148,7 +150,7 @@ def test_advice_over_the_verifiers_bound_is_rejected_at_admission() -> None:
     compiled = compilation.compiled
     values = dict(enumerate(compiled.circuit.evaluate(compilation.inputs)))
     admitted = build_executable_conformance_transcript(
-        compilation, parameters=VerifierParameters(max_advice_bits=32), **SEEDS
+        compilation, parameters=VerifierParameters(max_advice_bits=32, max_capacity=None), **SEEDS
     )
     assert Verify(admitted.transcript_bytes, admitted.expectation, compiled).accepted
 
@@ -157,7 +159,7 @@ def test_advice_over_the_verifiers_bound_is_rejected_at_admission() -> None:
             compilation,
             CHECK_EVERYTHING,
             request.expected_outputs,
-            parameters=VerifierParameters(max_advice_bits=bound_bits),
+            parameters=VerifierParameters(max_advice_bits=bound_bits, max_capacity=None),
             **SEEDS,
         )
         rejected = run_protocol(compiled, capped, values)
@@ -170,7 +172,7 @@ def test_advice_over_the_verifiers_bound_is_rejected_at_admission() -> None:
         run_protocol(
             compiled,
             make_verification_expectation(
-                compilation, CHECK_EVERYTHING, request.expected_outputs, **SEEDS
+                compilation, CHECK_EVERYTHING, request.expected_outputs, parameters=NO_CAPACITY, **SEEDS
             ),
             values,
         ).report.code
@@ -186,7 +188,12 @@ def test_interactive_run_and_pure_verification_agree() -> None:
     compiled = compilation.compiled
     weights, tree = commit_weights(compiled.circuit.gate_set, request.weight_values)
     expectation = make_verification_expectation(
-        compilation, CHECK_EVERYTHING, request.expected_outputs, weights=weights, **SEEDS
+        compilation,
+        CHECK_EVERYTHING,
+        request.expected_outputs,
+        parameters=NO_CAPACITY,
+        weights=weights,
+        **SEEDS,
     )
     values = dict(enumerate(compiled.circuit.evaluate(request.public_inputs, request.weight_values)))
 

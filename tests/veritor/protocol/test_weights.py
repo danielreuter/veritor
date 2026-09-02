@@ -24,6 +24,7 @@ from veritor.protocol import (
     ProtocolRun,
     ProverSession,
     VerificationCode,
+    VerifierParameters,
     VerifierSession,
     Weights,
     commit_weights,
@@ -96,6 +97,7 @@ class Model:
     def expectation(self, **overrides) -> Expectation:
         arguments = {
             "weights": self.weights,
+            "parameters": VerifierParameters(max_capacity=None),
             "claimed_outputs": self.request.expected_outputs,
             **SEEDS,
             **overrides,
@@ -356,7 +358,11 @@ class BoundaryPhase:
             assert len(compilation.inputs) == len(workload.public_inputs) + n * n
             values = dict(enumerate(compiled.circuit.evaluate(compilation.inputs)))
             expectation = make_expectation(
-                compilation, CHECK_EVERYTHING, model.request.expected_outputs, **SEEDS
+                compilation,
+                CHECK_EVERYTHING,
+                model.request.expected_outputs,
+                parameters=VerifierParameters(max_capacity=None),
+                **SEEDS,
             )
             tree = None
         header = VerifierSession(expectation, compiled).header

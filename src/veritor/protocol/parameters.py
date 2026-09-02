@@ -36,9 +36,11 @@ class VerifierParameters:
 
     ``eta`` is the strict acceptance-probability threshold of the bound;
     ``max_capacity`` is ``U_max``: a run is admitted only when ``Bound(C, I,
-    theta)`` at this ``eta`` is at most ``U_max`` bits (``None`` waives the
-    check); ``max_advice_bits`` is ``A``, the longest advice admitted, in
-    bits; ``max_work`` is ``W_max``.
+    theta)`` at this ``eta`` is at most ``U_max`` bits.  It has no default:
+    a verifier states its capacity bound, and ``None`` -- which waives the
+    check and admits ``theta = (0, 0)`` -- has to be written out.
+    ``max_advice_bits`` is ``A``, the longest advice admitted, in bits;
+    ``max_work`` is ``W_max``.
 
     The paper charges a request ``Bound(C, I, theta) + |a|`` bits: everything
     the client did beyond the advice is a deterministic function of ``(G, x,
@@ -55,7 +57,7 @@ class VerifierParameters:
         self,
         eta: ProbabilityInput = 0,
         *,
-        max_capacity: int | None = None,
+        max_capacity: int | None,
         max_advice_bits: int = 0,
         max_work: int = DEFAULT_MAX_WORK,
     ) -> None:

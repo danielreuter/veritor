@@ -68,29 +68,30 @@ def expectation_for(compilation: Compilation, **overrides) -> Expectation:
     circuit = compilation.compiled.circuit
     values = circuit.evaluate(compilation.inputs)
     outputs = tuple(values[o] for o in circuit.outputs)
-    return make_expectation(compilation, CHECK_EVERYTHING, outputs, **{**SEEDS, **overrides})
+    arguments = {"parameters": VerifierParameters(max_capacity=None), **SEEDS, **overrides}
+    return make_expectation(compilation, CHECK_EVERYTHING, outputs, **arguments)
 
 
 # -- eta is the verifier's ------------------------------------------------------
 
 
 def test_default_parameters_fix_eta_at_zero() -> None:
-    parameters = VerifierParameters()
+    parameters = VerifierParameters(max_capacity=None)
 
     assert parameters.eta == 0
     assert parameters.max_capacity is None
     assert VerifierParameters("1/8", max_capacity=7, max_work=99).eta == EIGHTH
     with pytest.raises(ProtocolError, match="eta"):
-        VerifierParameters(1)
+        VerifierParameters(1, max_capacity=None)
     with pytest.raises(ProtocolError, match="max_work"):
-        VerifierParameters(0, max_work=-1)
+        VerifierParameters(0, max_work=-1, max_capacity=None)
 
 
 def test_the_proposal_is_theta_alone_and_the_header_binds_the_verifiers_eta(
     compiled, expect
 ) -> None:
     proposal = VerificationPolicy(1, Fraction(1, 2))
-    admitted = expect(proposal, parameters=VerifierParameters(EIGHTH))
+    admitted = expect(proposal, parameters=VerifierParameters(EIGHTH, max_capacity=None))
 
     assert admitted.policy == proposal
     assert admitted.parameters.eta == EIGHTH
@@ -98,7 +99,7 @@ def test_the_proposal_is_theta_alone_and_the_header_binds_the_verifiers_eta(
     assert header.policy == proposal and header.eta == EIGHTH
     assert header != VerifierSession(expect(proposal), compiled).header
     with pytest.raises(ProtocolError, match="VerificationPolicy"):
-        VerifierParameters().policy((1, 1))  # type: ignore[arg-type]
+        VerifierParameters(max_capacity=None).policy((1, 1))  # type: ignore[arg-type]
     with pytest.raises(ProtocolError, match="VerificationPolicy"):
         Expectation(
             admitted.session_id,
@@ -117,7 +118,7 @@ def test_the_proposal_is_theta_alone_and_the_header_binds_the_verifiers_eta(
 def test_a_transcript_recorded_under_another_eta_is_rejected(
     compiled, honest_values, expect
 ) -> None:
-    recorded = expect(parameters=VerifierParameters(EIGHTH))
+    recorded = expect(parameters=VerifierParameters(EIGHTH, max_capacity=None))
     run = run_protocol(compiled, recorded, honest_values)
     assert run.transcript is not None
     assert run.transcript.header.eta == EIGHTH
@@ -153,7 +154,7 @@ def test_huge_denominators_are_rejected_at_admission_and_in_derivation(
     assert run.report.sampled_replay_units == ()
     # the verifier's own eta is bound into the header and decoded under the same cap
     huge_eta = run_protocol(
-        compiled, expect(parameters=VerifierParameters(Fraction(1, 1 << 70))), honest_values
+        compiled, expect(parameters=VerifierParameters(Fraction(1, 1 << 70), max_capacity=None)), honest_values
     )
     assert huge_eta.report.code is VerificationCode.RESOURCE_LIMIT
 
@@ -267,10 +268,10 @@ def test_runs_above_the_work_budget_are_rejected_before_any_commitment(
     assert work.denominator == 1
 
     exact = run_protocol(
-        compiled, expect(parameters=VerifierParameters(max_work=int(work))), honest_values
+        compiled, expect(parameters=VerifierParameters(max_work=int(work), max_capacity=None)), honest_values
     )
     short = run_protocol(
-        compiled, expect(parameters=VerifierParameters(max_work=int(work) - 1)), honest_values
+        compiled, expect(parameters=VerifierParameters(max_work=int(work) - 1, max_capacity=None)), honest_values
     )
 
     assert exact.report.accepted
@@ -281,7 +282,7 @@ def test_runs_above_the_work_budget_are_rejected_before_any_commitment(
 
     cheaper = expect(
         VerificationPolicy(Fraction(1, 2), Fraction(1, 2)),
-        parameters=VerifierParameters(max_work=int(work) - 1),
+        parameters=VerifierParameters(max_work=int(work) - 1, max_capacity=None),
     )
     assert run_protocol(compiled, cheaper, honest_values).report.accepted
 
@@ -317,7 +318,7 @@ def test_runs_whose_bound_exceeds_u_max_are_rejected_before_any_commitment(
     assert rejection.value.code is VerificationCode.POLICY_REJECTED
 
     for parameters in (
-        VerifierParameters(Fraction(1, 4)),
+        VerifierParameters(Fraction(1, 4), max_capacity=None),
         VerifierParameters(Fraction(1, 4), max_capacity=loose),
     ):
         run = run_protocol(compiled, expect(LEAKY, parameters=parameters), honest_values)

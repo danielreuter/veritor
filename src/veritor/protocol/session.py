@@ -106,7 +106,7 @@ def make_expectation(
     proposal: VerificationPolicy,
     claimed_outputs: Iterable[object],
     *,
-    parameters: VerifierParameters | None = None,
+    parameters: VerifierParameters,
     weights: Weights | None = None,
     session_id: bytes | None = None,
     q_seed: bytes | None = None,
@@ -116,13 +116,16 @@ def make_expectation(
 
     ``compilation`` supplies ``(C, I)``, ``G``'s digest, the public inputs as
     the circuit consumes them and the advice; the client's proposed ``theta``
-    is admitted under the verifier's parameters.  Fresh seeds are drawn
-    unless given.
+    is admitted under the verifier's ``parameters``, which are never
+    defaulted: the verifier states ``eta``, ``U_max``, ``A`` and ``W_max``.
+    Fresh seeds are drawn unless given.
     """
 
     if not isinstance(compilation, Compilation):
         raise ProtocolError("make_expectation requires a Compilation from Compile")
-    checked = VerifierParameters() if parameters is None else parameters
+    if not isinstance(parameters, VerifierParameters):
+        raise ProtocolError("make_expectation requires the verifier's VerifierParameters")
+    checked = parameters
     return Expectation(
         session_id=token_bytes(16) if session_id is None else session_id,
         compiled_digest=compilation.compiled.digest,

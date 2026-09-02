@@ -93,6 +93,8 @@ SESSION_ID = b"tests/veritor/security"
 CONSTRUCTOR = constructor_digest("veritor.tests.security.chain", "1", {})
 """The digest of the (fixed) constructor whose description the fixture models compile."""
 CHECK_EVERYTHING = VerificationPolicy(1, 1)
+NO_CAPACITY_STATEMENT = VerifierParameters(max_capacity=None)
+"""A verifier that waives U_max: fine for fixtures, never for a verifier."""
 HALF = Fraction(1, 2)
 HALVES = VerificationPolicy(HALF, HALF)
 LIMITS = VerificationLimits()
@@ -407,7 +409,7 @@ class Model:
         *,
         claimed_outputs: Iterable[int] | None = None,
         public_inputs: Iterable[int] | None = None,
-        parameters: VerifierParameters | None = None,
+        parameters: VerifierParameters = NO_CAPACITY_STATEMENT,
         weights: Weights | None | str = "model",
         session_id: bytes = SESSION_ID,
         q_seed: bytes = Q_SEED,
