@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from veritor.protocol import VerificationCode
+from veritor.protocol import BOUNDARY_OWNER, WEIGHT_OWNER, VerificationCode
+from veritor.protocol.session import _Layout
 
 OTHER_ROOT = "ab" * 32
 OTHER_SEED = "cd" * 32
@@ -26,16 +27,22 @@ def interior_index(document: dict) -> int:
 
 
 def opening_at(document: dict, model, owner: str) -> dict:
-    """An evidence opening under the boundary, kappa_W or an interior root."""
+    """An evidence opening under the boundary, kappa_W or an interior root.
 
-    wanted = {
-        "boundary": set(model.hidden_boundary_addresses),
-        "weight": set(model.circuit.weights),
-        "interior": set(model.interior_addresses),
-    }[owner]
-    for batch in document["evidence"]["units"]:
-        for opening in batch:
-            if opening["position"] in wanted:
+    Evidence carries no owners; they are what the verifier derives for each
+    sampled unit's required addresses, in the batch's order (a weight opening's
+    position is its rank under kappa_W, which may coincide with an address).
+    """
+
+    layout = _Layout(model.compiled)
+    hidden = set(model.hidden_boundary_addresses)
+    for unit, batch in zip(document["sample_challenge"]["selected"], document["evidence"]["units"]):
+        for (who, address), opening in zip(layout.required(unit), batch, strict=True):
+            if owner == "weight" and who == WEIGHT_OWNER:
+                return opening
+            if owner == "boundary" and who == BOUNDARY_OWNER and address in hidden:
+                return opening
+            if owner == "interior" and who >= 0:
                 return opening
     raise AssertionError(owner)
 
@@ -48,6 +55,14 @@ MUTATIONS = {
     ),
     "header.compiled_digest": (
         lambda d, m: d["header"].__setitem__("compiled_digest", OTHER_ROOT),
+        VerificationCode.EXPECTATION_MISMATCH,
+    ),
+    "header.constructor": (
+        lambda d, m: d["header"].__setitem__("constructor", OTHER_ROOT),
+        VerificationCode.EXPECTATION_MISMATCH,
+    ),
+    "header.advice": (
+        lambda d, m: d["header"].__setitem__("advice", "00"),
         VerificationCode.EXPECTATION_MISMATCH,
     ),
     "header.policy": (

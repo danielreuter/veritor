@@ -33,7 +33,7 @@ from types import ModuleType
 
 import pytest
 
-from veritor.compile import Compiler
+from veritor.compile import Compilation, Compiler, constructor_digest
 from veritor.compile.description import (
     FORMAT_VERSION,
     canonical_description,
@@ -90,6 +90,8 @@ from veritor.protocol.session import Replay, Values, assignment_replay, rejectio
 Q_SEED = b"Q" * 32
 S_SEED = b"S" * 32
 SESSION_ID = b"tests/veritor/security"
+CONSTRUCTOR = constructor_digest("veritor.tests.security.chain", "1", {})
+"""The digest of the (fixed) constructor whose description the fixture models compile."""
 CHECK_EVERYTHING = VerificationPolicy(1, 1)
 HALF = Fraction(1, 2)
 HALVES = VerificationPolicy(HALF, HALF)
@@ -330,7 +332,20 @@ class Model:
         )
         self.values: dict[int, int] = evaluate(self.compiled, self.inputs, self.weights)
         self.outputs = self.outputs_of(self.values)
-        self.kappa, self.tree = commit_weights(self.compiled, self.weights)
+        self.gate_set = self.circuit.gate_set
+        self.kappa, self.tree = commit_weights(self.gate_set, self.weights)
+
+    def compilation(
+        self, public_inputs: Iterable[int] | None = None, advice: bytes = b""
+    ) -> Compilation:
+        """The verifier's record of ``Compile(G, x, a)`` for this model's fixed description."""
+
+        return Compilation(
+            self.compiled,
+            CONSTRUCTOR,
+            self.inputs if public_inputs is None else tuple(public_inputs),
+            advice,
+        )
 
     # -- addresses -----------------------------------------------------------
 
@@ -399,9 +414,8 @@ class Model:
         s_seed: bytes = S_SEED,
     ) -> Expectation:
         return make_expectation(
-            self.compiled,
+            self.compilation(public_inputs),
             policy,
-            self.inputs if public_inputs is None else tuple(public_inputs),
             self.outputs if claimed_outputs is None else tuple(claimed_outputs),
             parameters=parameters,
             weights=self.kappa if weights == "model" else weights,  # type: ignore[arg-type]

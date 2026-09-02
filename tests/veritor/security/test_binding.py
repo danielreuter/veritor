@@ -307,20 +307,35 @@ def test_the_wire_carries_no_prover_described_domain(honest_run, sec):
 # -- kappa_W ----------------------------------------------------------------------------
 
 
-def test_kappa_w_is_bound_to_the_index_of_its_model(model, sec):
-    """The weight root of another compiled circuit does not open this one's weights."""
+def test_kappa_w_is_bound_to_the_gate_set_and_the_vector_not_the_description(model, sec):
+    """One model, one root: the same weights under another description share kappa_W.
 
-    other = sec.Model(3, 2)  # the same weights under another index
-    assert other.weights == model.weights and other.kappa != model.kappa
-    domain = weight_domain(model.compiled)
-    assert domain.domain_id != weight_domain(other.compiled).domain_id
-    address = model.circuit.weights[0]
-    schema = leaf_schema(model.circuit, address)
-    foreign = other.tree.open(address)
-    assert not verify_opening(domain, other.kappa.commitment, foreign, schema, sec.LIMITS)
-    assert not verify_opening(domain, model.kappa.commitment, foreign, schema, sec.LIMITS)
-    # the honest prover refuses to run under a header binding another model's kappa_W
-    expectation = model.expectation(weights=other.kappa)
+    The domain is the rank space of the weight vector bound to the gate set, so
+    a model is committed once per epoch and serves every circuit compiled from
+    it.  What the root does not travel across: another gate set (the leaf
+    schema and the binding change), another vector length, another vector.
+    """
+
+    other = sec.Model(3, 2)  # the same weights under another description
+    assert other.weights == model.weights and other.compiled.digest != model.compiled.digest
+    assert other.kappa == model.kappa
+    domain = weight_domain(model.gate_set, model.kappa.count)
+    assert domain.domain_id == weight_domain(other.gate_set, other.kappa.count).domain_id
+    rank = 0
+    schema = leaf_schema(model.circuit, model.circuit.weights[rank])
+    opening = other.tree.open(rank)
+    assert verify_opening(domain, model.kappa.commitment, opening, schema, sec.LIMITS)
+    # another gate set: a different binding, and the opening no longer authenticates
+    wider = sec.Model(2, 2, width=16)
+    foreign = weight_domain(wider.gate_set, model.kappa.count)
+    assert foreign.domain_id != domain.domain_id
+    assert not verify_opening(foreign, model.kappa.commitment, opening, schema, sec.LIMITS)
+    # another vector length is another domain
+    assert weight_domain(model.gate_set, model.kappa.count + 1).domain_id != domain.domain_id
+    # another vector: the honest prover refuses to run under a header binding its kappa_W
+    different = sec.Model(2, 2, weights=tuple(w ^ 1 for w in model.weights))
+    assert different.kappa != model.kappa
+    expectation = model.expectation(weights=different.kappa)
     header = model.header(expectation)
     with pytest.raises(ProtocolError, match="weight tree"):
         ProverSession(model.compiled, header, model.values, weight_tree=model.tree)
@@ -340,9 +355,10 @@ def test_weight_opened_with_another_value_is_invalid_opening(model, sec):
 
     expectation = model.expectation()
     address = model.circuit.weights[0]
+    rank = model.circuit.weight_rank(address)  # kappa_W positions are ranks
 
     def substitute(owner: int, opening: Opening, phase: str) -> Opening:
-        if owner == WEIGHT_OWNER and opening.position == address:
+        if owner == WEIGHT_OWNER and opening.position == rank:
             other = (model.weights[0] + 1) % (1 << model.width)
             return Opening(opening.position, model.circuit.encode(address, other), opening.path)
         return opening
