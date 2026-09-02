@@ -110,7 +110,7 @@ Files: `protocol/merkle.py`, `protocol/domains.py`, `protocol/session.py`
 - `test_two_units_reading_one_address_cannot_be_shown_different_values` and
   `test_every_address_has_exactly_one_owner`: single owner.
 - `test_the_wire_carries_no_prover_described_domain`.
-- `test_kappa_w_is_bound_to_the_index_of_its_model`,
+- `test_kappa_w_is_bound_to_the_gate_set_and_the_vector_not_the_description`,
   `test_kappa_w_with_another_count_is_rejected_before_any_commitment`,
   `test_weight_opened_with_another_value_is_invalid_opening`,
   `test_interior_domain_is_bound_to_the_replay_phase`.
