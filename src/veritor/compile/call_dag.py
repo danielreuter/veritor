@@ -15,12 +15,13 @@ import json
 from bisect import bisect_right
 from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
-from types import MappingProxyType
 from typing import overload
 
 from veritor.core import (
     ArtifactKind,
     ExecutableGate,
+    Gate,
+    GateSet,
     IntervalDomain,
     InvalidArtifact,
     JSONValue,
@@ -28,7 +29,10 @@ from veritor.core import (
     RangeIndexedDomain,
     StructuralGate,
     StructureIdentity,
-    identity_digest,
+    check_value,
+    decode_value,
+    encode_value,
+    make_word_gate_set,
 )
 
 FORMAT_VERSION = 1
@@ -365,114 +369,6 @@ class Producer:
         )
 
 
-# ---------------------------------------------------------------------------
-# Trusted semantics declarations
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class GateSpec:
-    """One trusted primitive declaration.
-
-    ``evaluate`` is executable trusted code.  It is deliberately excluded
-    from equality and all identity manifests; the explicit registry identity
-    and version name the semantics instead.
-    """
-
-    name: str
-    arity: int
-    cost: int
-    evaluate: Callable[[tuple[int, ...]], int] = field(compare=False, repr=False)
-
-    def __post_init__(self) -> None:
-        if type(self.name) is not str or not self.name.strip():
-            raise ValueError("trusted gate names must be nonempty strings")
-        if type(self.arity) is not int or self.arity <= 0:
-            raise ValueError("trusted gates need positive integer arity")
-        if type(self.cost) is not int or self.cost < 0:
-            raise ValueError("trusted gate costs must be nonnegative integers")
-        if not callable(self.evaluate):
-            raise TypeError("trusted gate evaluate must be callable")
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class SemanticRegistry:
-    """Explicit identity and declarations for trusted local semantics."""
-
-    registry_id: str
-    registry_version: str
-    value_schema_id: str
-    value_schema_version: str
-    gates: tuple[GateSpec, ...]
-
-    def __init__(
-        self,
-        *,
-        registry_id: str,
-        registry_version: str,
-        value_schema_id: str,
-        value_schema_version: str,
-        gates: Sequence[GateSpec],
-    ) -> None:
-        texts = {
-            "registry_id": registry_id,
-            "registry_version": registry_version,
-            "value_schema_id": value_schema_id,
-            "value_schema_version": value_schema_version,
-        }
-        for field_name, value in texts.items():
-            if type(value) is not str or not value.strip():
-                raise ValueError(f"{field_name} must be a nonempty string")
-        checked_gates = tuple(gates)
-        if any(not isinstance(gate, GateSpec) for gate in checked_gates):
-            raise TypeError("semantic registry gates must be GateSpec values")
-        names = tuple(gate.name for gate in checked_gates)
-        if len(set(names)) != len(names):
-            raise ValueError("semantic registry gate names must be unique")
-        object.__setattr__(self, "registry_id", registry_id)
-        object.__setattr__(self, "registry_version", registry_version)
-        object.__setattr__(self, "value_schema_id", value_schema_id)
-        object.__setattr__(self, "value_schema_version", value_schema_version)
-        object.__setattr__(self, "gates", checked_gates)
-
-    @property
-    def semantic_scope_id(self) -> str:
-        return f"{self.registry_id}@{self.registry_version}"
-
-    def relation_id(self, gate_name: str) -> str:
-        if gate_name not in {gate.name for gate in self.gates}:
-            raise KeyError(gate_name)
-        return f"{self.registry_id}@{self.registry_version}/relation/{gate_name}"
-
-    def value_type_id(self, cell_bits: int) -> str:
-        return f"{self.value_schema_id}@{self.value_schema_version}/u{cell_bits}"
-
-    @property
-    def operator_manifest(self) -> dict[str, JSONValue]:
-        return {
-            "registry_id": self.registry_id,
-            "registry_version": self.registry_version,
-            "gates": [
-                {
-                    "arity": gate.arity,
-                    "cost": gate.cost,
-                    "name": gate.name,
-                    "relation_id": self.relation_id(gate.name),
-                }
-                for gate in sorted(self.gates, key=lambda item: item.name)
-            ],
-        }
-
-    def value_manifest(self, cell_bits: int) -> dict[str, JSONValue]:
-        return {
-            "cell_bits": cell_bits,
-            "encoding": "unsigned-big-endian-fixed-width/v1",
-            "schema_id": self.value_schema_id,
-            "schema_version": self.value_schema_version,
-            "value_type_id": self.value_type_id(cell_bits),
-        }
-
-
 @dataclass(frozen=True, slots=True)
 class CompilationLimits:
     """Explicit resource limits for parsing and validating constructor output."""
@@ -490,105 +386,6 @@ class CompilationLimits:
             value = getattr(self, field_name)
             if type(value) is not int or value < 0:
                 raise ValueError(f"{field_name} must be a nonnegative integer")
-
-
-@dataclass(frozen=True, slots=True)
-class WordValueCodec:
-    """Canonical fixed-width codec for one unsigned cell type."""
-
-    cell_bits: int
-    value_type_id: str
-
-    def __post_init__(self) -> None:
-        if type(self.cell_bits) is not int or self.cell_bits <= 0:
-            raise ValueError("cell_bits must be positive")
-        if type(self.value_type_id) is not str or not self.value_type_id.strip():
-            raise ValueError("value_type_id must be nonempty")
-
-    @property
-    def byte_length(self) -> int:
-        return (self.cell_bits + 7) // 8
-
-    @property
-    def cardinality(self) -> int:
-        return 1 << self.cell_bits
-
-    def validate(self, value: object, *, where: str = "value") -> int:
-        if type(value) is not int or not 0 <= value < self.cardinality:
-            raise KernelReject(f"{where} is not a {self.cell_bits}-bit word")
-        return value
-
-    def encode(self, value: object) -> bytes:
-        return self.validate(value).to_bytes(self.byte_length, "big")
-
-    def decode(self, payload: object) -> int:
-        if type(payload) is not bytes or len(payload) != self.byte_length:
-            raise KernelReject(
-                f"encoded value must be exactly {self.byte_length} bytes"
-            )
-        return self.validate(int.from_bytes(payload, "big"), where="encoded value")
-
-
-class TrustedRelationEvaluator:
-    """Evaluate relation identifiers from one explicit semantic registry."""
-
-    __slots__ = ("_by_operation", "_by_relation", "_codec", "_registry")
-
-    def __init__(
-        self,
-        registry: SemanticRegistry,
-        codec: WordValueCodec,
-    ) -> None:
-        by_operation = {gate.name: gate for gate in registry.gates}
-        by_relation = {registry.relation_id(gate.name): gate for gate in registry.gates}
-        self._registry = registry
-        self._codec = codec
-        self._by_operation = MappingProxyType(by_operation)
-        self._by_relation = MappingProxyType(by_relation)
-
-    @property
-    def registry_id(self) -> str:
-        return self._registry.registry_id
-
-    @property
-    def registry_version(self) -> str:
-        return self._registry.registry_version
-
-    def relation_id_for_operation(self, operation: str) -> str:
-        if operation not in self._by_operation:
-            raise KernelReject(f"unknown trusted gate {operation!r}")
-        return self._registry.relation_id(operation)
-
-    def _evaluate_spec(self, spec: GateSpec, args: Sequence[int]) -> int:
-        if len(args) != spec.arity:
-            raise KernelReject(
-                f"gate {spec.name} expects {spec.arity} arguments, got {len(args)}"
-            )
-        checked_args = tuple(
-            self._codec.validate(value, where=f"gate {spec.name} argument {index}")
-            for index, value in enumerate(args)
-        )
-        try:
-            result = spec.evaluate(checked_args)
-        except Exception as error:
-            raise RuntimeError(
-                f"trusted gate {spec.name} evaluator raised an exception"
-            ) from error
-        if type(result) is not int or not 0 <= result < self._codec.cardinality:
-            raise RuntimeError(f"trusted gate {spec.name} returned an invalid word")
-        return result
-
-    def evaluate(self, relation_id: str, args: Sequence[int]) -> int:
-        spec = self._by_relation.get(relation_id)
-        if spec is None:
-            raise KernelReject(f"unknown trusted relation {relation_id!r}")
-        return self._evaluate_spec(spec, args)
-
-    def evaluate_operation(self, operation: str, args: Sequence[int]) -> int:
-        spec = self._by_operation.get(operation)
-        if spec is None:
-            raise KernelReject(f"unknown trusted gate {operation!r}")
-        return self._evaluate_spec(spec, args)
 
 
 # ---------------------------------------------------------------------------
@@ -611,7 +408,7 @@ _Location = _InputLocation | _GateLocation
 
 @dataclass(frozen=True, slots=True)
 class ValidatedLeaf:
-    gate: GateSpec
+    gate: Gate
     args: tuple[_Location, ...]
     gate_start: int
 
@@ -832,39 +629,37 @@ class Kernel:
 
     def __init__(
         self,
+        gate_set: GateSet,
         *,
-        cell_bits: int,
-        semantic_registry: SemanticRegistry,
         limits: CompilationLimits | None = None,
     ) -> None:
-        if type(cell_bits) is not int or cell_bits <= 0:
-            raise ValueError("cell_bits must be a positive integer")
-        if not isinstance(semantic_registry, SemanticRegistry):
-            raise TypeError("Kernel requires an explicit, versioned SemanticRegistry")
+        if not isinstance(gate_set, GateSet):
+            raise TypeError("Kernel requires a GateSet")
         if limits is not None and not isinstance(limits, CompilationLimits):
             raise TypeError("limits must be CompilationLimits")
-        self.cell_bits = cell_bits
-        self.mask = (1 << cell_bits) - 1
-        self.semantic_registry = semantic_registry
+        widths = {gate.width for gate in gate_set}
+        if len(widths) != 1:
+            raise ValueError("the call-DAG kernel requires gates of one width")
+        self.gate_set = gate_set
+        self.cell_bits = widths.pop()
+        self.mask = (1 << self.cell_bits) - 1
         self.limits = CompilationLimits() if limits is None else limits
-        self._gates = {gate.name: gate for gate in semantic_registry.gates}
+        self._gates = {gate.name: gate for gate in gate_set}
+        self._by_relation = {self.relation_id(gate.name): gate for gate in gate_set}
         self._cache: dict[str, ValidatedDefinition] = {}
-        self.value_codec = WordValueCodec(
-            cell_bits,
-            semantic_registry.value_type_id(cell_bits),
-        )
-        self.relation_evaluator = TrustedRelationEvaluator(
-            semantic_registry,
-            self.value_codec,
-        )
-        self.value_registry_digest = identity_digest(
-            "veritor/call-dag/value-registry/v1",
-            semantic_registry.value_manifest(cell_bits),
-        )
-        self.operator_registry_digest = identity_digest(
-            "veritor/call-dag/operator-registry/v1",
-            semantic_registry.operator_manifest,
-        )
+
+    @property
+    def value_type_id(self) -> str:
+        return f"u{self.cell_bits}"
+
+    def relation_id(self, gate_name: str) -> str:
+        return f"{self.gate_set.id}/relation/{gate_name}"
+
+    def validate_value(self, value: object, *, where: str = "value") -> int:
+        try:
+            return check_value(self.cell_bits, value, where=where)
+        except InvalidArtifact as error:
+            raise KernelReject(str(error)) from None
 
     @property
     def cached_definition_count(self) -> int:
@@ -874,7 +669,7 @@ class Kernel:
     def cached_digests(self) -> frozenset[str]:
         return frozenset(self._cache)
 
-    def gate_spec(self, operation: str) -> GateSpec:
+    def gate_spec(self, operation: str) -> Gate:
         try:
             return self._gates[operation]
         except KeyError as error:
@@ -1010,7 +805,9 @@ class Kernel:
                 gate_count = self._bounded_add(
                     gate_count, 1, self.limits.max_cells, "gate count"
                 )
-                cost = self._bounded_add(cost, gate.cost, self.limits.max_cost, "cost")
+                cost = self._bounded_add(
+                    cost, gate.replay_cost, self.limits.max_cost, "cost"
+                )
                 continue
 
             if kind == "call":
@@ -1391,7 +1188,7 @@ class Kernel:
                     definition_digest=None,
                     gate_start=ordinal,
                     gate_count=1,
-                    cost=step.gate.cost,
+                    cost=step.gate.replay_cost,
                     external_reads=reads,
                     outputs=(root_input_count + ordinal,),
                 )
@@ -1554,10 +1351,13 @@ class Kernel:
             local_ordinal -= step.gate_start
 
     def apply_gate(self, function: str, args: Sequence[int]) -> int:
-        return self.relation_evaluator.evaluate_operation(function, args)
+        return self.gate_spec(function).evaluate(args)
 
     def evaluate_relation(self, relation_id: str, args: Sequence[int]) -> int:
-        return self.relation_evaluator.evaluate(relation_id, args)
+        gate = self._by_relation.get(relation_id)
+        if gate is None:
+            raise KernelReject(f"unknown trusted relation {relation_id!r}")
+        return gate.evaluate(args)
 
     def evaluate_tape(
         self,
@@ -1570,7 +1370,7 @@ class Kernel:
                 f"circuit expects {root.input_count} inputs, got {len(inputs)}"
             )
         cells = [
-            self.value_codec.validate(value, where=f"input {index}")
+            self.validate_value(value, where=f"input {index}")
             for index, value in enumerate(inputs)
         ]
         flat = self.flatten(root)
@@ -1612,7 +1412,7 @@ class CallDagCircuit:
         kernel.require_validated_definition(root)
         self._kernel = kernel
         self._root = root
-        value_type = kernel.value_codec.value_type_id
+        value_type = kernel.value_type_id
         self._computed_positions = RangeIndexedDomain(
             root.input_count,
             root.input_count + root.gate_count,
@@ -1641,9 +1441,8 @@ class CallDagCircuit:
             artifact_kind=ArtifactKind.EXECUTABLE_CIRCUIT,
             compiler_id=COMPILER_ID,
             compiler_version=COMPILER_VERSION,
-            semantic_scope_id=kernel.semantic_registry.semantic_scope_id,
-            value_registry_digest=kernel.value_registry_digest,
-            operator_registry_digest=kernel.operator_registry_digest,
+            semantic_scope_id=kernel.gate_set.id,
+            operator_registry_digest=kernel.gate_set.digest,
         )
 
     @property
@@ -1671,12 +1470,8 @@ class CallDagCircuit:
         return self._kernel.cell_bits
 
     @property
-    def value_codec(self) -> WordValueCodec:
-        return self._kernel.value_codec
-
-    @property
-    def relation_evaluator(self) -> TrustedRelationEvaluator:
-        return self._kernel.relation_evaluator
+    def gate_set(self) -> GateSet:
+        return self._kernel.gate_set
 
     @property
     def gate_count(self) -> int:
@@ -1708,9 +1503,9 @@ class CallDagCircuit:
             gate.write,
             gate.function,
             gate.reads,
-            self.value_codec.cardinality,
-            value_type=self.value_codec.value_type_id,
-            metadata={"arity": spec.arity, "cost": spec.cost},
+            1 << spec.width,
+            value_type=self._kernel.value_type_id,
+            metadata={"arity": spec.arity, "cost": spec.replay_cost},
         )
 
     def executable_gate_at(self, position: int) -> ExecutableGate:
@@ -1720,28 +1515,34 @@ class CallDagCircuit:
             gate.write,
             gate.function,
             gate.reads,
-            self.value_codec.value_type_id,
-            self._kernel.semantic_registry.relation_id(gate.function),
-            metadata={"arity": spec.arity, "cost": spec.cost},
+            self._kernel.value_type_id,
+            self._kernel.relation_id(gate.function),
+            metadata={"arity": spec.arity, "cost": spec.replay_cost},
         )
 
     # -- trusted semantics (core.ExecutableCircuit) --------------------------
 
     def _require_value_type(self, value_type: str) -> None:
-        if value_type != self.value_codec.value_type_id:
+        if value_type != self._kernel.value_type_id:
             raise KernelReject(f"unknown value type {value_type!r}")
 
     def encode_value(self, value_type: str, value: object) -> bytes:
         self._require_value_type(value_type)
-        return self.value_codec.encode(value)
+        try:
+            return encode_value(self.cell_bits, value)
+        except InvalidArtifact as error:
+            raise KernelReject(str(error)) from None
 
     def decode_value(self, value_type: str, payload: bytes) -> int:
         self._require_value_type(value_type)
-        return self.value_codec.decode(payload)
+        try:
+            return decode_value(self.cell_bits, payload)
+        except InvalidArtifact as error:
+            raise KernelReject(str(error)) from None
 
     def evaluate_relation(self, relation_id: str, arguments: Sequence[object]) -> int:
-        return self.relation_evaluator.evaluate(
-            relation_id, tuple(self.value_codec.validate(item) for item in arguments)
+        return self._kernel.evaluate_relation(
+            relation_id, tuple(self._kernel.validate_value(item) for item in arguments)
         )
 
     def check_relation(
@@ -1793,59 +1594,15 @@ def construct(
             f"root expects {load.root.input_count} inputs, got {len(cells)}"
         )
     for index, value in enumerate(cells):
-        kernel.value_codec.validate(value, where=f"input {index}")
+        kernel.validate_value(value, where=f"input {index}")
     return Construction(load=load, input_cells=cells, constructor_output=blob)
-
-
-# ---------------------------------------------------------------------------
-# Modular word arithmetic: the trusted semantics shared by the built-in plug-ins
-# ---------------------------------------------------------------------------
-
-
-def trusted_word_gates(cell_bits: int) -> tuple[GateSpec, ...]:
-    """Return the demo's trusted modular add/multiply declarations."""
-
-    if type(cell_bits) is not int or cell_bits <= 0:
-        raise ValueError("cell_bits must be positive")
-    mask = (1 << cell_bits) - 1
-    return (
-        GateSpec("add", 2, 1, lambda args: (args[0] + args[1]) & mask),
-        GateSpec("mul", 2, 2, lambda args: (args[0] * args[1]) & mask),
-    )
-
-
-def trusted_word_registry(
-    cell_bits: int,
-    *,
-    registry_id: str = "veritor.demo.word-arithmetic",
-    registry_version: str = "1",
-) -> SemanticRegistry:
-    """Build the explicit semantic registry for :class:`DemoG`."""
-
-    return SemanticRegistry(
-        registry_id=registry_id,
-        registry_version=registry_version,
-        value_schema_id="veritor.unsigned-word",
-        value_schema_version="1",
-        gates=trusted_word_gates(cell_bits),
-    )
 
 
 def make_word_kernel(
     cell_bits: int = 8,
     *,
-    registry_id: str = "veritor.demo.word-arithmetic",
-    registry_version: str = "1",
     limits: CompilationLimits | None = None,
 ) -> Kernel:
-    """Construct a kernel for the self-contained modular-word demo."""
+    """Construct a kernel over the standard modular-word gate set."""
 
-    return Kernel(
-        cell_bits=cell_bits,
-        semantic_registry=trusted_word_registry(
-            cell_bits,
-            registry_id=registry_id,
-            registry_version=registry_version,
-        ),
-        limits=limits,
-    )
+    return Kernel(make_word_gate_set(cell_bits), limits=limits)

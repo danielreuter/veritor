@@ -10,21 +10,24 @@ from veritor.compile import (
     CallDagCircuit,
     CompilationLimits,
     FlatGate,
-    GateSpec,
     Kernel,
     KernelReject,
     OccurrenceSummary,
     Producer,
-    SemanticRegistry,
     ValidatedCall,
     ValidatedLeaf,
     canonical_call_dag_json,
     construct,
     definition_digest,
     make_word_kernel,
-    trusted_word_registry,
 )
-from veritor.core import ExecutableCircuit, validate_circuit_contract
+from veritor.core import (
+    ExecutableCircuit,
+    Gate,
+    GateSet,
+    make_word_gate_set,
+    validate_circuit_contract,
+)
 from veritor.plugins import BatchInput, DemoG, expected_dot_outputs, make_demo_request
 
 CELL_BITS = 8
@@ -227,7 +230,8 @@ def test_adapter_implements_executable_contract_and_trusted_codec():
     executable = circuit.executable_gate_at(1)
     assert executable.arguments == (0, 0)
     assert circuit.evaluate_relation(executable.relation_id, (7, 7)) == 14
-    assert circuit.value_codec.decode(circuit.value_codec.encode(255)) == 255
+    value_type = executable.output_type
+    assert circuit.decode_value(value_type, circuit.encode_value(value_type, 255)) == 255
     assert circuit.ordered_output_positions == (1, 1, 0)
     assert circuit.evaluate((7,)) == (14, 14, 7)
 
@@ -245,37 +249,32 @@ def test_semantic_identity_binds_declarations_not_python_callable_objects():
 
     blob = producer.serialize(root)
 
-    def registry(evaluator, *, version="1", cost=1):
-        return SemanticRegistry(
-            registry_id="tests.explicit-semantics",
-            registry_version=version,
-            value_schema_id="tests.word",
-            value_schema_version="1",
-            gates=(GateSpec("add", 2, cost, evaluator),),
+    def gate_set(evaluator, *, version="1", cost=1):
+        return GateSet(
+            (
+                Gate(
+                    "add",
+                    2,
+                    CELL_BITS,
+                    replay_cost=cost,
+                    proof_cost=cost,
+                    evaluate=evaluator,
+                ),
+            ),
+            name="tests.explicit-semantics",
+            version=version,
         )
 
-    first_kernel = Kernel(
-        cell_bits=CELL_BITS,
-        semantic_registry=registry(lambda args: sum(args) & 255),
-    )
+    first_kernel = Kernel(gate_set(lambda args: sum(args) & 255))
     first = CallDagCircuit(first_kernel, first_kernel.load(blob).root)
-    same_declaration_kernel = Kernel(
-        cell_bits=CELL_BITS,
-        semantic_registry=registry(lambda args: (args[0] - args[1]) & 255),
-    )
+    same_declaration_kernel = Kernel(gate_set(lambda args: (args[0] - args[1]) & 255))
     same_declaration = CallDagCircuit(
         same_declaration_kernel,
         same_declaration_kernel.load(blob).root,
     )
-    new_version_kernel = Kernel(
-        cell_bits=CELL_BITS,
-        semantic_registry=registry(lambda args: sum(args) & 255, version="2"),
-    )
+    new_version_kernel = Kernel(gate_set(lambda args: sum(args) & 255, version="2"))
     new_version = CallDagCircuit(new_version_kernel, new_version_kernel.load(blob).root)
-    new_cost_kernel = Kernel(
-        cell_bits=CELL_BITS,
-        semantic_registry=registry(lambda args: sum(args) & 255, cost=9),
-    )
+    new_cost_kernel = Kernel(gate_set(lambda args: sum(args) & 255, cost=9))
     new_cost = CallDagCircuit(new_cost_kernel, new_cost_kernel.load(blob).root)
 
     assert first.identity == same_declaration.identity
@@ -314,10 +313,7 @@ def test_cell_width_is_identity_bound_even_for_identical_definition_body():
         def root(value):
             return add(value, value)
 
-        kernel = Kernel(
-            cell_bits=cell_bits,
-            semantic_registry=trusted_word_registry(cell_bits),
-        )
+        kernel = Kernel(make_word_gate_set(cell_bits))
         validated = kernel.load(producer.serialize(root)).root
         circuits.append(CallDagCircuit(kernel, validated))
 
@@ -325,8 +321,8 @@ def test_cell_width_is_identity_bound_even_for_identical_definition_body():
     assert circuits[0].identity.representation_digest == (
         circuits[1].identity.representation_digest
     )
-    assert circuits[0].identity.value_registry_digest != (
-        circuits[1].identity.value_registry_digest
+    assert circuits[0].identity.operator_registry_digest != (
+        circuits[1].identity.operator_registry_digest
     )
     assert circuits[0].identity != circuits[1].identity
 

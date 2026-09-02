@@ -35,6 +35,16 @@ from .errors import (
     ResourceLimitExceeded,
     UnsupportedCapability,
 )
+from .gates import (
+    GATE_SET_IDENTITY_TAG,
+    Gate,
+    GateSet,
+    check_value,
+    decode_value,
+    encode_value,
+    make_word_gate_set,
+    value_byte_length,
+)
 from .identity import (
     COMPILED_RESULT_IDENTITY_TAG,
     PARTITION_IDENTITY_TAG,
@@ -100,6 +110,7 @@ from .policy import (
 __all__ = [
     "BOUNDARY_OWNER",
     "COMPILED_RESULT_IDENTITY_TAG",
+    "GATE_SET_IDENTITY_TAG",
     "PARTITION_IDENTITY_TAG",
     "STRUCTURE_IDENTITY_TAG",
     "ArtifactKind",
@@ -119,6 +130,8 @@ __all__ = [
     "ExplicitDomain",
     "ExplicitIndexedDomain",
     "FiniteIndexedDomain",
+    "Gate",
+    "GateSet",
     "IndexedDomain",
     "IntervalDomain",
     "InvalidArtifact",
@@ -158,12 +171,16 @@ __all__ = [
     "canonical_json_bytes",
     "canonical_json_text",
     "canonical_manifest_digest",
+    "check_value",
     "contiguous_span",
+    "decode_value",
     "derive_replay_boundary",
     "domains_equal",
+    "encode_value",
     "exact_fraction",
     "identity_digest",
     "iter_domain",
+    "make_word_gate_set",
     "ordered_output_positions",
     "parse_probability",
     "position",
@@ -176,4 +193,5 @@ __all__ = [
     "validate_digest",
     "validate_replay_boundary",
     "validate_verification_refines_replay",
+    "value_byte_length",
 ]

@@ -37,7 +37,7 @@ class CallDagCapacityBoundProvider:
 
     def _explicit(self) -> CircuitDAG:
         circuit = self._call_dag()
-        cardinality = circuit.value_codec.cardinality
+        cardinality = 1 << circuit.cell_bits
         capacity = GateCapacity.values(cardinality)
         gates = [
             Gate(self._gate_id(port.position), capacity, "input")
@@ -67,7 +67,7 @@ class CallDagCapacityBoundProvider:
     @property
     def output_frontier(self) -> LogCardinality:
         circuit = self._call_dag()
-        capacity = GateCapacity.values(circuit.value_codec.cardinality)
+        capacity = GateCapacity.values(1 << circuit.cell_bits)
         return sum_capacities(
             capacity for _position in {port.position for port in circuit.output_ports}
         )
