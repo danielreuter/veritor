@@ -27,9 +27,9 @@ def explicit_cost(compiled: Compiled, policy: VerificationPolicy, parameters: Co
 @pytest.mark.parametrize(
     "policy",
     [
-        VerificationPolicy(Fraction(1, 2), Fraction(1, 3), Fraction(1, 4)),
-        VerificationPolicy(1, 1, 0),
-        VerificationPolicy(0, 1, 0),
+        VerificationPolicy(Fraction(1, 2), Fraction(1, 3)),
+        VerificationPolicy(1, 1),
+        VerificationPolicy(0, 1),
     ],
 )
 def test_cost_fold_matches_the_unit_by_unit_sum(make_compiled, sizes, policy):
@@ -40,7 +40,7 @@ def test_cost_fold_matches_the_unit_by_unit_sum(make_compiled, sizes, policy):
 
 
 def test_cost_fold_matches_on_nested_indices(make_paper_example):
-    policy = VerificationPolicy(Fraction(2, 3), Fraction(1, 5), Fraction(1, 10))
+    policy = VerificationPolicy(Fraction(2, 3), Fraction(1, 5))
     parameters = CostParameters(2, 1)
     for compiled in (make_paper_example(2, False), make_paper_example(2, True), compile_matmul()):
         assert isinstance(compiled, Compiled)
@@ -49,22 +49,22 @@ def test_cost_fold_matches_on_nested_indices(make_paper_example):
 
 def test_cost_terms_and_defaults(make_compiled):
     compiled = make_compiled((3, 2))  # 5 one-gate units, replay interfaces are the unit outputs
-    full = cost(compiled, VerificationPolicy(1, 1, 0))
-    nothing = cost(compiled, VerificationPolicy(0, 0, 0))
+    full = cost(compiled, VerificationPolicy(1, 1))
+    nothing = cost(compiled, VerificationPolicy(0, 0))
 
     assert full.boundary == 5 + 5  # inputs plus every replay unit's Out
     assert full.replay == 5 * 1 and full.proof == 5 * 1  # word gates cost one each
     assert full.total == 20
     assert nothing == ExpectedCost(Fraction(10), Fraction(0), Fraction(0))
-    assert cost(compiled, VerificationPolicy(Fraction(1, 2), Fraction(1, 2), 0)).total == 10 + Fraction(5, 2) + Fraction(5, 4)
+    assert cost(compiled, VerificationPolicy(Fraction(1, 2), Fraction(1, 2))).total == 10 + Fraction(5, 2) + Fraction(5, 4)
 
 
 def test_cost_validates_its_inputs(make_compiled):
     compiled = make_compiled((1,))
     with pytest.raises(TypeError, match="Compiled"):
-        cost(compiled.circuit, VerificationPolicy(1, 1, 0))  # type: ignore[arg-type]
+        cost(compiled.circuit, VerificationPolicy(1, 1))  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="VerificationPolicy"):
-        cost(compiled, (1, 1, 0))  # type: ignore[arg-type]
+        cost(compiled, (1, 1))  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="hash_cost"):
         CostParameters(-1)
     with pytest.raises(TypeError, match="proof_overhead"):

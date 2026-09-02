@@ -25,51 +25,51 @@ from veritor.core import Compiled, VerificationPolicy, make_word_gate_set
 
 TOLERANCE = 1e-6
 
-POLICIES = [
-    VerificationPolicy(Fraction(1, 2), Fraction(1, 2), Fraction(1, 4)),
-    VerificationPolicy(Fraction(1, 3), Fraction(1, 5), Fraction(1, 100)),
-    VerificationPolicy(Fraction(9, 10), Fraction(9, 10), Fraction(1, 10)),
-    VerificationPolicy(1, Fraction(1, 2), Fraction(1, 8)),
-    VerificationPolicy(1, 1, 0),
-    VerificationPolicy(0, 1, Fraction(1, 2)),
-    VerificationPolicy(Fraction(1, 2), Fraction(1, 2), 0),
-    VerificationPolicy(1, 1, Fraction(1, 2)),
+POLICIES = [  # (theta, eta)
+    (VerificationPolicy(Fraction(1, 2), Fraction(1, 2)), Fraction(1, 4)),
+    (VerificationPolicy(Fraction(1, 3), Fraction(1, 5)), Fraction(1, 100)),
+    (VerificationPolicy(Fraction(9, 10), Fraction(9, 10)), Fraction(1, 10)),
+    (VerificationPolicy(1, Fraction(1, 2)), Fraction(1, 8)),
+    (VerificationPolicy(1, 1), Fraction(0)),
+    (VerificationPolicy(0, 1), Fraction(1, 2)),
+    (VerificationPolicy(Fraction(1, 2), Fraction(1, 2)), Fraction(0)),
+    (VerificationPolicy(1, 1), Fraction(1, 2)),
 ]
 
 FAMILIES = [(1,), (2,), (3, 2), (2, 2, 2), (4, 3)]
 
 
-def relaxed(policy: VerificationPolicy, result: BoundResult, replay_units: int) -> VerificationPolicy:
+def relaxed(eta: Fraction, result: BoundResult, replay_units: int) -> Fraction:
     """The threshold the grid actually enforces: ``eta`` lowered by one step per replay unit."""
 
-    if policy.eta == 0 or math.isinf(result.cost_step):
-        return policy
-    return VerificationPolicy(
-        policy.q, policy.s, policy.eta * Fraction(math.exp(-replay_units * result.cost_step))
-    )
+    if eta == 0 or math.isinf(result.cost_step):
+        return eta
+    return eta * Fraction(math.exp(-replay_units * result.cost_step))
 
 
 @pytest.mark.parametrize("sizes", FAMILIES)
-@pytest.mark.parametrize("policy", POLICIES)
-def test_fold_sits_between_the_union_and_the_relaxed_per_set_sum(make_compiled, sizes, policy):
+@pytest.mark.parametrize(("policy", "eta"), POLICIES)
+def test_fold_sits_between_the_union_and_the_relaxed_per_set_sum(make_compiled, sizes, policy, eta):
     compiled = make_compiled(sizes)
-    result = bound(compiled, policy)
+    result = bound(compiled, policy, eta)
 
     assert result.digest == compiled.digest
-    assert result.policy == policy
+    assert result.policy == policy and result.eta == eta
     assert 0 <= result.bits <= result.out_bits == 8 * sum(sizes)
     assert result.bits == min(result.knapsack_bits, result.laplace_bits, result.out_bits)
     assert result.capped == (result.bits == result.out_bits)
     # The grid admits at most the sets admissible at the relaxed threshold,
     # and distinct covers never weigh more than the per-set sum ...
-    per_set = subset_sum_bits(compiled, relaxed(policy, result, compiled.index.replay_units.count))
+    per_set = subset_sum_bits(
+        compiled, policy, relaxed(eta, result, compiled.index.replay_units.count)
+    )
     assert result.knapsack_bits <= per_set + TOLERANCE
     # ... while every set admissible at eta is admitted.  Here one-gate units
     # make every cover distinct unless error counts are lumped (the lumped
     # subsets share the unit's interface), so without lumping both the
     # knapsack and the Laplace bound sit above the exact per-set sum.
     if result.errors_limit >= max(sizes):
-        exact = subset_sum_bits(compiled, policy)
+        exact = subset_sum_bits(compiled, policy, eta)
         assert result.knapsack_bits >= exact - TOLERANCE
         assert result.laplace_bits >= exact - TOLERANCE
 
@@ -79,22 +79,24 @@ def test_grid_is_exact_when_fine_enough(make_compiled, sizes):
     """Away from knife edges a fine grid admits nothing extra."""
 
     compiled = make_compiled(sizes)
-    policy = VerificationPolicy(Fraction(1, 2), Fraction(1, 2), Fraction(1, 5))
-    result = bound(compiled, policy, BoundOptions(resolution=256, max_buckets=1 << 16))
+    policy, eta = VerificationPolicy(Fraction(1, 2), Fraction(1, 2)), Fraction(1, 5)
+    result = bound(compiled, policy, eta, BoundOptions(resolution=256, max_buckets=1 << 16))
 
     assert result.errors_limit >= max(sizes)
-    assert result.knapsack_bits == pytest.approx(subset_sum_bits(compiled, policy), abs=TOLERANCE)
+    assert result.knapsack_bits == pytest.approx(
+        subset_sum_bits(compiled, policy, eta), abs=TOLERANCE
+    )
 
 
 def test_knife_edge_is_admitted_by_the_grid_only(make_compiled):
     """Three errors cost exactly ``Lambda = 3 ln 2``: inadmissible, but on the grid."""
 
     compiled = make_compiled((3, 2))
-    policy = VerificationPolicy(1, Fraction(1, 2), Fraction(1, 8))
-    result = bound(compiled, policy)
+    policy, eta = VerificationPolicy(1, Fraction(1, 2)), Fraction(1, 8)
+    result = bound(compiled, policy, eta)
 
-    exact = subset_sum_bits(compiled, policy)
-    admitted = subset_sum_bits(compiled, relaxed(policy, result, 2))
+    exact = subset_sum_bits(compiled, policy, eta)
+    admitted = subset_sum_bits(compiled, policy, relaxed(eta, result, 2))
     assert exact < result.knapsack_bits <= admitted + TOLERANCE
     assert result.knapsack_bits == pytest.approx(admitted, abs=TOLERANCE)
     assert result.cost_step <= math.log(2) / 16 * (1 + 1e-9)
@@ -119,14 +121,14 @@ def paper_outputs(make_paper_example):
 def test_paper_fanin_example_union_is_below_the_fold(make_paper_example, paper_outputs, split):
     compiled = make_paper_example(2, split)
     outputs = paper_outputs[split]
-    for policy in POLICIES[:4]:
-        union = len(accepted_outputs(outputs, policy))
-        result = bound(compiled, policy)
+    for policy, eta in POLICIES[:4]:
+        union = len(accepted_outputs(outputs, policy, eta))
+        result = bound(compiled, policy, eta)
         assert math.log2(union) <= result.bits + TOLERANCE
         # both h's and the tail together are covered by the replay unit's own
         # interface: one cover, far below the per-set sum
         if not split:
-            assert result.knapsack_bits < subset_sum_bits(compiled, policy) - 0.5
+            assert result.knapsack_bits < subset_sum_bits(compiled, policy, eta) - 0.5
 
 
 @pytest.mark.parametrize("seed", range(6))
@@ -134,14 +136,14 @@ def test_random_small_circuits_union_is_below_the_fold(make_random_compiled, see
     compiled = make_random_compiled(seed)
     inputs = list(range(1, compiled.index.input_count + 1))
     outputs = transcript_outputs(compiled, inputs)
-    for policy in POLICIES[:3]:
-        union = len(accepted_outputs(outputs, policy))
-        result = bound(compiled, policy)
+    for policy, eta in POLICIES[:3]:
+        union = len(accepted_outputs(outputs, policy, eta))
+        result = bound(compiled, policy, eta)
         assert math.log2(union) <= result.bits + TOLERANCE
         # the per-set sum may cover an error set by the root; the fold only
         # caps its total by the root, which is never more
         per_set = subset_sum_bits(
-            compiled, relaxed(policy, result, compiled.index.replay_units.count)
+            compiled, policy, relaxed(eta, result, compiled.index.replay_units.count)
         )
         assert result.bits <= per_set + TOLERANCE
 
@@ -149,33 +151,40 @@ def test_random_small_circuits_union_is_below_the_fold(make_random_compiled, see
 def test_all_outputs_are_reachable_when_nothing_is_checked(make_paper_example, paper_outputs):
     compiled = make_paper_example(2, False)
     outputs = paper_outputs[False]
-    everything = accepted_outputs(outputs, VerificationPolicy(0, 1, Fraction(1, 2)))
-    honest = accepted_outputs(outputs, VerificationPolicy(1, 1, 0))
+    everything = accepted_outputs(outputs, VerificationPolicy(0, 1), Fraction(1, 2))
+    honest = accepted_outputs(outputs, VerificationPolicy(1, 1), Fraction(0))
 
     assert len(everything) == 1 << 4
     assert len(honest) == 1
-    assert len(admissible_sets(compiled, VerificationPolicy(1, 1, 0))) == 1
+    assert len(admissible_sets(compiled, VerificationPolicy(1, 1), Fraction(0))) == 1
 
 
 def test_whole_unit_corruption_is_cheap_and_covered_once(make_compiled):
     """Mega-unit: with ``s = 1`` every error count in a unit costs ``-ln(1 - q)``."""
 
     compiled = make_compiled((6,))
-    policy = VerificationPolicy(Fraction(1, 2), 1, Fraction(1, 4))
-    result = bound(compiled, policy)
+    policy, eta = VerificationPolicy(Fraction(1, 2), 1), Fraction(1, 4)
+    result = bound(compiled, policy, eta)
 
     assert result.errors_limit == 1
     # every nonempty subset is admissible; the unit's interface covers them all
     assert result.bits == pytest.approx(48.0, abs=0.01)
-    assert result.bits < subset_sum_bits(compiled, policy)
+    assert result.bits < subset_sum_bits(compiled, policy, eta)
 
 
 def test_bound_rejects_foreign_inputs_and_bad_options(make_compiled):
     compiled = make_compiled((1,))
+    policy, eta = POLICIES[0]
     with pytest.raises(TypeError, match="Compiled"):
-        bound(compiled.circuit, POLICIES[0])  # type: ignore[arg-type]
+        bound(compiled.circuit, policy, eta)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="VerificationPolicy"):
-        bound(compiled, (1, 1, 0))  # type: ignore[arg-type]
+        bound(compiled, (1, 1), eta)  # type: ignore[arg-type]
+    for bad_eta in (1, Fraction(5, 4), "-1/8"):
+        with pytest.raises(ValueError, match=r"eta must lie in \[0, 1\)"):
+            bound(compiled, policy, bad_eta)
+    with pytest.raises(TypeError, match="eta"):
+        bound(compiled, policy, 0.25)  # type: ignore[arg-type]
+    assert bound(compiled, policy, "1/4") == bound(compiled, policy, eta)
     for field in ("max_buckets", "resolution", "max_errors"):
         with pytest.raises(ValueError, match=field):
             BoundOptions(**{field: 0})
@@ -224,13 +233,13 @@ def test_fold_never_enumerates_copies():
     assert compiled.circuit.n > 10**8
     assert compiled.index.verification_unit_count == 12 * 1024 * 64
 
-    for policy in (
-        VerificationPolicy(Fraction(1, 2), Fraction(1, 2), Fraction(1, 4)),
-        VerificationPolicy(Fraction(1, 10), Fraction(1, 10), Fraction(1, 10**6)),
-        VerificationPolicy(1, Fraction(1, 2), Fraction(1, 10**6)),
+    for policy, eta in (
+        (VerificationPolicy(Fraction(1, 2), Fraction(1, 2)), Fraction(1, 4)),
+        (VerificationPolicy(Fraction(1, 10), Fraction(1, 10)), Fraction(1, 10**6)),
+        (VerificationPolicy(1, Fraction(1, 2)), Fraction(1, 10**6)),
     ):
         started = time.perf_counter()
-        result = bound(compiled, policy)
+        result = bound(compiled, policy, eta)
         assert time.perf_counter() - started < 2.0
         assert result.capped and result.bits == 1024
         assert result.knapsack_bits > 1024 and result.laplace_bits > 1024

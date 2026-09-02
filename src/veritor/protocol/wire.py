@@ -52,8 +52,8 @@ def encode_transcript(transcript: Transcript) -> bytes:
         "header": {
             "claimed_outputs": [item.hex() for item in header.claimed_outputs],
             "compiled_digest": header.compiled_digest,
+            "eta": _pair(header.eta),
             "policy": {
-                "eta": _pair(header.policy.eta),
                 "q": _pair(header.policy.q),
                 "s": _pair(header.policy.s),
             },
@@ -195,6 +195,7 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
         {
             "claimed_outputs",
             "compiled_digest",
+            "eta",
             "policy",
             "public_inputs",
             "session_id",
@@ -202,7 +203,7 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
         },
         "header",
     )
-    policy_fields = _object(header_fields["policy"], {"eta", "q", "s"}, "header.policy")
+    policy_fields = _object(header_fields["policy"], {"q", "s"}, "header.policy")
     compiled_digest = header_fields["compiled_digest"]
     if type(compiled_digest) is not str:
         raise MalformedTranscript("header.compiled_digest must be a string")
@@ -210,12 +211,12 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
         policy = VerificationPolicy(
             _fraction(policy_fields["q"], "header.policy.q", checked),
             _fraction(policy_fields["s"], "header.policy.s", checked),
-            _fraction(policy_fields["eta"], "header.policy.eta", checked),
         )
         header = Header(
             _hex(header_fields["session_id"], "header.session_id"),
             compiled_digest,  # type: ignore[arg-type]
             policy,
+            _fraction(header_fields["eta"], "header.eta", checked),
             _list(header_fields["public_inputs"], _hex, "header.public_inputs"),
             _list(header_fields["claimed_outputs"], _hex, "header.claimed_outputs"),
             _weights(header_fields["weights"], "header.weights"),

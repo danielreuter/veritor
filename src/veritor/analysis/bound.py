@@ -1,7 +1,7 @@
 """``Bound(C, I, theta)``: the output capacity a policy leaves an adversary.
 
 Statement.  Let ``Y_eta`` be the set of outputs of transcripts the verifier
-accepts with probability above ``eta``.  Every such transcript has an error
+accepts with probability above its threshold ``eta``.  Every such transcript has an error
 set ``E`` (verification units holding an incorrect gate) with survival
 ``sigma(E) > eta`` (see :mod:`veritor.analysis.probability`), and if all
 incorrect gates lie inside a union of index nodes ``S_1, ..., S_m`` then at
@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from fractions import Fraction
 
 import numpy as np
 
@@ -49,7 +50,7 @@ from veritor.core.compiled import Compiled
 from veritor.core.description import REPLAY, VERIFICATION
 from veritor.core.identity import Digest
 from veritor.core.index import KindSummary
-from veritor.core.policy import VerificationPolicy
+from veritor.core.policy import ProbabilityInput, VerificationPolicy, exact_fraction
 
 from .probability import budget, saturation_cost, unit_cost
 from .series import (
@@ -97,9 +98,10 @@ class BoundResult:
     ``bits`` is the certified capacity: ``min(knapsack_bits, laplace_bits,
     out_bits)``; ``capped`` says the circuit interface was the minimum.
     ``cost_step`` (nats) and ``buckets`` describe the knapsack grid,
-    ``errors_limit`` the error-count truncation.  The result is always an
-    upper bound; it is exact for the relaxed admissibility described in the
-    module docstring when ``knapsack_bits`` is the minimum.
+    ``errors_limit`` the error-count truncation; ``policy`` and ``eta`` are
+    the ``theta`` and threshold bounded.  The result is always an upper
+    bound; it is exact for the relaxed admissibility described in the module
+    docstring when ``knapsack_bits`` is the minimum.
     """
 
     bits: float
@@ -111,25 +113,30 @@ class BoundResult:
     buckets: int
     errors_limit: int
     policy: VerificationPolicy
+    eta: Fraction
     digest: Digest
 
 
 def bound(
     compiled: Compiled,
     policy: VerificationPolicy,
+    eta: ProbabilityInput,
     options: BoundOptions | None = None,
 ) -> BoundResult:
-    """Fold ``U = Bound(C, I, theta)`` over the kinds of ``compiled.index``."""
+    """Fold ``U = Bound(C, I, theta)`` at threshold ``eta`` over the kinds of the index."""
 
     if not isinstance(compiled, Compiled):
         raise TypeError("bound needs a Compiled artifact")
     if not isinstance(policy, VerificationPolicy):
         raise TypeError("policy must be a VerificationPolicy")
+    eta = exact_fraction(eta, name="eta")
+    if not 0 <= eta < 1:
+        raise ValueError("eta must lie in [0, 1)")
     options = BoundOptions() if options is None else options
     index = compiled.index
     rows = {row.kind: row for row in index.kinds()}
     out_bits = rows[index.root.kind].out_bits
-    fold = _Fold(rows, policy, options)
+    fold = _Fold(rows, policy, eta, options)
     replay = [row for row in rows.values() if row.role == REPLAY]
     knapsack = fold.knapsack(replay)
     laplace = fold.laplace(replay)
@@ -144,6 +151,7 @@ def bound(
         buckets=fold.buckets,
         errors_limit=fold.limit,
         policy=policy,
+        eta=eta,
         digest=compiled.digest,
     )
 
@@ -155,11 +163,12 @@ class _Fold:
         self,
         rows: dict[str, KindSummary],
         policy: VerificationPolicy,
+        eta: Fraction,
         options: BoundOptions,
     ) -> None:
         self.rows = rows
         self.policy = policy
-        self.budget = budget(policy)
+        self.budget = budget(eta)
         first = unit_cost(policy, 1)
         if math.isinf(self.budget) or first == 0.0 or math.isinf(first):
             self.buckets = 1

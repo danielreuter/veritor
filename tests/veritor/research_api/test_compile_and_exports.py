@@ -49,17 +49,17 @@ def test_compile_checks_the_input_count_and_the_advice_bound() -> None:
 
 def test_paper_functions_reject_anything_but_a_compiled() -> None:
     with pytest.raises(TypeError, match="Compiled"):
-        veritor.Bound(object(), VerificationPolicy(1, 1, 0))  # type: ignore[arg-type]
+        veritor.Bound(object(), VerificationPolicy(1, 1), 0)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="Compiled"):
-        veritor.Cost(object(), VerificationPolicy(1, 1, 0))  # type: ignore[arg-type]
+        veritor.Cost(object(), VerificationPolicy(1, 1))  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="Compiled"):
-        make_verification_expectation(object(), VerificationPolicy(1, 1, 0), (), ())  # type: ignore[arg-type]
+        make_verification_expectation(object(), VerificationPolicy(1, 1), (), ())  # type: ignore[arg-type]
 
 
 def test_expectation_generates_mandatory_verifier_seeds() -> None:
     request = DemoGCompileRequest()
     compiled = compile_demo_g(request)
-    policy = VerificationPolicy(1, 1, 0)
+    policy = VerificationPolicy(1, 1)
     inputs, outputs = request.public_inputs, request.expected_outputs
     first = make_verification_expectation(compiled, policy, inputs, outputs)
     second = make_verification_expectation(compiled, policy, inputs, outputs)

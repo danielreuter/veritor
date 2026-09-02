@@ -8,16 +8,18 @@ The protocol has five messages after the public header::
     verifier -> prover     SampleChallenge    (s seed, T)
     prover   -> verifier   EvidenceMessage    (openings for every sampled unit)
 
-The header may bind :class:`Weights`: a per-model commitment ``kappa_W`` over
-the weight inputs ``W`` that the verifier holds, so a run never carries the
-weights themselves.  A :class:`Transcript` is the header plus these five
-messages in order.
+The header binds the client's proposal ``theta`` and the verifier's ``eta``,
+so the whole hash chain does.  It may also bind :class:`Weights`: a per-model
+commitment ``kappa_W`` over the weight inputs ``W`` that the verifier holds,
+so a run never carries the weights themselves.  A :class:`Transcript` is the
+header plus these five messages in order.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from fractions import Fraction
 
 from veritor.core import (
     Digest,
@@ -25,10 +27,11 @@ from veritor.core import (
     JSONValue,
     VerificationPolicy,
     identity_digest,
+    rational_manifest,
     validate_digest,
 )
 
-PROTOCOL_VERSION = "veritor/protocol/v3"
+PROTOCOL_VERSION = "veritor/protocol/v4"
 
 
 class ProtocolError(InvalidArtifact):
@@ -189,13 +192,15 @@ class Weights:
 class Header:
     """Public parameters both parties fix before any message is sent.
 
-    ``public_inputs`` are the encoded inputs outside ``weights`` in address
-    order; with no weights, every input.
+    ``policy`` is the client's ``theta = (q, s)`` and ``eta`` the verifier's
+    acceptance threshold.  ``public_inputs`` are the encoded inputs outside
+    ``weights`` in address order; with no weights, every input.
     """
 
     session_id: bytes
     compiled_digest: Digest
     policy: VerificationPolicy
+    eta: Fraction
     public_inputs: tuple[bytes, ...]
     claimed_outputs: tuple[bytes, ...]
     weights: Weights | None
@@ -209,6 +214,8 @@ class Header:
         )
         if not isinstance(self.policy, VerificationPolicy):
             raise ProtocolError("policy must be a VerificationPolicy")
+        if not isinstance(self.eta, Fraction) or not 0 <= self.eta < 1:
+            raise ProtocolError("eta must be a Fraction in [0, 1)")
         _bytes_tuple(self.public_inputs, "public_inputs")
         _bytes_tuple(self.claimed_outputs, "claimed_outputs")
         if self.weights is not None and not isinstance(self.weights, Weights):
@@ -217,10 +224,11 @@ class Header:
             self,
             "digest",
             raw_digest(
-                "veritor/protocol/header/v3",
+                "veritor/protocol/header/v4",
                 {
                     "claimed_outputs": [item.hex() for item in self.claimed_outputs],
                     "compiled_digest": self.compiled_digest,
+                    "eta": rational_manifest(self.eta),
                     "policy": self.policy.manifest,
                     "protocol_version": PROTOCOL_VERSION,
                     "public_inputs": [item.hex() for item in self.public_inputs],

@@ -100,7 +100,7 @@ class Scenario:
         self.compiled = tiled_compiled(units)
         self.values = TileValues(self.compiled)
         outputs = tuple(self.values[o] for o in self.compiled.circuit.outputs)
-        policy = VerificationPolicy(Fraction(EXPECTED_SELECTED, units), 1, 0)
+        policy = VerificationPolicy(Fraction(EXPECTED_SELECTED, units), 1)
         self.expectation: Expectation = make_expectation(
             self.compiled, policy, INPUT, outputs, **SEEDS
         )

@@ -46,7 +46,7 @@ from veritor.protocol import (
     verify_transcript,
 )
 
-DEFAULT_CONFORMANCE_POLICY = VerificationPolicy(1, 1, 0)
+DEFAULT_CONFORMANCE_POLICY = VerificationPolicy(1, 1)
 
 
 def Compile(
@@ -90,11 +90,12 @@ def Verify(
 def Bound(
     compiled: Compiled,
     policy: VerificationPolicy,
+    eta: ProbabilityInput,
     options: BoundOptions | None = None,
 ) -> BoundResult:
-    """``U = Bound(C, I, theta)``: see :mod:`veritor.analysis.bound`."""
+    """``U = Bound(C, I, theta)`` at the verifier's ``eta``: see :mod:`veritor.analysis.bound`."""
 
-    return bound(_compiled(compiled), policy, options)
+    return bound(_compiled(compiled), policy, eta, options)
 
 
 def Cost(

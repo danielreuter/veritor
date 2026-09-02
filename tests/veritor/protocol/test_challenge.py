@@ -211,7 +211,7 @@ def test_cost_follows_the_selection_not_the_candidates() -> None:
 
 def test_derivations_touch_only_selected_units_at_scale() -> None:
     limits = VerificationLimits(max_units=10**9)
-    policy = VerificationPolicy(Fraction(1, 10**6), Fraction(1, 10**4), 0)
+    policy = VerificationPolicy(Fraction(1, 10**6), Fraction(1, 10**4))
     compiled = stub_compiled(10**9, 1000)  # type: ignore[assignment]
 
     start = time.perf_counter()
@@ -239,7 +239,7 @@ def test_sample_selection_ranks_the_selected_replay_units_blocks() -> None:
     )
     selected_replay = (0, 2, 3)
     candidates = [unit for replay in selected_replay for unit in blocks[replay]]
-    everything = VerificationPolicy(1, 1, 0)
+    everything = VerificationPolicy(1, 1)
 
     def sample(policy: VerificationPolicy, index: int = 0) -> tuple[int, ...]:
         return derive_sample_selection(
@@ -247,7 +247,7 @@ def test_sample_selection_ranks_the_selected_replay_units_blocks() -> None:
         )
 
     assert sample(everything) == tuple(candidates)
-    assert sample(VerificationPolicy(1, 0, 0)) == ()
+    assert sample(VerificationPolicy(1, 0)) == ()
     assert derive_sample_selection(
         seed(0), PHASE, compiled, (), everything, LIMITS  # type: ignore[arg-type]
     ) == ()
@@ -255,7 +255,7 @@ def test_sample_selection_ranks_the_selected_replay_units_blocks() -> None:
     trials = 3000
     hits = dict.fromkeys(candidates, 0)
     for index in range(trials):
-        selected = sample(VerificationPolicy(1, HALF, 0), index)
+        selected = sample(VerificationPolicy(1, HALF), index)
         assert list(selected) == sorted(set(selected))
         for unit in selected:
             hits[unit] += 1  # KeyError if a unit outside the selected blocks appears
@@ -266,7 +266,7 @@ def test_sample_selection_ranks_the_selected_replay_units_blocks() -> None:
 def test_fractional_policy_runs_and_matches_independent_derivation(
     compiled, honest_values, expect
 ) -> None:
-    policy = VerificationPolicy(HALF, Fraction(2, 3), 0)
+    policy = VerificationPolicy(HALF, Fraction(2, 3))
     nontrivial = False
     for index in range(8):
         expectation = expect(policy, q_seed=seed(2 * index), s_seed=seed(2 * index + 1))

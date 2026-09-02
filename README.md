@@ -150,7 +150,7 @@ outputs = tuple(values[a] for a in compiled.circuit.outputs)
 
 expectation = make_verification_expectation(       # the verifier's side of one run
     compiled,
-    VerificationPolicy(q=1, s=1, eta=0),           # the client's proposal
+    VerificationPolicy(q=1, s=1),                  # the client's proposal, theta
     request.public_inputs,
     outputs,
     parameters=VerifierParameters(eta=0),          # eta, U_max, W_max are the verifier's
@@ -162,7 +162,9 @@ assert Verify(encode_transcript(run.transcript), expectation, compiled) == run.r
 
 `ProverSession` and `VerifierSession` are the two state machines behind
 `run_protocol`; `Verify` (`verify_transcript`) re-derives both challenges from
-the verifier's seeds and checks a recorded transcript purely.
+the verifier's seeds and checks a recorded transcript purely. The header binds
+`θ` and the verifier's `η`, so a transcript recorded under another `η` is
+rejected.
 
 ## Bound, Cost, Optimize
 
@@ -180,11 +182,12 @@ transformer index bounds in milliseconds.
 from fractions import Fraction
 from veritor import Bound, Cost, CostParameters, Optimize, PolicyGrid, VerificationPolicy
 
-theta = VerificationPolicy(Fraction(1, 2), Fraction(1, 2), eta=Fraction(1, 100))
-print(Bound(compiled, theta).bits)                      # U in bits
+theta = VerificationPolicy(Fraction(1, 2), Fraction(1, 2))
+eta = Fraction(1, 100)                                  # the verifier's threshold
+print(Bound(compiled, theta, eta).bits)                 # U in bits
 print(Cost(compiled, theta, CostParameters(hash_cost=1, proof_overhead=0)).total)
 
-best = Optimize(compiled, Fraction(1, 100), PolicyGrid.uniform(8), max_bits=20)
+best = Optimize(compiled, eta, PolicyGrid.uniform(8), max_bits=20)
 ~~~
 
 `Cost` is the exact expectation

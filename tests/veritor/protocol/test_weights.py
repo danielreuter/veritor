@@ -31,7 +31,7 @@ from veritor.protocol import (
 )
 from veritor.protocol.domains import public_boundary
 
-CHECK_EVERYTHING = VerificationPolicy(1, 1, 0)
+CHECK_EVERYTHING = VerificationPolicy(1, 1)
 SEEDS = {"session_id": b"weights", "q_seed": b"Q" * 32, "s_seed": b"S" * 32}
 GATE_SET = make_word_gate_set(8)
 

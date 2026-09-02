@@ -23,7 +23,7 @@ from veritor.core import (
 from veritor.core.description import VERIFICATION
 
 from .merkle import merkle_depth
-from .messages import ProtocolError, Reject, VerificationCode
+from .messages import ProtocolError
 
 DEFAULT_MAX_WORK = 1 << 32
 """Default ``W_max``: operations (leaves, path hashes, gate checks) per run."""
@@ -61,20 +61,16 @@ class VerifierParameters:
         object.__setattr__(self, "max_work", max_work)
 
     def policy(self, proposal: VerificationPolicy) -> VerificationPolicy:
-        """The run's policy: the client's ``q, s`` under this verifier's ``eta``.
+        """The run's policy: the client's ``theta = (q, s)``, validated.
 
-        A proposal naming another ``eta`` is rejected: the client chooses how
-        much is sampled, never what the verifier's acceptance means.
+        The client chooses how much is sampled, never what the verifier's
+        acceptance means: ``eta`` is this object's and is bound into the
+        header alongside the proposal.
         """
 
         if not isinstance(proposal, VerificationPolicy):
             raise ProtocolError("the proposal must be a VerificationPolicy")
-        if proposal.eta != self.eta:
-            raise Reject(
-                VerificationCode.POLICY_REJECTED,
-                f"the proposal names eta {proposal.eta}; the verifier's is {self.eta}",
-            )
-        return VerificationPolicy(proposal.q, proposal.s, self.eta)
+        return proposal
 
 
 def positions_per_unit(kind: KindSummary) -> int:

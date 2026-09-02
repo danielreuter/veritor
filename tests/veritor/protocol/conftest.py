@@ -12,7 +12,7 @@ from veritor.protocol import Expectation, VerifierParameters, make_expectation
 Q_SEED = b"Q" * 32
 S_SEED = b"S" * 32
 SESSION_ID = b"tests/veritor/protocol"
-CHECK_EVERYTHING = VerificationPolicy(1, 1, 0)
+CHECK_EVERYTHING = VerificationPolicy(1, 1)
 
 type ExpectationFactory = Callable[..., Expectation]
 

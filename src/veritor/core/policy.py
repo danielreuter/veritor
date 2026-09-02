@@ -63,40 +63,35 @@ def rational_pair(value: Fraction) -> tuple[int, int]:
 
 @dataclass(frozen=True, slots=True, init=False)
 class VerificationPolicy:
-    """Exact two-stage sampling and strict bound-threshold policy.
+    """The client's exact two-stage sampling rates ``theta = (q, s)``.
 
-    ``q`` selects replay units, ``s`` selects verification units within each
-    selected replay unit, and ``eta`` is the strict acceptance-probability
-    threshold used by the associated bound.
+    ``q`` selects replay units and ``s`` selects verification units within
+    each selected replay unit.  The acceptance threshold ``eta`` is not part
+    of the policy: it belongs to the verifier
+    (:class:`veritor.protocol.VerifierParameters`).
     """
 
     q: Fraction
     s: Fraction
-    eta: Fraction
     digest: Digest = field(init=False)
 
     def __init__(
         self,
         q: ProbabilityInput,
         s: ProbabilityInput,
-        eta: ProbabilityInput,
     ) -> None:
         checked_q = exact_fraction(q, name="q")
         checked_s = exact_fraction(s, name="s")
-        checked_eta = exact_fraction(eta, name="eta")
         if not 0 <= checked_q <= 1:
             raise ValueError("q must lie in [0, 1]")
         if not 0 <= checked_s <= 1:
             raise ValueError("s must lie in [0, 1]")
-        if not 0 <= checked_eta < 1:
-            raise ValueError("eta must lie in [0, 1)")
         object.__setattr__(self, "q", checked_q)
         object.__setattr__(self, "s", checked_s)
-        object.__setattr__(self, "eta", checked_eta)
         object.__setattr__(
             self,
             "digest",
-            identity_digest("veritor/verification-policy/v1", self.manifest),
+            identity_digest("veritor/verification-policy/v2", self.manifest),
         )
 
     @property
@@ -112,21 +107,14 @@ class VerificationPolicy:
         return self.s
 
     @property
-    def acceptance_threshold(self) -> Fraction:
-        """Descriptive alias for ``eta``."""
-
-        return self.eta
-
-    @property
     def denominator_bits(self) -> int:
-        """Bits of the largest denominator among ``q``, ``s`` and ``eta``."""
+        """Bits of the larger denominator among ``q`` and ``s``."""
 
-        return max(rate.denominator.bit_length() for rate in (self.q, self.s, self.eta))
+        return max(rate.denominator.bit_length() for rate in (self.q, self.s))
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
         return {
-            "eta": rational_manifest(self.eta),
             "q": rational_manifest(self.q),
             "s": rational_manifest(self.s),
         }

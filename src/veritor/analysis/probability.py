@@ -7,9 +7,9 @@ detection with probability
 
     sigma(E) = prod_r f(l_r),   f(l) = 1 - q + q (1 - s)^l,   l_r = |E ∩ R_r|,
 
-and is *admissible* iff ``sigma(E) > eta``.  Writing ``c(l) = -ln f(l)`` and
-``Lambda = ln(1 / eta)`` this is ``sum_r c(l_r) < Lambda``: a knapsack over
-replay units.  ``c`` is increasing and saturates at ``-ln(1 - q)``, so many
+and is *admissible* iff ``sigma(E) > eta`` for the verifier's threshold
+``eta``.  Writing ``c(l) = -ln f(l)`` and ``Lambda = ln(1 / eta)`` this is
+``sum_r c(l_r) < Lambda``: a knapsack over replay units.  ``c`` is increasing and saturates at ``-ln(1 - q)``, so many
 errors in one replay unit cost little more than a few -- concentration is
 cheap, and that falls out of the formula.
 
@@ -56,10 +56,12 @@ def survival(policy: VerificationPolicy, errors_per_replay_unit: Iterable[int]) 
     return result
 
 
-def admissible(policy: VerificationPolicy, errors_per_replay_unit: Iterable[int]) -> bool:
+def admissible(
+    policy: VerificationPolicy, eta: Fraction, errors_per_replay_unit: Iterable[int]
+) -> bool:
     """Whether ``E`` is accepted with probability strictly above ``eta``."""
 
-    return survival(policy, errors_per_replay_unit) > policy.eta
+    return survival(policy, errors_per_replay_unit) > eta
 
 
 def unit_cost(policy: VerificationPolicy, errors: int) -> float:
@@ -82,12 +84,14 @@ def saturation_cost(policy: VerificationPolicy) -> float:
     return -math.log(1 - policy.q)
 
 
-def budget(policy: VerificationPolicy) -> float:
+def budget(eta: Fraction) -> float:
     """``Lambda = ln(1 / eta)`` in nats, rounded up (``inf`` when ``eta = 0``)."""
 
-    if policy.eta == 0:
+    if not isinstance(eta, Fraction) or not 0 <= eta < 1:
+        raise ValueError("eta must be a Fraction in [0, 1)")
+    if eta == 0:
         return math.inf
-    value = -_ln(policy.eta)
+    value = -_ln(eta)
     return value + value * _REL + _ABS
 
 

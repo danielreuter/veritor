@@ -62,12 +62,12 @@ type Replay = Callable[[int, Values], Values]
 class Expectation:
     """What the verifier expects and the randomness it owns.
 
-    ``policy`` is the client's ``q, s`` under the verifier's own ``eta``, the
-    one in ``parameters``.  ``public_inputs`` are the values of the inputs
-    outside ``weights`` in address order (every input when there are none) and
-    ``claimed_outputs`` the outputs; the verifier encodes them with the
-    circuit's canonical codec.  Both seeds are mandatory so a verifier can
-    never accidentally let the prover choose them.
+    ``policy`` is the client's ``theta = (q, s)``; ``parameters`` hold the
+    verifier's own ``eta``, ``U_max`` and ``W_max``.  ``public_inputs`` are
+    the values of the inputs outside ``weights`` in address order (every
+    input when there are none) and ``claimed_outputs`` the outputs; the
+    verifier encodes them with the circuit's canonical codec.  Both seeds are
+    mandatory so a verifier can never accidentally let the prover choose them.
     """
 
     session_id: bytes
@@ -87,8 +87,8 @@ class Expectation:
                 raise ProtocolError(f"expected {name.replace('_', ' ')} of 32 bytes")
         if not isinstance(self.parameters, VerifierParameters):
             raise ProtocolError("parameters must be VerifierParameters")
-        if self.policy.eta != self.parameters.eta:
-            raise ProtocolError("the policy's eta is not the verifier's")
+        if not isinstance(self.policy, VerificationPolicy):
+            raise ProtocolError("policy must be a VerificationPolicy")
         if self.weights is not None and not isinstance(self.weights, Weights):
             raise ProtocolError("weights must be Weights or None")
 
@@ -107,8 +107,7 @@ def make_expectation(
 ) -> Expectation:
     """Admit the client's proposed ``theta`` under the verifier's parameters.
 
-    Raises :class:`Reject` when the proposal names another ``eta``.  Fresh
-    seeds are drawn unless given.
+    Fresh seeds are drawn unless given.
     """
 
     checked = VerifierParameters() if parameters is None else parameters
@@ -398,6 +397,7 @@ class VerifierSession:
             expectation.session_id,
             compiled.digest,
             expectation.policy,
+            expectation.parameters.eta,
             inputs,
             outputs,
             weights,
@@ -419,16 +419,18 @@ class VerifierSession:
 
         index = self._layout.index
         policy = self._expectation.policy
+        parameters = self._expectation.parameters
         with self._rejecting_limits():
             self._limits.enforce(
-                "max_probability_denominator_bits", policy.denominator_bits
+                "max_probability_denominator_bits",
+                max(policy.denominator_bits, parameters.eta.denominator.bit_length()),
             )
             self._limits.enforce("max_units", index.replay_units.count)
             self._limits.enforce("max_units", index.verification_unit_count)
             for kind in index.kinds():
                 self._limits.enforce("max_positions_per_unit", positions_per_unit(kind))
         work = expected_work(self._layout.compiled, policy, len(self._layout.io))
-        budget = self._expectation.parameters.max_work
+        budget = parameters.max_work
         if work > budget:
             raise self._reject(
                 VerificationCode.WORK_BUDGET_EXCEEDED,

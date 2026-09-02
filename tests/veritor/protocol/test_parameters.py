@@ -35,7 +35,7 @@ from veritor.protocol.merkle import merkle_depth
 
 GATE_SET = make_word_gate_set(8)
 EIGHTH = Fraction(1, 8)
-CHECK_EVERYTHING = VerificationPolicy(1, 1, 0)
+CHECK_EVERYTHING = VerificationPolicy(1, 1)
 SEEDS = {"session_id": b"parameters", "q_seed": b"Q" * 32, "s_seed": b"S" * 32}
 
 
@@ -80,47 +80,53 @@ def test_default_parameters_fix_eta_at_zero() -> None:
         VerifierParameters(0, max_work=-1)
 
 
-def test_a_proposal_naming_another_eta_is_rejected_before_any_session(compiled, expect) -> None:
-    with pytest.raises(Reject) as rejection:
-        expect(VerificationPolicy(1, 1, EIGHTH), parameters=VerifierParameters(0))
+def test_the_proposal_is_theta_alone_and_the_header_binds_the_verifiers_eta(
+    compiled, expect
+) -> None:
+    proposal = VerificationPolicy(1, Fraction(1, 2))
+    admitted = expect(proposal, parameters=VerifierParameters(EIGHTH))
 
-    assert rejection.value.code is VerificationCode.POLICY_REJECTED
-    assert "1/8" in rejection.value.detail
-
-    admitted = expect(
-        VerificationPolicy(1, Fraction(1, 2), EIGHTH), parameters=VerifierParameters(EIGHTH)
-    )
-    assert admitted.policy == VerificationPolicy(1, Fraction(1, 2), EIGHTH)
+    assert admitted.policy == proposal
     assert admitted.parameters.eta == EIGHTH
-
-
-def test_an_expectation_cannot_carry_a_policy_under_another_eta(compiled, expect) -> None:
-    honest = expect()
-
-    with pytest.raises(ProtocolError, match="eta"):
+    header = VerifierSession(admitted, compiled).header
+    assert header.policy == proposal and header.eta == EIGHTH
+    assert header != VerifierSession(expect(proposal), compiled).header
+    with pytest.raises(ProtocolError, match="VerificationPolicy"):
+        VerifierParameters().policy((1, 1))  # type: ignore[arg-type]
+    with pytest.raises(ProtocolError, match="VerificationPolicy"):
         Expectation(
-            honest.session_id,
-            honest.compiled_digest,
-            VerificationPolicy(1, 1, EIGHTH),
-            honest.parameters,
-            honest.public_inputs,
-            honest.claimed_outputs,
-            honest.q_seed,
-            honest.s_seed,
+            admitted.session_id,
+            admitted.compiled_digest,
+            (1, 1),  # type: ignore[arg-type]
+            admitted.parameters,
+            admitted.public_inputs,
+            admitted.claimed_outputs,
+            admitted.q_seed,
+            admitted.s_seed,
         )
 
 
-def test_a_transcript_header_naming_another_eta_is_a_policy_rejection(
+def test_a_transcript_recorded_under_another_eta_is_rejected(
     compiled, honest_values, expect
 ) -> None:
-    recorded = expect(VerificationPolicy(1, 1, EIGHTH), parameters=VerifierParameters(EIGHTH))
+    recorded = expect(parameters=VerifierParameters(EIGHTH))
     run = run_protocol(compiled, recorded, honest_values)
     assert run.transcript is not None
+    assert run.transcript.header.eta == EIGHTH
+    data = encode_transcript(run.transcript)
+    assert verify_transcript(data, recorded, compiled) == run.report
 
-    report = verify_transcript(encode_transcript(run.transcript), expect(), compiled)
+    report = verify_transcript(data, expect(), compiled)
 
-    assert report.code is VerificationCode.POLICY_REJECTED
+    assert report.code is VerificationCode.EXPECTATION_MISMATCH
+    assert "eta 1/8" in report.detail and "0" in report.detail
     assert report.sampled_replay_units == ()
+
+    other = run_protocol(compiled, expect(), honest_values)
+    assert other.transcript is not None
+    assert other.transcript.header.digest != run.transcript.header.digest
+    reverse = verify_transcript(encode_transcript(other.transcript), recorded, compiled)
+    assert reverse.code is VerificationCode.EXPECTATION_MISMATCH and "eta" in reverse.detail
 
 
 # -- denominators are capped ----------------------------------------------------
@@ -129,7 +135,7 @@ def test_a_transcript_header_naming_another_eta_is_a_policy_rejection(
 def test_huge_denominators_are_rejected_at_admission_and_in_derivation(
     compiled, honest_values, expect
 ) -> None:
-    huge = VerificationPolicy(Fraction(1, 1 << 70), 1, 0)
+    huge = VerificationPolicy(Fraction(1, 1 << 70), 1)
 
     run = run_protocol(compiled, expect(huge), honest_values)
 
@@ -137,6 +143,11 @@ def test_huge_denominators_are_rejected_at_admission_and_in_derivation(
     assert "probability_denominator_bits" in run.report.detail
     assert run.transcript is None
     assert run.report.sampled_replay_units == ()
+    # the verifier's own eta is bound into the header and decoded under the same cap
+    huge_eta = run_protocol(
+        compiled, expect(parameters=VerifierParameters(Fraction(1, 1 << 70))), honest_values
+    )
+    assert huge_eta.report.code is VerificationCode.RESOURCE_LIMIT
 
     with pytest.raises(ResourceLimit, match="probability_denominator_bits"):
         bernoulli_subset(b"Q" * 32, b"stage", b"\0" * 32, 5, huge.q, VerificationLimits())
@@ -222,7 +233,7 @@ def test_expected_work_follows_the_documented_formula(compiled, workload) -> Non
     depth = merkle_depth(index.n)
 
     for q, s in ((Fraction(1), Fraction(1)), (Fraction(1, 2), Fraction(1, 3))):
-        work = expected_work(compiled, VerificationPolicy(q, s, 0), io)
+        work = expected_work(compiled, VerificationPolicy(q, s), io)
         assert work == (
             (io + q * s * dots * (size + reads)) * (1 + depth)
             + q * s * dots * size
@@ -230,7 +241,7 @@ def test_expected_work_follows_the_documented_formula(compiled, workload) -> Non
             + q * index.replay_units.count
         )
     assert expected_work(compiled, CHECK_EVERYTHING, io) > expected_work(
-        compiled, VerificationPolicy(Fraction(1, 2), 1, 0), io
+        compiled, VerificationPolicy(Fraction(1, 2), 1), io
     )
 
 
@@ -255,7 +266,7 @@ def test_runs_above_the_work_budget_are_rejected_before_any_commitment(
     assert f"W_max {int(work) - 1}" in short.report.detail
 
     cheaper = expect(
-        VerificationPolicy(Fraction(1, 2), Fraction(1, 2), 0),
+        VerificationPolicy(Fraction(1, 2), Fraction(1, 2)),
         parameters=VerifierParameters(max_work=int(work) - 1),
     )
     assert run_protocol(compiled, cheaper, honest_values).report.accepted

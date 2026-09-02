@@ -18,7 +18,7 @@ from veritor import (
 from veritor.protocol import assignment_replay, encode_transcript
 
 SEEDS = {"session_id": b"research-api/conformance", "q_seed": b"Q" * 32, "s_seed": b"S" * 32}
-CHECK_EVERYTHING = VerificationPolicy(1, 1, 0)
+CHECK_EVERYTHING = VerificationPolicy(1, 1)
 WORKLOADS = {
     "demo-g": (DemoGCompileRequest(), compile_demo_g),
     "matmul": (MatmulCompileRequest(), compile_matmul),

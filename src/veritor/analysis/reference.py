@@ -113,25 +113,26 @@ def cut_bits(compiled: Compiled, errors: ErrorSet) -> int:
     return multiplier.numerator.bit_length() - 1
 
 
-def admissible_sets(compiled: Compiled, policy: VerificationPolicy) -> list[ErrorSet]:
+def admissible_sets(compiled: Compiled, policy: VerificationPolicy, eta: Fraction) -> list[ErrorSet]:
     """Every ``E`` with ``sigma(E) > eta``."""
 
     index = compiled.index
     return [
         errors
         for errors in error_sets(index)
-        if survival(policy, error_counts(index, errors)) > policy.eta
+        if survival(policy, error_counts(index, errors)) > eta
     ]
 
 
 def subset_sum_bits(
     compiled: Compiled,
     policy: VerificationPolicy,
+    eta: Fraction,
     kappa: Callable[[Compiled, ErrorSet], int] = cover_bits,
 ) -> float:
     """``log2 sum_{E admissible} 2**kappa(E)``, exactly."""
 
-    total = sum(1 << kappa(compiled, errors) for errors in admissible_sets(compiled, policy))
+    total = sum(1 << kappa(compiled, errors) for errors in admissible_sets(compiled, policy, eta))
     return math.log2(total)
 
 
@@ -174,6 +175,7 @@ def transcript_outputs(compiled: Compiled, inputs: Sequence[int]) -> dict[Output
 def accepted_outputs(
     outputs: dict[Output, set[ErrorCounts]],
     policy: VerificationPolicy,
+    eta: Fraction,
 ) -> set[Output]:
     """``Y_eta``: the outputs whose best transcript survives with probability above ``eta``."""
 
@@ -184,7 +186,7 @@ def accepted_outputs(
             chance = chances.get(counts)
             if chance is None:
                 chance = chances[counts] = survival(policy, counts)
-            if chance > policy.eta:
+            if chance > eta:
                 accepted.add(output)
                 break
     return accepted

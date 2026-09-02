@@ -43,10 +43,10 @@ class PolicyGrid:
         values = tuple(Fraction(k, steps) for k in range(steps + 1))
         return cls(values, values)
 
-    def policies(self, eta: ProbabilityInput) -> Iterator[VerificationPolicy]:
+    def policies(self) -> Iterator[VerificationPolicy]:
         for q in self.q:
             for s in self.s:
-                yield VerificationPolicy(q, s, eta)
+                yield VerificationPolicy(q, s)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,14 +84,14 @@ def optimize(
     budget = None if max_cost is None else exact_fraction(max_cost, name="max_cost")
     best: tuple[tuple[Fraction | float, Fraction | float], Optimization] | None = None
     evaluated = 0
-    for policy in grid.policies(eta):
+    for policy in grid.policies():
         if accept is not None and not accept(policy):
             continue
         evaluated += 1
         expected = cost(compiled, policy, parameters)
         if budget is not None and expected.total > budget:
             continue
-        result = bound(compiled, policy, bound_options)
+        result = bound(compiled, policy, eta, bound_options)
         if max_bits is not None and result.bits > max_bits:
             continue
         key = (expected.total, result.bits) if budget is None else (result.bits, expected.total)

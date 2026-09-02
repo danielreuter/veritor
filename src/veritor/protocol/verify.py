@@ -36,10 +36,10 @@ def verify_transcript(
         return rejection_report(rejection, None)
     try:
         header = transcript.header
-        if header.policy.eta != expectation.parameters.eta:
+        if header.eta != expectation.parameters.eta:
             raise Reject(
-                VerificationCode.POLICY_REJECTED,
-                f"transcript names eta {header.policy.eta}; the verifier's is "
+                VerificationCode.EXPECTATION_MISMATCH,
+                f"transcript names eta {header.eta}; the verifier's is "
                 f"{expectation.parameters.eta}",
             )
         if header != session.header:

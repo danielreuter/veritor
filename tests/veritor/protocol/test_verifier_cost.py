@@ -27,7 +27,7 @@ from veritor.protocol import (
     make_expectation,
 )
 
-POLICY = VerificationPolicy(1, 1, 0)
+POLICY = VerificationPolicy(1, 1)
 SEEDS = {"q_seed": b"Q" * 32, "s_seed": b"S" * 32, "session_id": b"cost"}
 GATE_SET = make_word_gate_set(8)
 

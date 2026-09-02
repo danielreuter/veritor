@@ -20,10 +20,10 @@ def brute_force(compiled, grid, *, max_bits=None, max_cost=None, accept=None):
     """Every grid point, ranked the way ``optimize`` documents."""
 
     candidates = []
-    for policy in grid.policies(ETA):
+    for policy in grid.policies():
         if accept is not None and not accept(policy):
             continue
-        result, expected = bound(compiled, policy), cost(compiled, policy)
+        result, expected = bound(compiled, policy, ETA), cost(compiled, policy)
         if max_bits is not None and result.bits <= max_bits:
             candidates.append(((expected.total, result.bits), policy))
         if max_cost is not None and expected.total <= max_cost:
@@ -36,8 +36,8 @@ def brute_force(compiled, grid, *, max_bits=None, max_cost=None, accept=None):
 def test_grid_lists_every_combination_and_validates():
     grid = PolicyGrid.uniform(2)
     assert grid.q == grid.s == (Fraction(0), Fraction(1, 2), Fraction(1))
-    assert len(list(grid.policies(ETA))) == 9
-    assert all(policy.eta == ETA for policy in grid.policies(ETA))
+    assert len(list(grid.policies())) == 9
+    assert [(p.q, p.s) for p in grid.policies()] == [(q, s) for q in grid.q for s in grid.s]
     assert PolicyGrid(("1/3",), (1,)).q == (Fraction(1, 3),)
     with pytest.raises(ValueError, match="q must list"):
         PolicyGrid((), (1,))
@@ -58,7 +58,8 @@ def test_cheapest_policy_under_a_capacity_limit(make_compiled, sizes):
     assert isinstance(chosen, Optimization)
     assert chosen.policy == brute_force(compiled, grid, max_bits=limit)
     assert chosen.bound.bits <= limit
-    assert chosen.bound == bound(compiled, chosen.policy)
+    assert chosen.bound == bound(compiled, chosen.policy, ETA)
+    assert chosen.bound.eta == ETA
     assert chosen.cost == cost(compiled, chosen.policy)
     assert chosen.evaluated == 25
     # the dual at the chosen cost cannot beat the chosen bound
@@ -74,7 +75,8 @@ def test_full_checking_is_the_only_way_to_zero_capacity(make_compiled):
     chosen = optimize(compiled, 0, PolicyGrid.uniform(2), max_bits=0.5)
 
     assert isinstance(chosen, Optimization)
-    assert chosen.policy == VerificationPolicy(1, 1, 0)
+    assert chosen.policy == VerificationPolicy(1, 1)
+    assert chosen.bound.eta == 0
     assert optimize(compiled, ETA, PolicyGrid.uniform(2), max_bits=-1) is None
     assert optimize(compiled, ETA, PolicyGrid.uniform(2), max_cost=0) is None
 

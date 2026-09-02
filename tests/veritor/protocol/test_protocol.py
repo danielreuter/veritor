@@ -72,7 +72,7 @@ def test_forged_interior_survives_when_nothing_is_sampled(
     compiled, honest_values, expect
 ) -> None:
     forged = forge_interior(compiled, honest_values)
-    expectation = expect(VerificationPolicy(1, 0, 0))
+    expectation = expect(VerificationPolicy(1, 0))
 
     run = run_protocol(compiled, expectation, forged, replay=assignment_replay(forged))
 
