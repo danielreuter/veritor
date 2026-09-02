@@ -16,16 +16,14 @@ through the index, never a scan.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 
 from veritor.core import (
     Circuit,
     Compiled,
-    Digest,
     Index,
     IndexedDomain,
     RangeIndexedDomain,
-    identity_digest,
 )
 
 from .merkle import CommitmentDomain, MerkleTree
@@ -43,67 +41,12 @@ def leaf_schema(circuit: Circuit, address: int) -> str:
     return f"u{circuit[address].width}"
 
 
-class PublicBoundary:
-    """``∂ \\ W``: the boundary without the weight inputs, lazily.
-
-    ``W`` is a range of inputs and the inputs are the lowest boundary ranks,
-    so a rank simply skips over ``W``.
-    """
-
-    __slots__ = ("_boundary", "_start", "_stop", "count", "identity_digest")
-
-    def __init__(self, boundary: IndexedDomain[int], start: int, stop: int) -> None:
-        self._boundary = boundary
-        self._start = start
-        self._stop = stop
-        self.count = boundary.count - (stop - start)
-        self.identity_digest: Digest = identity_digest(
-            "veritor/indexed-domain/public-boundary/v1",
-            {"boundary": boundary.identity_digest, "start": start, "stop": stop},
-        )
-
-    def contains(self, item: int) -> bool:
-        if type(item) is int and self._start <= item < self._stop:
-            return False
-        return self._boundary.contains(item)
-
-    def __contains__(self, item: object) -> bool:
-        return self.contains(item)  # type: ignore[arg-type]
-
-    def rank(self, item: int) -> int:
-        if not self.contains(item):
-            raise KeyError(item)
-        rank = self._boundary.rank(item)
-        return rank if item < self._start else rank - (self._stop - self._start)
-
-    def unrank(self, rank: int) -> int:
-        if type(rank) is not int:
-            raise TypeError("rank must be an integer")
-        if not 0 <= rank < self.count:
-            raise IndexError(f"rank {rank} is outside domain of size {self.count}")
-        return self._boundary.unrank(
-            rank if rank < self._start else rank + (self._stop - self._start)
-        )
-
-    def __iter__(self) -> Iterator[int]:
-        for rank in range(self.count):
-            yield self.unrank(rank)
-
-    def __len__(self) -> int:
-        return self.count
-
-
 def public_boundary(index: Index, weights: Weights | None) -> IndexedDomain[int]:
-    """``∂`` without the weights; ``∂`` itself when there are none."""
+    """``∂ \\ W`` straight from the index; ``∂`` itself when there are no weights."""
 
-    if weights is None:
-        return index.boundary()
-    if weights.stop > index.input_count:
-        raise ProtocolError(
-            f"weights end at address {weights.stop} but the circuit has "
-            f"{index.input_count} inputs"
-        )
-    return PublicBoundary(index.boundary(), weights.start, weights.stop)
+    return index.boundary(
+        exclude=None if weights is None else range(weights.start, weights.stop)
+    )
 
 
 def weight_domain(start: int, stop: int) -> CommitmentDomain:

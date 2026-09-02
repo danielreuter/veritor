@@ -108,6 +108,39 @@ def test_boundary_and_interiors_match_the_reference_derivation(helpers):
     assert len(boundary) == boundary.count
 
 
+def test_boundary_excludes_a_range_of_inputs_lazily(helpers):
+    """``boundary(exclude=W)`` is ``∂ \\ W`` for any sub-range ``W`` of the inputs."""
+
+    index, lazy, _flat = build(helpers, helpers.matmul_payload(4, 3, 2))
+    inputs = index.input_count
+    assert inputs == 20  # 8 activations, then the 12 weights at [8, 20)
+    full = list(iter_domain(index.boundary()))
+
+    for exclude in (range(8, 20), range(8), range(20), range(5, 11), range(3, 3), range(0)):
+        boundary = index.boundary(exclude=exclude)
+        expected = [address for address in full if address not in exclude]
+
+        assert boundary.count == len(boundary) == len(expected) == len(full) - len(exclude)
+        assert list(iter_domain(boundary)) == expected
+        assert [boundary.rank(address) for address in expected] == list(range(len(expected)))
+        assert [address for address in range(lazy.n) if boundary.contains(address)] == expected
+        assert all(address not in boundary for address in exclude)
+        assert all(output in boundary for output in lazy.outputs)
+        for address in exclude:
+            with pytest.raises(KeyError):
+                boundary.rank(address)
+        with pytest.raises(IndexError):
+            boundary.unrank(boundary.count)
+        with pytest.raises(IndexError):
+            boundary.unrank(-1)
+        same_set = len(exclude) == 0
+        assert (boundary.identity_digest == index.boundary().identity_digest) == same_set
+
+    for bad in (range(inputs + 1), range(-1, 3), range(0, 8, 2), range(9, 8), (8, 20), [8, 20]):
+        with pytest.raises(InvalidArtifact, match="sub-range of the inputs range\\(0, 20\\)"):
+            index.boundary(exclude=bad)  # type: ignore[arg-type]
+
+
 def test_kinds_table_summarizes_each_definition_once(helpers):
     k, cols, rows = 4, 3, 2
     index, _, _ = build(helpers, helpers.matmul_payload(k, cols, rows))

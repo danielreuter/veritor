@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from .description import REPLAY, VERIFICATION, CallStep, Definition, Frame, GateStep
 from .errors import InvalidArtifact
 from .identity import Digest, identity_digest
-from .indexed import IndexedDomain, IntervalDifferenceDomain
+from .indexed import IndexedDomain, IntervalDifferenceDomain, IntervalDomain
 from .limits import CompilationLimits
 
 
@@ -263,14 +263,28 @@ class Index:
         )
         return IndexNode(frame)
 
-    def boundary(self) -> IndexedDomain[int]:
+    def boundary(self, exclude: range | None = None) -> IndexedDomain[int]:
         """``inputs ∪ ⋃_r Out(R_r)``: the addresses the boundary commitment covers.
 
-        The circuit outputs are always inside this set: every output resolves
-        through the declared interface of the replay unit that owns it.
+        ``exclude`` drops a sub-range of the inputs ``range(0, input_count)``
+        (the weights ``W``, committed under their own root), giving ``∂ \\ W``
+        at no cost per address.  The circuit outputs are always inside this
+        set: every output resolves through the declared interface of the
+        replay unit that owns it.
         """
 
-        return _Boundary(self)
+        inputs = self.input_count
+        if exclude is None:
+            exclude = range(0)
+        if (
+            type(exclude) is not range
+            or exclude.step != 1
+            or not 0 <= exclude.start <= exclude.stop <= inputs
+        ):
+            raise InvalidArtifact(
+                f"exclude must be a sub-range of the inputs range(0, {inputs})"
+            )
+        return _Boundary(self, exclude)
 
     def interior(self, replay_unit: int) -> IntervalDifferenceDomain:
         """``R_r`` minus the boundary."""
@@ -334,22 +348,29 @@ class Index:
 
 
 class _Boundary:
-    """Lazy ``inputs ∪ ⋃_r Out(R_r)`` with ``O(depth)`` rank and unrank.
+    """Lazy ``(inputs \\ W) ∪ ⋃_r Out(R_r)`` with ``O(depth)`` rank and unrank.
 
     Inputs occupy ``[0, input_count)`` and every unit's ``Out`` lies inside its
-    interval, so the boundary in address order is the inputs followed by the
-    units' declared outputs unit by unit; ``out_before`` on the frames gives
-    the prefix sums.
+    interval, so the boundary in address order is the kept inputs followed by
+    the units' declared outputs unit by unit; ``out_before`` on the frames
+    gives the prefix sums.  The kept inputs are the at most two runs on
+    either side of the excluded range, an :class:`IntervalDomain`.
     """
 
-    __slots__ = ("_index", "count", "identity_digest")
+    __slots__ = ("_index", "_inputs", "count", "identity_digest")
 
-    def __init__(self, index: Index) -> None:
+    def __init__(self, index: Index, exclude: range) -> None:
         self._index = index
         frame = index._frame
-        self.count = frame.definition.input_count + frame.definition.out_total
+        inputs = frame.definition.input_count
+        self._inputs = IntervalDomain(((0, exclude.start), (exclude.stop, inputs)))
+        self.count = self._inputs.count + frame.definition.out_total
         self.identity_digest = identity_digest(
-            "veritor/indexed-domain/boundary/v1", {"index": index.digest}
+            "veritor/indexed-domain/boundary/v2",
+            {
+                "index": index.digest,
+                "inputs": [list(run) for run in self._inputs.intervals],
+            },
         )
 
     def _locate(self, address: int) -> tuple[Frame, int] | None:
@@ -366,7 +387,9 @@ class _Boundary:
     def contains(self, item: int) -> bool:
         if type(item) is not int or not 0 <= item < self._index.n:
             return False
-        return item < self._index.input_count or self._locate(item) is not None
+        if item < self._index.input_count:
+            return self._inputs.contains(item)
+        return self._locate(item) is not None
 
     def __contains__(self, item: object) -> bool:
         return self.contains(item)  # type: ignore[arg-type]
@@ -374,23 +397,22 @@ class _Boundary:
     def rank(self, item: int) -> int:
         if type(item) is not int or not 0 <= item < self._index.n:
             raise KeyError(item)
-        inputs = self._index.input_count
-        if item < inputs:
-            return item
+        if item < self._index.input_count:
+            return self._inputs.rank(item)
         located = self._locate(item)
         if located is None:
             raise KeyError(item)
         frame, position = located
-        return inputs + frame.out_before + position
+        return self._inputs.count + frame.out_before + position
 
     def unrank(self, rank: int) -> int:
         if type(rank) is not int:
             raise TypeError("rank must be an integer")
         if not 0 <= rank < self.count:
             raise IndexError(f"rank {rank} is outside domain of size {self.count}")
-        inputs = self._index.input_count
+        inputs = self._inputs.count
         if rank < inputs:
-            return rank
+            return int(self._inputs.unrank(rank))
         frame, offset = _frame_by_rank(
             self._index._frame,
             rank - inputs,
