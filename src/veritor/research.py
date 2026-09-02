@@ -97,7 +97,8 @@ def Compile(
         raise CompileError(str(error)) from error
     try:
         produced = G(x, a)
-    except Exception as error:
+    except (Exception, SystemExit) as error:
+        # SystemExit too: a constructor may not take the verifier down with it.
         raise CompileError(f"the constructor failed: {error}") from error
     if type(produced) is not tuple or len(produced) != 2:
         raise CompileError("a constructor returns (description, inputs)")

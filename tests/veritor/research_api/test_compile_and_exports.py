@@ -93,6 +93,11 @@ class FailingG:
         raise RuntimeError("boom")
 
 
+class ExitingG(FailingG):
+    def __call__(self, x: object, a: bytes) -> tuple[bytes, tuple[int, ...]]:
+        raise SystemExit(3)
+
+
 class MalformedG(FailingG):
     def __init__(self, produced: object) -> None:
         self.produced = produced
@@ -112,6 +117,9 @@ def test_compile_wraps_a_failing_constructor_into_a_rejection() -> None:
     assert isinstance(failure.value.__cause__, TracerError)
     with pytest.raises(CompileError, match="constructor failed: boom"):
         Compile(FailingG(), request.workload, b"", GATE_SET)
+    # a constructor calling sys.exit() is a rejection, not the verifier's exit
+    with pytest.raises(CompileError, match="constructor failed: 3"):
+        Compile(ExitingG(), request.workload, b"", GATE_SET)
     with pytest.raises(CompileError, match=r"returns \(description, inputs\)"):
         Compile(MalformedG(b"just bytes"), None, b"", GATE_SET)
     with pytest.raises(CompileError, match="description must be bytes"):
