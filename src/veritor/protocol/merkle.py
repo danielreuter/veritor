@@ -17,7 +17,7 @@ from veritor.core import IndexedDomain, Position, VerificationLimits
 
 from .messages import Commitment, Opening, ProtocolError
 
-_FRAME = b"veritor/protocol/merkle/frame/v2\0"
+_FRAME = b"veritor/protocol/merkle/frame/v3\0"
 _LEAF = b"leaf"
 _PAD = b"pad"
 _NODE = b"node"
@@ -47,29 +47,31 @@ def merkle_depth(count: int) -> int:
 
 @dataclass(frozen=True, slots=True)
 class CommitmentDomain:
-    """Everything a leaf hash is bound to besides the value itself."""
+    """Everything a leaf hash is bound to besides the value itself.
 
-    header_digest: bytes
-    phase_digest: bytes
+    ``binding`` is the 32-byte digest of what the commitment may not outlive:
+    the header for the boundary, the replay phase for an interior, a fixed
+    tag for a per-model weight root.  ``owner`` is ``-2`` for the weights,
+    ``-1`` for the boundary, else a replay unit index.
+    """
+
+    binding: bytes
     owner: int
     positions: IndexedDomain[Position]
     domain_id: bytes = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        for name in ("header_digest", "phase_digest"):
-            value = getattr(self, name)
-            if type(value) is not bytes or len(value) != 32:
-                raise ProtocolError(f"{name} must be 32 bytes")
-        if type(self.owner) is not int or self.owner < -1:
-            raise ProtocolError("owner must be -1 (boundary) or a replay unit index")
+        if type(self.binding) is not bytes or len(self.binding) != 32:
+            raise ProtocolError("binding must be 32 bytes")
+        if type(self.owner) is not int or self.owner < -2:
+            raise ProtocolError("owner must be -2 (weights), -1 (boundary) or a replay unit")
         object.__setattr__(
             self,
             "domain_id",
             _hash(
                 b"domain",
-                self.header_digest,
-                self.phase_digest,
-                _uint(self.owner + 1),
+                self.binding,
+                _uint(self.owner + 2),
                 bytes.fromhex(self.positions.identity_digest),
                 _uint(self.positions.count),
             ),
@@ -143,6 +145,10 @@ class MerkleTree:
         self._domain = domain
         self._values = tuple(ordered)
         self._levels = tuple(levels)
+
+    @property
+    def domain(self) -> CommitmentDomain:
+        return self._domain
 
     @property
     def commitment(self) -> Commitment:

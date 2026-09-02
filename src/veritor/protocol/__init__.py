@@ -7,6 +7,14 @@ trusted :class:`~veritor.core.Compiled` ``(C, I)`` and a verifier-owned
 """
 
 from .challenge import derive_replay_selection, derive_sample_selection, uniform_below
+from .domains import (
+    BOUNDARY_OWNER,
+    WEIGHT_OWNER,
+    boundary_domain,
+    commit_weights,
+    interior_domain,
+    weight_domain,
+)
 from .merkle import CommitmentDomain, MerkleTree, validate_commitment, verify_opening
 from .messages import (
     PROTOCOL_VERSION,
@@ -23,9 +31,9 @@ from .messages import (
     Transcript,
     VerificationCode,
     VerificationReport,
+    Weights,
 )
 from .parameters import VerifierParameters, expected_work
-from .phases import boundary_domain, interior_domain
 from .session import (
     Expectation,
     ProtocolRun,
@@ -47,7 +55,9 @@ from .wire import (
 )
 
 __all__ = [
+    "BOUNDARY_OWNER",
     "PROTOCOL_VERSION",
+    "WEIGHT_OWNER",
     "BoundaryMessage",
     "Commitment",
     "CommitmentDomain",
@@ -72,8 +82,10 @@ __all__ = [
     "VerificationReport",
     "VerifierParameters",
     "VerifierSession",
+    "Weights",
     "assignment_replay",
     "boundary_domain",
+    "commit_weights",
     "decode_transcript",
     "derive_replay_selection",
     "derive_sample_selection",
@@ -87,4 +99,5 @@ __all__ = [
     "validate_commitment",
     "verify_opening",
     "verify_transcript",
+    "weight_domain",
 ]

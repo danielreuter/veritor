@@ -2,13 +2,16 @@
 
 The protocol has five messages after the public header::
 
-    prover   -> verifier   BoundaryMessage    (commit beta, open public I/O)
+    prover   -> verifier   BoundaryMessage    (commit beta over ∂ \\ W, open public I/O)
     verifier -> prover     ReplayChallenge    (q seed, J)
     prover   -> verifier   InteriorMessage    (commit alpha_r for r in J)
     verifier -> prover     SampleChallenge    (s seed, T)
     prover   -> verifier   EvidenceMessage    (openings for every sampled unit)
 
-A :class:`Transcript` is the header plus these five messages in order.
+The header may bind :class:`Weights`: a per-model commitment ``kappa_W`` over
+the weight inputs ``W`` that the verifier holds, so a run never carries the
+weights themselves.  A :class:`Transcript` is the header plus these five
+messages in order.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from veritor.core import (
     validate_digest,
 )
 
-PROTOCOL_VERSION = "veritor/protocol/v2"
+PROTOCOL_VERSION = "veritor/protocol/v3"
 
 
 class ProtocolError(InvalidArtifact):
@@ -148,14 +151,54 @@ class Opening:
 
 
 @dataclass(frozen=True, slots=True)
+class Weights:
+    """The weight inputs ``W = [start, stop)`` and their root ``kappa_W``.
+
+    Committed once per model, not per run: the verifier holds this and binds
+    it into the header, and weight values are opened only where sampled.
+    """
+
+    start: int
+    stop: int
+    root: bytes
+
+    def __post_init__(self) -> None:
+        if type(self.start) is not int or type(self.stop) is not int:
+            raise ProtocolError("weight bounds must be integers")
+        if not 0 <= self.start <= self.stop:
+            raise ProtocolError("weights must be a range of nonnegative addresses")
+        _bytes32(self.root, "weight root")
+
+    @property
+    def count(self) -> int:
+        return self.stop - self.start
+
+    @property
+    def commitment(self) -> Commitment:
+        return Commitment(self.root, self.count)
+
+    def __contains__(self, address: object) -> bool:
+        return type(address) is int and self.start <= address < self.stop
+
+    @property
+    def manifest(self) -> dict[str, JSONValue]:
+        return {"root": self.root.hex(), "start": self.start, "stop": self.stop}
+
+
+@dataclass(frozen=True, slots=True)
 class Header:
-    """Public parameters both parties fix before any message is sent."""
+    """Public parameters both parties fix before any message is sent.
+
+    ``public_inputs`` are the encoded inputs outside ``weights`` in address
+    order; with no weights, every input.
+    """
 
     session_id: bytes
     compiled_digest: Digest
     policy: VerificationPolicy
     public_inputs: tuple[bytes, ...]
     claimed_outputs: tuple[bytes, ...]
+    weights: Weights | None
     digest: bytes = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -168,11 +211,13 @@ class Header:
             raise ProtocolError("policy must be a VerificationPolicy")
         _bytes_tuple(self.public_inputs, "public_inputs")
         _bytes_tuple(self.claimed_outputs, "claimed_outputs")
+        if self.weights is not None and not isinstance(self.weights, Weights):
+            raise ProtocolError("weights must be Weights or None")
         object.__setattr__(
             self,
             "digest",
             raw_digest(
-                "veritor/protocol/header/v2",
+                "veritor/protocol/header/v3",
                 {
                     "claimed_outputs": [item.hex() for item in self.claimed_outputs],
                     "compiled_digest": self.compiled_digest,
@@ -180,6 +225,7 @@ class Header:
                     "protocol_version": PROTOCOL_VERSION,
                     "public_inputs": [item.hex() for item in self.public_inputs],
                     "session_id": self.session_id.hex(),
+                    "weights": None if self.weights is None else self.weights.manifest,
                 },
             ),
         )

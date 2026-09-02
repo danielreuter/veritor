@@ -29,6 +29,7 @@ from .messages import (
     ReplayChallenge,
     SampleChallenge,
     Transcript,
+    Weights,
 )
 
 
@@ -58,6 +59,7 @@ def encode_transcript(transcript: Transcript) -> bytes:
             },
             "public_inputs": [item.hex() for item in header.public_inputs],
             "session_id": header.session_id.hex(),
+            "weights": None if header.weights is None else header.weights.manifest,
         },
         "boundary": transcript.boundary.manifest,
         "replay_challenge": transcript.replay_challenge.manifest,
@@ -123,6 +125,17 @@ def _openings(value: object, where: str) -> tuple[Opening, ...]:
     return _list(value, _opening, where)
 
 
+def _weights(value: object, where: str) -> Weights | None:
+    if value is None:
+        return None
+    fields = _object(value, {"root", "start", "stop"}, where)
+    return Weights(
+        _int(fields["start"], f"{where}.start"),
+        _int(fields["stop"], f"{where}.stop"),
+        _hex(fields["root"], f"{where}.root"),
+    )
+
+
 def _challenge[T](
     factory: Callable[[bytes, tuple[int, ...]], T], value: object, where: str
 ) -> T:
@@ -179,7 +192,14 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
         raise MalformedTranscript("unsupported transcript version")
     header_fields = _object(
         top["header"],
-        {"claimed_outputs", "compiled_digest", "policy", "public_inputs", "session_id"},
+        {
+            "claimed_outputs",
+            "compiled_digest",
+            "policy",
+            "public_inputs",
+            "session_id",
+            "weights",
+        },
         "header",
     )
     policy_fields = _object(header_fields["policy"], {"eta", "q", "s"}, "header.policy")
@@ -198,6 +218,7 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
             policy,
             _list(header_fields["public_inputs"], _hex, "header.public_inputs"),
             _list(header_fields["claimed_outputs"], _hex, "header.claimed_outputs"),
+            _weights(header_fields["weights"], "header.weights"),
         )
         boundary_fields = _object(top["boundary"], {"commitment", "io_openings"}, "boundary")
         transcript = Transcript(

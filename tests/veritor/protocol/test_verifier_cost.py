@@ -20,7 +20,12 @@ from veritor.core import (
     VerificationPolicy,
     make_word_gate_set,
 )
-from veritor.protocol import ProverSession, VerifierSession, make_expectation
+from veritor.protocol import (
+    ProverSession,
+    VerifierSession,
+    commit_weights,
+    make_expectation,
+)
 
 POLICY = VerificationPolicy(1, 1, 0)
 SEEDS = {"q_seed": b"Q" * 32, "s_seed": b"S" * 32, "session_id": b"cost"}
@@ -70,19 +75,32 @@ def fastest(action: Callable[[], object], repetitions: int = 20) -> float:
     return best
 
 
+@pytest.mark.parametrize("weights_committed", [False, True])
 @pytest.mark.parametrize("n", [16, 128])
-def test_verifier_setup_and_boundary_phase_never_touch_interior_gates(monkeypatch, n) -> None:
+def test_verifier_setup_and_boundary_phase_never_touch_interior_gates(
+    monkeypatch, n, weights_committed
+) -> None:
     workload = matmul_workload(n)
     compiled = compile_matmul(workload)
     circuit = compiled.circuit
     outputs = expected_matmul_outputs(workload)
-    expectation = make_expectation(compiled, POLICY, workload.public_inputs, outputs, **SEEDS)
     boundary_values: dict[int, object] = dict(enumerate(workload.public_inputs))
     boundary_values.update(zip(circuit.outputs, outputs, strict=True))
+    weight_count = n * n
+    if weights_committed:
+        weights, tree = commit_weights(compiled, 0, weight_count, boundary_values)
+        public_inputs = workload.public_inputs[weight_count:]
+        io = set(range(weight_count, circuit.input_count)) | set(circuit.outputs)
+    else:
+        weights, tree = None, None
+        public_inputs = workload.public_inputs
+        io = set(circuit.inputs) | set(circuit.outputs)
+    expectation = make_expectation(
+        compiled, POLICY, public_inputs, outputs, weights=weights, **SEEDS
+    )
     header = VerifierSession(expectation, compiled).header
-    boundary = ProverSession(compiled, header, boundary_values).boundary()
+    boundary = ProverSession(compiled, header, boundary_values, weight_tree=tree).boundary()
 
-    io = set(circuit.inputs) | set(circuit.outputs)
     looked_up: list[int] = []
     original_getitem = DescriptionCircuit.__getitem__
 
@@ -102,6 +120,9 @@ def test_verifier_setup_and_boundary_phase_never_touch_interior_gates(monkeypatc
     assert set(looked_up) <= io
     assert len(looked_up) <= 2 * len(io)
     assert circuit.n - len(io) > 4 * len(io)
+    if weights_committed:
+        assert set(looked_up).isdisjoint(range(weight_count))
+        assert len(io) < weight_count
 
 
 def test_verifier_construction_time_is_flat_in_gate_count() -> None:

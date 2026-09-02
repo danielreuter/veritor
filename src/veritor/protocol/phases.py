@@ -7,9 +7,6 @@ prefix of the interaction.
 
 from __future__ import annotations
 
-from veritor.core import Compiled
-
-from .merkle import CommitmentDomain
 from .messages import (
     BoundaryMessage,
     Header,
@@ -18,8 +15,6 @@ from .messages import (
     SampleChallenge,
     raw_digest,
 )
-
-BOUNDARY_OWNER = -1
 
 
 def boundary_phase(header: Header, boundary: BoundaryMessage) -> bytes:
@@ -47,28 +42,4 @@ def sample_phase(interior_phase_digest: bytes, challenge: SampleChallenge) -> by
     return raw_digest(
         "veritor/protocol/phase/sample/v2",
         {"challenge": challenge.manifest, "previous": interior_phase_digest.hex()},
-    )
-
-
-def boundary_domain(header: Header, compiled: Compiled) -> CommitmentDomain:
-    """The boundary commitment covers ``∂`` and is bound to the header alone."""
-
-    return CommitmentDomain(
-        header.digest, header.digest, BOUNDARY_OWNER, compiled.index.boundary()
-    )
-
-
-def interior_domain(
-    header: Header,
-    replay_phase_digest: bytes,
-    compiled: Compiled,
-    replay_unit: int,
-) -> CommitmentDomain:
-    """The interior commitment of ``r`` covers ``Int(r)`` and is bound to ``J``."""
-
-    return CommitmentDomain(
-        header.digest,
-        replay_phase_digest,
-        replay_unit,
-        compiled.index.interior(replay_unit),
     )

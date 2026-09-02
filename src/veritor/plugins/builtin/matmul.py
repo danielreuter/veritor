@@ -70,7 +70,22 @@ class MatmulCompileRequest:
 
     @property
     def public_inputs(self) -> tuple[int, ...]:
+        """Every input value: the weights first, then the activations."""
+
         return self.workload.public_inputs
+
+    @property
+    def weight_addresses(self) -> range:
+        """The input addresses holding the shared weights, row-major."""
+
+        rows, columns = self.workload.weight_shape
+        return range(rows * columns)
+
+    @property
+    def activation_inputs(self) -> tuple[int, ...]:
+        """The input values outside :attr:`weight_addresses`, in address order."""
+
+        return self.workload.public_inputs[self.weight_addresses.stop :]
 
     @property
     def expected_outputs(self) -> tuple[int, ...]:

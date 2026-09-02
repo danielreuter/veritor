@@ -23,6 +23,16 @@ from veritor.core import (
 )
 
 from .challenge import derive_replay_selection, derive_sample_selection
+from .domains import (
+    BOUNDARY_OWNER,
+    WEIGHT_OWNER,
+    boundary_domain,
+    commit_weights,
+    interior_domain,
+    leaf_schema,
+    public_boundary,
+    weight_domain,
+)
 from .merkle import CommitmentDomain, MerkleTree, validate_commitment, verify_opening
 from .messages import (
     BoundaryMessage,
@@ -38,17 +48,10 @@ from .messages import (
     Transcript,
     VerificationCode,
     VerificationReport,
+    Weights,
 )
 from .parameters import VerifierParameters, expected_work, positions_per_unit
-from .phases import (
-    BOUNDARY_OWNER,
-    boundary_domain,
-    boundary_phase,
-    interior_domain,
-    interior_phase,
-    replay_phase,
-    sample_phase,
-)
+from .phases import boundary_phase, interior_phase, replay_phase, sample_phase
 
 type Values = Mapping[int, object]
 type Replay = Callable[[int, Values], Values]
@@ -60,10 +63,11 @@ class Expectation:
     """What the verifier expects and the randomness it owns.
 
     ``policy`` is the client's ``q, s`` under the verifier's own ``eta``, the
-    one in ``parameters``.  ``public_inputs`` and ``claimed_outputs`` are plain
-    values; the verifier encodes them with the circuit's canonical codec.  Both
-    seeds are mandatory so a verifier can never accidentally let the prover
-    choose them.
+    one in ``parameters``.  ``public_inputs`` are the values of the inputs
+    outside ``weights`` in address order (every input when there are none) and
+    ``claimed_outputs`` the outputs; the verifier encodes them with the
+    circuit's canonical codec.  Both seeds are mandatory so a verifier can
+    never accidentally let the prover choose them.
     """
 
     session_id: bytes
@@ -74,6 +78,7 @@ class Expectation:
     claimed_outputs: tuple[object, ...]
     q_seed: bytes
     s_seed: bytes
+    weights: Weights | None = None
 
     def __post_init__(self) -> None:
         for name in ("q_seed", "s_seed"):
@@ -84,6 +89,8 @@ class Expectation:
             raise ProtocolError("parameters must be VerifierParameters")
         if self.policy.eta != self.parameters.eta:
             raise ProtocolError("the policy's eta is not the verifier's")
+        if self.weights is not None and not isinstance(self.weights, Weights):
+            raise ProtocolError("weights must be Weights or None")
 
 
 def make_expectation(
@@ -93,6 +100,7 @@ def make_expectation(
     claimed_outputs: Iterable[object],
     *,
     parameters: VerifierParameters | None = None,
+    weights: Weights | None = None,
     session_id: bytes | None = None,
     q_seed: bytes | None = None,
     s_seed: bytes | None = None,
@@ -113,6 +121,7 @@ def make_expectation(
         claimed_outputs=tuple(claimed_outputs),
         q_seed=token_bytes(32) if q_seed is None else q_seed,
         s_seed=token_bytes(32) if s_seed is None else s_seed,
+        weights=weights,
     )
 
 
@@ -130,30 +139,39 @@ def rejection_report(rejection: Reject, session: VerifierSession | None) -> Veri
 
 
 class _Layout:
-    """Address-level lookups shared by both sessions; all ``O(depth)``."""
+    """Address-level lookups shared by both sessions; all ``O(depth)``.
 
-    __slots__ = ("boundary", "circuit", "compiled", "index", "io")
+    Construction is ``O(|public I/O|)``: the non-weight inputs and the outputs
+    are the only addresses either party touches wholesale.
+    """
 
-    def __init__(self, compiled: Compiled) -> None:
+    __slots__ = ("boundary", "circuit", "compiled", "index", "io", "public_inputs", "weights")
+
+    def __init__(self, compiled: Compiled, weights: Weights | None) -> None:
         if not isinstance(compiled, Compiled):
             raise ProtocolError("sessions require a Compiled circuit")
         self.compiled = compiled
         self.circuit = compiled.circuit
         self.index = compiled.index
-        self.boundary = compiled.index.boundary()
-        addresses = set(self.circuit.inputs)
+        self.weights = weights
+        self.boundary = public_boundary(self.index, weights)
+        inputs = self.index.input_count
+        self.public_inputs: tuple[int, ...] = (
+            tuple(range(inputs))
+            if weights is None
+            else (*range(weights.start), *range(weights.stop, inputs))
+        )
+        """The non-weight input addresses, ascending."""
+        addresses = set(self.public_inputs)
         addresses.update(self.circuit.outputs)
         self.io: tuple[int, ...] = tuple(sorted(addresses, key=self.boundary.rank))
         """Distinct public I/O addresses in boundary rank order."""
 
-    def schema(self, address: int) -> str:
-        """The leaf schema of an address: its value width."""
-
-        return f"u{self.circuit[address].width}"
-
     def owner(self, address: int) -> int:
-        """``BOUNDARY_OWNER`` for boundary addresses, else the owning replay unit."""
+        """Who commits to ``address``: the weights, the boundary or a replay unit."""
 
+        if self.weights is not None and address in self.weights:
+            return WEIGHT_OWNER
         if self.boundary.contains(address):
             return BOUNDARY_OWNER
         return self.index.replay_units.owner(address)
@@ -168,7 +186,7 @@ class _Layout:
         result: list[tuple[int, int]] = []
         for address in sorted(addresses):
             owner = self.owner(address)
-            if owner not in (BOUNDARY_OWNER, replay_unit):
+            if owner not in (WEIGHT_OWNER, BOUNDARY_OWNER, replay_unit):
                 raise Reject(
                     VerificationCode.INVALID_COMPILED_RESULT,
                     f"address {address} is read by unit {unit} but owned by "
@@ -210,7 +228,11 @@ def assignment_replay(values: Values) -> Replay:
 
 
 class ProverSession:
-    """The prover's side.  Call ``boundary``, ``interiors``, ``evidence`` in order."""
+    """The prover's side.  Call ``boundary``, ``interiors``, ``evidence`` in order.
+
+    When the header binds weights, ``weight_tree`` is the model's tree from
+    :func:`commit_weights`; it is opened where sampled and never rebuilt.
+    """
 
     def __init__(
         self,
@@ -220,8 +242,9 @@ class ProverSession:
         *,
         replay: Replay | None = None,
         limits: VerificationLimits | None = None,
+        weight_tree: MerkleTree | None = None,
     ) -> None:
-        self._layout = _Layout(compiled)
+        self._layout = _Layout(compiled, header.weights)
         if header.compiled_digest != compiled.digest:
             raise ProtocolError("header names a different compiled circuit")
         self.header = header
@@ -229,6 +252,19 @@ class ProverSession:
         self._replay = replay
         self._limits = VerificationLimits() if limits is None else limits
         self._trees: dict[int, MerkleTree] = {}
+        if header.weights is None:
+            if weight_tree is not None:
+                raise ProtocolError("the header binds no weights")
+        else:
+            if weight_tree is None:
+                raise ProtocolError("the header binds weights; the prover needs their tree")
+            expected = weight_domain(header.weights.start, header.weights.stop)
+            if (
+                weight_tree.domain.domain_id != expected.domain_id
+                or weight_tree.commitment != header.weights.commitment
+            ):
+                raise ProtocolError("the weight tree does not match the header's weights")
+            self._trees[WEIGHT_OWNER] = weight_tree
         self._phase = "boundary"
         self._boundary_phase = b""
         self._replay_phase = b""
@@ -240,15 +276,15 @@ class ProverSession:
             raise ProtocolError(f"prover is in phase {self._phase!r}, not {phase!r}")
 
     def _commit(self, domain: CommitmentDomain, values: Values) -> MerkleTree:
-        layout = self._layout
+        circuit = self._layout.circuit
         encoded: dict[int, bytes] = {}
         for address in iter_domain(domain.positions):
             try:
                 value = values[int(address)]
             except KeyError as error:
                 raise ProtocolError(f"prover has no value for address {address}") from error
-            encoded[int(address)] = layout.circuit.encode(address, value)
-        tree = MerkleTree(domain, encoded, layout.schema)
+            encoded[int(address)] = circuit.encode(address, value)
+        tree = MerkleTree(domain, encoded, lambda address: leaf_schema(circuit, address))
         self._trees[domain.owner] = tree
         return tree
 
@@ -276,7 +312,7 @@ class ProverSession:
                 if self._replay is None
                 else self._replay(unit, self._values)
             )
-            domain = interior_domain(self.header, self._replay_phase, compiled, unit)
+            domain = interior_domain(self._replay_phase, compiled, unit)
             commitments.append(self._commit(domain, interior_values).commitment)
         message = InteriorMessage(tuple(commitments))
         self._interior_phase = interior_phase(self._replay_phase, message)
@@ -293,9 +329,7 @@ class ProverSession:
             for owner, address in self._layout.required(unit):
                 tree = self._trees.get(owner)
                 if tree is None:
-                    raise ProtocolError(
-                        f"sampled unit {unit} needs uncommitted replay unit {owner}"
-                    )
+                    raise ProtocolError(f"sampled unit {unit} needs uncommitted owner {owner}")
                 openings.append(tree.open(address))
             batches.append(tuple(openings))
         message = EvidenceMessage(tuple(batches))
@@ -326,9 +360,18 @@ class VerifierSession:
         *,
         limits: VerificationLimits | None = None,
     ) -> None:
-        self._layout = _Layout(compiled)
+        if not isinstance(compiled, Compiled):
+            raise ProtocolError("sessions require a Compiled circuit")
         if expectation.compiled_digest != compiled.digest:
             raise ProtocolError("expectation names a different compiled circuit")
+        weights = expectation.weights
+        if weights is not None and weights.stop > compiled.index.input_count:
+            raise Reject(
+                VerificationCode.INVALID_COMPILED_RESULT,
+                f"weights end at address {weights.stop} but the circuit has "
+                f"{compiled.index.input_count} inputs",
+            )
+        self._layout = _Layout(compiled, weights)
         self._expectation = expectation
         self._limits = VerificationLimits() if limits is None else limits
         self._phase = "admission"
@@ -340,7 +383,7 @@ class VerifierSession:
             inputs = tuple(
                 circuit.encode(address, value)
                 for address, value in zip(
-                    circuit.inputs, expectation.public_inputs, strict=True
+                    self._layout.public_inputs, expectation.public_inputs, strict=True
                 )
             )
             outputs = tuple(
@@ -357,8 +400,14 @@ class VerifierSession:
             expectation.policy,
             inputs,
             outputs,
+            weights,
         )
         self._commitments: dict[int, tuple[CommitmentDomain, Commitment]] = {}
+        if weights is not None:
+            self._commitments[WEIGHT_OWNER] = (
+                weight_domain(weights.start, weights.stop),
+                weights.commitment,
+            )
         self._phase = "boundary"
         self._boundary_phase = b""
         self._replay_phase = b""
@@ -426,7 +475,7 @@ class VerifierSession:
             domain,
             commitment,
             opening,
-            self._layout.schema(opening.position),
+            leaf_schema(self._layout.circuit, opening.position),
             self._limits,
         ):
             raise self._reject(
@@ -452,10 +501,9 @@ class VerifierSession:
                 item.position: self._open(BOUNDARY_OWNER, item)
                 for item in message.io_openings
             }
-            circuit = self._layout.circuit
             for addresses, values, label in (
-                (circuit.inputs, self.header.public_inputs, "input"),
-                (circuit.outputs, self.header.claimed_outputs, "output"),
+                (self._layout.public_inputs, self.header.public_inputs, "input"),
+                (self._layout.circuit.outputs, self.header.claimed_outputs, "output"),
             ):
                 for address, value in zip(addresses, values, strict=True):
                     if opened[address] != value:
@@ -491,8 +539,7 @@ class VerifierSession:
                 )
             for unit, commitment in zip(selected, message.commitments, strict=True):
                 self._accept_commitment(
-                    interior_domain(self.header, self._replay_phase, compiled, unit),
-                    commitment,
+                    interior_domain(self._replay_phase, compiled, unit), commitment
                 )
             self._interior_phase = interior_phase(self._replay_phase, message)
             sampled = derive_sample_selection(
@@ -592,14 +639,29 @@ def run_protocol(
     *,
     replay: Replay | None = None,
     limits: VerificationLimits | None = None,
+    weight_tree: MerkleTree | None = None,
 ) -> ProtocolRun:
-    """Run prover and verifier against each other in one process."""
+    """Run prover and verifier against each other in one process.
+
+    When the expectation binds weights and no ``weight_tree`` is given, the
+    prover commits the weights in ``values`` (an honest prover's tree).
+    """
 
     try:
         verifier = VerifierSession(expectation, compiled, limits=limits)
     except Reject as rejection:
         return ProtocolRun(rejection_report(rejection, None), None)
-    prover = ProverSession(compiled, verifier.header, values, replay=replay, limits=limits)
+    weights = expectation.weights
+    if weights is not None and weight_tree is None:
+        _, weight_tree = commit_weights(compiled, weights.start, weights.stop, values)
+    prover = ProverSession(
+        compiled,
+        verifier.header,
+        values,
+        replay=replay,
+        limits=limits,
+        weight_tree=weight_tree,
+    )
     try:
         replay_challenge = verifier.receive_boundary(prover.boundary())
         sample_challenge = verifier.receive_interiors(prover.interiors(replay_challenge))
