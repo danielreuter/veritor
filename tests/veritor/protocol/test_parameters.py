@@ -230,7 +230,8 @@ def test_expected_work_follows_the_documented_formula(compiled, workload) -> Non
     index = compiled.index
     dots = index.verification_unit_count
     dot = index.verification_unit(0)
-    size, reads = dot.size, len(compiled.circuit.In(dot))
+    size, reads = dot.size, dot.frame.definition.input_count  # declared inputs price a unit
+    assert reads == len(compiled.circuit.In(dot))  # a dot reads each of its declared inputs
     io = len(workload.public_inputs) + len(compiled.circuit.outputs)
     depth = merkle_depth(index.n)
 

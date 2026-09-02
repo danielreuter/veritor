@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from bisect import bisect_left, bisect_right
+from bisect import bisect_right
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from sys import maxsize
@@ -317,40 +317,49 @@ class IntervalDomain:
 
 @dataclass(frozen=True, slots=True, init=False)
 class IntervalDifferenceDomain:
-    """A half-open interval minus a sorted tuple of excluded members.
+    """A half-open interval minus excluded members given as disjoint runs.
 
     This is the lazy difference an index needs for a unit's interior: the
-    unit's interval minus its (few) boundary addresses.  Rank, unrank and
-    membership cost ``O(log k)`` in the number of excluded members.
+    unit's interval minus its interface, ``Out`` as runs ``(start, count,
+    stride)`` of positions.  The runs must be pairwise disjoint (the compiler
+    guarantees this for an interface); a run of one member has stride ``0``.
+    Members are ranked in position order.  Membership and rank cost ``O(k)``
+    in the number ``k`` of runs, unrank ``O(k log n)``; nothing is
+    materialized.
     """
 
     start: int
     stop: int
-    excluded: tuple[int, ...]
+    excluded: tuple[tuple[int, int, int], ...]
     count: int
     identity_digest: Digest
 
-    def __init__(self, start: int, stop: int, excluded: Iterable[int]) -> None:
+    def __init__(
+        self, start: int, stop: int, excluded: Iterable[tuple[int, int, int]]
+    ) -> None:
         if type(start) is not int or type(stop) is not int or start < 0:
             raise InvalidArtifact("interval bounds must be nonnegative integers")
         if stop < start:
             raise InvalidArtifact("interval stop must not precede start")
-        members = tuple(excluded)
-        for index, item in enumerate(members):
-            if type(item) is not int or not start <= item < stop:
+        runs = tuple(tuple(run) for run in excluded)
+        for run in runs:
+            if len(run) != 3 or any(type(value) is not int for value in run):
+                raise InvalidArtifact("excluded runs must be (start, count, stride) integers")
+            first, count, stride = run
+            if count < 1 or stride < 0 or (stride == 0) != (count == 1):
+                raise InvalidArtifact("an excluded run has a positive stride unless it is one member")
+            if not start <= first < stop or first + (count - 1) * stride >= stop:
                 raise InvalidArtifact("excluded members must lie inside the interval")
-            if index and item <= members[index - 1]:
-                raise InvalidArtifact("excluded members must be strictly increasing")
         object.__setattr__(self, "start", start)
         object.__setattr__(self, "stop", stop)
-        object.__setattr__(self, "excluded", members)
-        object.__setattr__(self, "count", stop - start - len(members))
+        object.__setattr__(self, "excluded", runs)
+        object.__setattr__(self, "count", stop - start - sum(run[1] for run in runs))
         object.__setattr__(
             self,
             "identity_digest",
             identity_digest(
-                "veritor/indexed-domain/interval-difference/v1",
-                {"excluded": list(members), "start": start, "stop": stop},
+                "veritor/indexed-domain/interval-difference/v2",
+                {"excluded": [list(run) for run in runs], "start": start, "stop": stop},
             ),
         )
 
@@ -358,11 +367,29 @@ class IntervalDifferenceDomain:
     def digest(self) -> Digest:
         return self.identity_digest
 
+    def _excluded_below(self, item: int) -> int:
+        """How many excluded members are strictly less than ``item``."""
+
+        total = 0
+        for first, count, stride in self.excluded:
+            if item > first:
+                total += 1 if stride == 0 else min(count, (item - 1 - first) // stride + 1)
+        return total
+
+    def _is_excluded(self, item: int) -> bool:
+        for first, count, stride in self.excluded:
+            if item == first:
+                return True
+            if stride and item > first:
+                k, remainder = divmod(item - first, stride)
+                if remainder == 0 and k < count:
+                    return True
+        return False
+
     def contains(self, item: int) -> bool:
         if type(item) is not int or not self.start <= item < self.stop:
             return False
-        index = bisect_left(self.excluded, item)
-        return index == len(self.excluded) or self.excluded[index] != item
+        return not self._is_excluded(item)
 
     def __contains__(self, item: object) -> bool:
         return self.contains(item)  # type: ignore[arg-type]
@@ -370,24 +397,25 @@ class IntervalDifferenceDomain:
     def rank(self, item: int) -> int:
         if not self.contains(item):
             raise KeyError(item)
-        return item - self.start - bisect_left(self.excluded, item)
+        return item - self.start - self._excluded_below(item)
 
     def unrank(self, rank: int) -> Position:
         checked = _checked_rank(rank, self.count)
-        # ``excluded[m] - start - m`` members precede ``excluded[m]``; find the
-        # first excluded member preceded by more than ``rank`` members.
-        low, high = 0, len(self.excluded)
+        # ``p - start + 1 - excluded_below(p + 1)`` members lie in ``[start, p]``;
+        # it grows only at members, so the least ``p`` reaching ``rank + 1`` is one.
+        low, high = self.start + checked, self.stop - 1
         while low < high:
             middle = (low + high) // 2
-            if self.excluded[middle] - self.start - middle > checked:
+            if middle - self.start + 1 - self._excluded_below(middle + 1) > checked:
                 high = middle
             else:
                 low = middle + 1
-        return Position(self.start + checked + low)
+        return Position(low)
 
     def __iter__(self) -> Iterator[Position]:
-        for rank in range(self.count):
-            yield self.unrank(rank)
+        for item in range(self.start, self.stop):
+            if not self._is_excluded(item):
+                yield Position(item)
 
     def __len__(self) -> int:
         return self.count

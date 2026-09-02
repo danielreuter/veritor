@@ -10,16 +10,17 @@ flat circuit):
 * ``In(S)``  -- addresses outside ``S`` read by gates in ``S``;
 * ``Out(S)`` -- ``S``'s interface.  For the lazy circuit this is the
   *declared* interface of the definition (its outputs resolved to the gates
-  the copy owns), a superset of the addresses actually read from outside;
-  the flat circuit scans and returns exactly the addresses read from outside
-  plus the circuit outputs in ``S``.  The declared interface is what the
-  boundary commits to, so it is the one the protocol uses;
+  the copy owns, a sequence resolved lazily from the definition's runs), a
+  superset of the addresses actually read from outside; the flat circuit
+  scans and returns exactly the addresses read from outside plus the circuit
+  outputs in ``S``.  The declared interface is what the boundary commits to,
+  so it is the one the protocol uses;
 * ``Size(S)``, ``Cost(S, kind)`` -- address count and summed gate costs.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
@@ -82,7 +83,7 @@ class Circuit(Protocol):
 
     def In(self, subset: object) -> tuple[int, ...]: ...
 
-    def Out(self, subset: object) -> tuple[int, ...]: ...
+    def Out(self, subset: object) -> Sequence[int]: ...
 
     def Size(self, subset: object) -> int: ...
 
@@ -238,16 +239,18 @@ class FlatCircuit(_Semantics):
         return tuple(values)
 
 
-class _LazyOutputs(Sequence[int]):
-    """The root's declared outputs as addresses, resolved on demand."""
+class _LazyAddresses(Sequence[int]):
+    """Addresses resolved on demand from their position: the root's declared
+    outputs, or ``Out`` of a copy in the run order of its definition."""
 
-    __slots__ = ("_frame",)
+    __slots__ = ("_at", "_count")
 
-    def __init__(self, frame: Frame) -> None:
-        self._frame = frame
+    def __init__(self, count: int, at: Callable[[int], int]) -> None:
+        self._count = count
+        self._at = at
 
     def __len__(self) -> int:
-        return self._frame.definition.output_count
+        return self._count
 
     def __getitem__(self, index):  # type: ignore[override]
         if isinstance(index, slice):
@@ -258,7 +261,7 @@ class _LazyOutputs(Sequence[int]):
             index += len(self)
         if not 0 <= index < len(self):
             raise IndexError(index)
-        return self._frame.output_address(index)
+        return self._at(index)
 
     def __eq__(self, other: object) -> bool:
         return isinstance(other, Sequence) and tuple(self) == tuple(other)
@@ -267,7 +270,7 @@ class _LazyOutputs(Sequence[int]):
         return hash(tuple(self))
 
     def __repr__(self) -> str:
-        return f"outputs({len(self)})"
+        return f"addresses({len(self)})"
 
 
 class DescriptionCircuit(_Semantics):
@@ -275,8 +278,10 @@ class DescriptionCircuit(_Semantics):
 
     ``C[i]`` descends from the root in ``O(depth * arity)``.  ``In``/``Out``/
     ``Size``/``Cost`` take an index node (any object carrying a ``frame``) and
-    resolve the definition's summaries through that frame in
-    ``O(depth * |interface|)``.
+    resolve the definition's summaries through that frame.  ``Out`` is a lazy
+    sequence over the definition's runs (``O(log #runs)`` per address);
+    ``In`` enumerates what the copy reads, ``Theta(|In|)``, so the protocol
+    asks it only about sampled units.
     """
 
     __slots__ = ("_outputs", "frame", "gate_set", "root", "width")
@@ -289,7 +294,7 @@ class DescriptionCircuit(_Semantics):
         self.gate_set = gate_set
         self.width = widths.pop()
         self.frame = Frame.root(root)
-        self._outputs = _LazyOutputs(self.frame)
+        self._outputs = _LazyAddresses(root.output_count, self.frame.output_address)
 
     @property
     def n(self) -> int:
@@ -321,9 +326,12 @@ class DescriptionCircuit(_Semantics):
             sorted({frame.input_address(i) for i in frame.definition.reads})
         )
 
-    def Out(self, subset: object) -> tuple[int, ...]:
+    def Out(self, subset: object) -> Sequence[int]:
         frame = _frame(subset)
-        return tuple(frame.base + offset for offset in frame.definition.local_outputs)
+        definition = frame.definition
+        return _LazyAddresses(
+            definition.out_count, lambda rank: frame.base + definition.out_offset(rank)
+        )
 
     def Size(self, subset: object) -> int:
         return _frame(subset).definition.size

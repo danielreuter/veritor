@@ -17,7 +17,7 @@ is a later phase: today a unit is always a whole copy of a definition.
 
 from __future__ import annotations
 
-from bisect import bisect_left, bisect_right
+from bisect import bisect_right
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
@@ -192,11 +192,14 @@ class KindSummary:
 
     Copies of a kind are isomorphic, so everything a fold over the index
     needs is computed once per kind here and weighted by ``copies``.
-    ``out_bits`` is the width of ``Out`` of one copy in bits (the sum of the
-    gate widths of its declared interface); ``children`` counts, per child
-    kind, the copies one copy of this kind calls directly;
-    ``verification_units`` and ``verification_kinds`` describe the
-    verification units inside one copy (a verification kind contains itself).
+    ``input_count`` and ``out_count`` are the sizes of the *declared*
+    interfaces of one copy: its inputs as declared (a superset of what its
+    gates read, so pricing by it is conservative) and ``Out``, its declared
+    outputs resolved to the gates it owns; ``out_bits`` is the width of
+    ``Out`` in bits.  ``children`` counts, per child kind, the copies one
+    copy of this kind calls directly; ``verification_units`` and
+    ``verification_kinds`` describe the verification units inside one copy (a
+    verification kind contains itself).
     """
 
     kind: str
@@ -205,7 +208,7 @@ class KindSummary:
     size: int
     replay_cost: int
     proof_cost: int
-    in_count: int
+    input_count: int
     out_count: int
     out_bits: int
     min_depth: int
@@ -287,13 +290,16 @@ class Index:
         return _Boundary(self, exclude)
 
     def interior(self, replay_unit: int) -> IntervalDifferenceDomain:
-        """``R_r`` minus the boundary."""
+        """``R_r`` minus the boundary: the unit's interval minus the runs of its ``Out``."""
 
         frame = self.replay_units.unit(replay_unit).frame
         return IntervalDifferenceDomain(
             frame.base,
             frame.base + frame.definition.size,
-            (frame.base + offset for offset in frame.definition.local_outputs),
+            (
+                (frame.base + run.start, run.count, run.stride)
+                for run in frame.definition.out_runs
+            ),
         )
 
     def kinds(self) -> tuple[KindSummary, ...]:
@@ -301,7 +307,8 @@ class Index:
 
         ``O(|description|)``: counts flow from parents to children along the
         definition DAG, so a kind reached through many paths is still visited
-        once.
+        once, and every row is a per-definition summary (declared interfaces
+        as runs, never enumerated).
         """
 
         root = self._frame.definition
@@ -334,8 +341,8 @@ class Index:
                 size=definition.size,
                 replay_cost=definition.replay_cost,
                 proof_cost=definition.proof_cost,
-                in_count=len(definition.reads),
-                out_count=len(definition.local_outputs),
+                input_count=definition.input_count,
+                out_count=definition.out_count,
                 out_bits=definition.out_bits,
                 min_depth=min_depth[definition.digest],
                 max_depth=max_depth[definition.digest],
@@ -351,10 +358,12 @@ class _Boundary:
     """Lazy ``(inputs \\ W) ∪ ⋃_r Out(R_r)`` with ``O(depth)`` rank and unrank.
 
     Inputs occupy ``[0, input_count)`` and every unit's ``Out`` lies inside its
-    interval, so the boundary in address order is the kept inputs followed by
-    the units' declared outputs unit by unit; ``out_before`` on the frames
-    gives the prefix sums.  The kept inputs are the at most two runs on
-    either side of the excluded range, an :class:`IntervalDomain`.
+    interval, so the boundary is the kept inputs followed by the units'
+    declared outputs unit by unit, each unit's in the run order of its kind
+    (address order unless runs interleave); ``out_before`` on the frames
+    gives the prefix sums and a unit's runs the rank within it.  The kept
+    inputs are the at most two runs on either side of the excluded range, an
+    :class:`IntervalDomain`.
     """
 
     __slots__ = ("_index", "_inputs", "count", "identity_digest")
@@ -366,7 +375,7 @@ class _Boundary:
         self._inputs = IntervalDomain(((0, exclude.start), (exclude.stop, inputs)))
         self.count = self._inputs.count + frame.definition.out_total
         self.identity_digest = identity_digest(
-            "veritor/indexed-domain/boundary/v2",
+            "veritor/indexed-domain/boundary/v3",
             {
                 "index": index.digest,
                 "inputs": [list(run) for run in self._inputs.intervals],
@@ -377,10 +386,8 @@ class _Boundary:
         frame = _unit_frame_at(self._index._frame, address, REPLAY)
         if frame is None:
             return None
-        outputs = frame.definition.local_outputs
-        offset = address - frame.base
-        position = bisect_left(outputs, offset)
-        if position == len(outputs) or outputs[position] != offset:
+        position = frame.definition.out_rank(address - frame.base)
+        if position is None:
             return None
         return frame, position
 
@@ -420,7 +427,7 @@ class _Boundary:
             lambda d: d.step_out,
             lambda d: d.out_total,
         )
-        return frame.base + frame.definition.local_outputs[offset]
+        return frame.base + frame.definition.out_offset(offset)
 
     def __iter__(self) -> Iterator[int]:
         for rank in range(self.count):

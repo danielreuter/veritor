@@ -13,7 +13,7 @@ from veritor.compile.description import (
     parse_description,
 )
 from veritor.core import CompilationLimits, make_word_gate_set
-from veritor.core.description import CallStep, Frame, GateStep, Range
+from veritor.core.description import CallStep, Frame, GateStep, Range, Run
 
 GATES = make_word_gate_set(8)
 IN, LOC = "input", "local"
@@ -82,7 +82,9 @@ def test_gate_call_and_passthrough_outputs(helpers):
     assert frame.gate(4)[1] == (3, 1)
     assert [frame.output_address(k) for k in range(4)] == [3, 4, 1, 0]
     assert evaluate(r, (3, 5)) == ((3 + 25) & 255, (28 + 5) & 255, 5, 3)
-    assert r.local_outputs == (1, 2)
+    # Out: the two adds, one run; the pass-through outputs (slot 0, input 0) are dropped
+    assert r.out_runs == (Run(1, 2, 1, 8),)
+    assert (r.out_count, r.out_bits) == (2, 16)
     assert r.reads == (0, 1)
 
 

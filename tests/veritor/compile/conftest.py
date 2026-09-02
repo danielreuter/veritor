@@ -184,6 +184,53 @@ def matmul_payload(k: int, cols: int, rows: int = 1) -> bytes:
     return doc.serialize(root)
 
 
+def shared_kinds_payload() -> bytes:
+    """Two replay kinds reaching one verification kind through different paths.
+
+    Replay kind ``A`` (two copies) calls an unmarked ``middle`` twice, each
+    holding two copies of ``V1``; replay kind ``B`` (one copy) calls ``V1``
+    once and ``V2`` twice.  Exercises sharing, an unmarked layer between the
+    cuts and a kind at two depths.
+    """
+
+    IN, LOC = "input", "local"
+    doc = Document()
+    v1 = doc.add(
+        body(
+            2,
+            [gate("mul", rng(IN, 0, 2, 1)), gate("add", rng(LOC, 0), rng(IN, 1))],
+            [rng(LOC, 1)],
+            role="verification",
+        )
+    )
+    v2 = doc.add(body(2, [gate("add", rng(IN, 0, 2, 1))], [rng(LOC, 0)], role="verification"))
+    middle = doc.add(body(2, [repeat(2, v1, jrng(IN, 0, 2, 1))], [rng(LOC, 0, 2, 1)]))
+    a = doc.add(
+        body(
+            2,
+            [call(middle, rng(IN, 0, 2, 1)), call(middle, rng(LOC, 0, 2, 1))],
+            [rng(LOC, 2, 2, 1)],
+            role="replay",
+        )
+    )
+    b = doc.add(
+        body(
+            2,
+            [call(v1, rng(IN, 0, 2, 1)), repeat(2, v2, jrng(IN, 0), jrng(LOC, 0))],
+            [rng(LOC, 1, 2, 1)],
+            role="replay",
+        )
+    )
+    root = doc.add(
+        body(
+            2,
+            [repeat(2, a, jrng(IN, 0, 2, 1)), call(b, rng(LOC, 0, 2, 1))],
+            [rng(LOC, 4, 2, 1)],
+        )
+    )
+    return doc.serialize(root)
+
+
 @pytest.fixture
 def helpers() -> ModuleType:
     """The helper functions of this module, as a namespace."""

@@ -157,7 +157,7 @@ def test_kinds_table_summarizes_each_definition_once(helpers):
         size=cols * (2 * k - 1),
         replay_cost=cols * (2 * k + k - 1),
         proof_cost=cols * (2 * k + k - 1),
-        in_count=k + k * cols,
+        input_count=k + k * cols,
         out_count=cols,
         out_bits=cols * 8,
         min_depth=1,
@@ -167,7 +167,7 @@ def test_kinds_table_summarizes_each_definition_once(helpers):
         verification_kinds=((dot, cols),),
     )
     assert table["verification"].copies == rows * cols
-    assert table["verification"].in_count == 2 * k and table["verification"].out_count == 1
+    assert table["verification"].input_count == 2 * k and table["verification"].out_count == 1
     assert table["verification"].verification_kinds == ((dot, 1),)
     assert kinds[0].verification_kinds == ((dot, rows * cols),)
     leaves = [row for row in kinds if row.size == 1]
@@ -182,58 +182,9 @@ def test_kinds_table_summarizes_each_definition_once(helpers):
     }
 
 
-def shared_kinds_payload(helpers) -> bytes:
-    """Two replay kinds reaching one verification kind through different paths.
-
-    Replay kind ``A`` (two copies) calls an unmarked ``middle`` twice, each
-    holding two copies of ``V1``; replay kind ``B`` (one copy) calls ``V1``
-    once and ``V2`` twice.  Exercises sharing, an unmarked layer between the
-    cuts and a kind at two depths.
-    """
-
-    h = helpers
-    doc = h.Document()
-    v1 = doc.add(
-        h.body(
-            2,
-            [h.gate("mul", h.rng(IN, 0, 2, 1)), h.gate("add", h.rng(LOC, 0), h.rng(IN, 1))],
-            [h.rng(LOC, 1)],
-            role="verification",
-        )
-    )
-    v2 = doc.add(h.body(2, [h.gate("add", h.rng(IN, 0, 2, 1))], [h.rng(LOC, 0)], role="verification"))
-    middle = doc.add(
-        h.body(2, [h.repeat(2, v1, h.jrng(IN, 0, 2, 1))], [h.rng(LOC, 0, 2, 1)])
-    )
-    a = doc.add(
-        h.body(
-            2,
-            [h.call(middle, h.rng(IN, 0, 2, 1)), h.call(middle, h.rng(LOC, 0, 2, 1))],
-            [h.rng(LOC, 2, 2, 1)],
-            role="replay",
-        )
-    )
-    b = doc.add(
-        h.body(
-            2,
-            [h.call(v1, h.rng(IN, 0, 2, 1)), h.repeat(2, v2, h.jrng(IN, 0), h.jrng(LOC, 0))],
-            [h.rng(LOC, 1, 2, 1)],
-            role="replay",
-        )
-    )
-    root = doc.add(
-        h.body(
-            2,
-            [h.repeat(2, a, h.jrng(IN, 0, 2, 1)), h.call(b, h.rng(LOC, 0, 2, 1))],
-            [h.rng(LOC, 4, 2, 1)],
-        )
-    )
-    return doc.serialize(root)
-
-
 @pytest.mark.parametrize("which", ["matmul", "shared"])
 def test_kinds_table_matches_enumeration_of_every_copy(helpers, which):
-    payload = helpers.matmul_payload(4, 3, 2) if which == "matmul" else shared_kinds_payload(helpers)
+    payload = helpers.matmul_payload(4, 3, 2) if which == "matmul" else helpers.shared_kinds_payload()
     index, lazy, _flat = build(helpers, payload)
     nodes = [IndexNode(frame) for frame in helpers.frames(index.root.frame)]
     by_kind: dict[str, list[IndexNode]] = {}
@@ -259,7 +210,8 @@ def test_kinds_table_matches_enumeration_of_every_copy(helpers, which):
             assert row.role == node.role and row.size == node.size
             assert row.out_count == len(lazy.Out(node))
             assert row.out_bits == sum(lazy[a].width for a in lazy.Out(node))
-            assert row.in_count == len(lazy.In(node))
+            # the declared inputs bound what the copy actually reads
+            assert row.input_count == node.frame.definition.input_count >= len(lazy.In(node))
             assert row.replay_cost == lazy.Cost(node, "replay")
             assert row.proof_cost == lazy.Cost(node, "proof")
             children: dict[str, int] = {}

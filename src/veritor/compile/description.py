@@ -14,8 +14,16 @@ The wire format is canonical JSON (sorted keys, no whitespace, no floats)::
     range = [space, start, count, stride]           space = "input" | "local"
     jrange = [space, start, count, stride, jstride]
 
+Besides the shape rules (arity, in-range relative references, dependency
+order, limits), a definition's declared outputs, resolved to the gates a copy
+owns, must be pairwise distinct: the runs of ``Out`` (see
+:mod:`veritor.core.description`) may not intersect.  This makes ``|Out|`` and
+its width sums over runs and rank/unrank inside ``Out`` prefix sums.
+
 Every check here is per definition, so validation is ``O(|G|)`` regardless of
-how many gates the description unrolls to.
+how many gates the description unrolls to; the distinctness check is
+quadratic in the number of runs of a definition, never in the number of
+outputs.
 """
 
 from __future__ import annotations
@@ -40,6 +48,7 @@ from veritor.core.description import (
     Definition,
     GateStep,
     Range,
+    Run,
     Step,
     ranges_total,
 )
@@ -277,7 +286,69 @@ def _definition(
     ):
         if value > limit:
             raise CompileError(f"{where} has {value} {label}; the limit is {limit}")
+    repeated = _repeated_output(definition.out_runs)
+    if repeated is not None:
+        raise CompileError(
+            f"{where} declares the gate at offset {repeated} as an output more than once; "
+            "declared outputs must be distinct"
+        )
     return definition
+
+
+# -- distinct declared outputs -----------------------------------------------
+
+
+def _extended_gcd(a: int, b: int) -> tuple[int, int, int]:
+    """``(g, x, y)`` with ``a * x + b * y == g == gcd(a, b)``."""
+
+    x0, y0, x1, y1 = 1, 0, 0, 1
+    while b:
+        quotient, remainder = divmod(a, b)
+        a, b = b, remainder
+        x0, x1 = x1, x0 - quotient * x1
+        y0, y1 = y1, y0 - quotient * y1
+    return a, x0, y0
+
+
+def _common_offset(first: Run, second: Run) -> int | None:
+    """A gate offset in both runs, or ``None`` when they are disjoint.
+
+    ``a + i s == b + j t`` with ``0 <= i < n`` and ``0 <= j < m`` is a linear
+    congruence: solvable iff ``gcd(s, t)`` divides ``b - a``, and then the
+    solutions form one progression in ``k``; the two index ranges bound ``k``
+    from both sides, so the runs meet iff those bounds leave a ``k``.
+    """
+
+    if first.count == 1:
+        return first.start if second.index(first.start) is not None else None
+    if second.count == 1:
+        return second.start if first.index(second.start) is not None else None
+    divisor, x, y = _extended_gcd(first.stride, second.stride)
+    difference = second.start - first.start
+    if difference % divisor:
+        return None
+    scale = difference // divisor
+    i0, j0 = x * scale, -y * scale  # i0 * s - j0 * t == difference
+    i_step, j_step = second.stride // divisor, first.stride // divisor
+    low = max(-(i0 // i_step), -(j0 // j_step))
+    high = min((first.count - 1 - i0) // i_step, (second.count - 1 - j0) // j_step)
+    if low > high:
+        return None
+    return first.element(i0 + low * i_step)
+
+
+def _repeated_output(runs: tuple[Run, ...]) -> int | None:
+    """A gate offset declared twice among ``runs``, or ``None`` if they are disjoint."""
+
+    for run in runs:
+        if run.count > 1 and run.stride == 0:
+            return run.start  # the same gate ``count`` times
+    for index, run in enumerate(runs):
+        for other in runs[index + 1 :]:
+            common = _common_offset(run, other)
+            if common is not None:
+                return common
+    return None
 
 
 def parse_description(
