@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import math
+from fractions import Fraction
+
 import pytest
 
 from veritor import (
+    Bound,
     Compiled,
     DemoGCompileRequest,
     MatmulCompileRequest,
     VerificationCode,
     VerificationPolicy,
+    VerifierParameters,
     Verify,
     build_executable_conformance_transcript,
     compile_demo_g,
@@ -103,4 +108,21 @@ def test_interactive_run_and_pure_verification_agree() -> None:
     run = run_protocol(compiled, expectation, values)
 
     assert run.transcript is not None
-    assert Verify(encode_transcript(run.transcript), expectation, compiled) == run.report
+    data = encode_transcript(run.transcript)
+    assert Verify(data, expectation, compiled) == run.report
+
+    # ... and at admission: a U_max below Bound(C, I, theta) rejects both ways alike
+    theta, eta = VerificationPolicy(Fraction(1, 2), 1), Fraction(1, 4)
+    bits = Bound(compiled, theta, eta).bits
+    capped = make_verification_expectation(
+        compiled,
+        theta,
+        request.public_inputs,
+        request.expected_outputs,
+        parameters=VerifierParameters(eta, max_capacity=math.ceil(bits) - 1),
+        **SEEDS,
+    )
+    rejected = run_protocol(compiled, capped, values)
+    assert rejected.report.code is VerificationCode.POLICY_REJECTED
+    assert rejected.transcript is None
+    assert Verify(data, capped, compiled) == rejected.report

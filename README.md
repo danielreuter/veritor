@@ -39,8 +39,8 @@ at the same point in the interaction.
 The verifier and the channel are trusted; nothing else is. Constructors, the
 tracer, the choice of marks, the proposed `θ`, cost labels and `Optimize` are
 the client's. `Compile` re-validates every byte of a description; the index
-checks that the marks tile and refine; `Verify` prices the proposal against
-`W_max` before accepting a commitment. A client who chooses its units badly
+checks that the marks tile and refine; `Verify` checks the proposal against
+`U_max` (by `Bound`) and `W_max` before accepting a commitment. A client who chooses its units badly
 pays in cost or in a larger `U`, never in soundness.
 
 ~~~text

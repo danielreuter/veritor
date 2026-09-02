@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
 from fractions import Fraction
 
 import pytest
 
+from veritor.analysis import bound
 from veritor.compile import Compiler
 from veritor.constructors import Tracer
 from veritor.core import (
@@ -270,3 +272,77 @@ def test_runs_above_the_work_budget_are_rejected_before_any_commitment(
         parameters=VerifierParameters(max_work=int(work) - 1),
     )
     assert run_protocol(compiled, cheaper, honest_values).report.accepted
+
+
+# -- U_max -----------------------------------------------------------------------
+
+LEAKY = VerificationPolicy(Fraction(1, 2), 1)
+"""Half the replay units are never looked at: a real, uncapped ``Bound`` under ``eta = 1/4``."""
+
+
+def capacity_caps(compiled: Compiled) -> tuple[int, int]:
+    """``(tight, loose)``: the integer caps just below and at or above ``Bound(C, I, LEAKY)``."""
+
+    result = bound(compiled, LEAKY, Fraction(1, 4))
+    assert 0 < result.bits < result.out_bits and not result.capped
+    return math.ceil(result.bits) - 1, math.ceil(result.bits)
+
+
+def test_runs_whose_bound_exceeds_u_max_are_rejected_before_any_commitment(
+    compiled, honest_values, expect
+) -> None:
+    tight, loose = capacity_caps(compiled)
+    capped = expect(LEAKY, parameters=VerifierParameters(Fraction(1, 4), max_capacity=tight))
+
+    rejected = run_protocol(compiled, capped, honest_values)
+
+    assert rejected.report.code is VerificationCode.POLICY_REJECTED
+    assert rejected.transcript is None
+    assert rejected.report.sampled_replay_units == ()
+    assert f"exceeding U_max {tight}" in rejected.report.detail
+    with pytest.raises(Reject) as rejection:
+        VerifierSession(capped, compiled)
+    assert rejection.value.code is VerificationCode.POLICY_REJECTED
+
+    for parameters in (
+        VerifierParameters(Fraction(1, 4)),
+        VerifierParameters(Fraction(1, 4), max_capacity=loose),
+    ):
+        run = run_protocol(compiled, expect(LEAKY, parameters=parameters), honest_values)
+        assert run.report.accepted and run.transcript is not None
+
+
+def test_u_max_is_checked_at_the_verifiers_eta(compiled, honest_values, expect) -> None:
+    """A smaller ``eta`` admits more error sets, so the same ``theta`` bounds higher."""
+
+    _, loose = capacity_caps(compiled)
+    assert bound(compiled, LEAKY, Fraction(1, 64)).bits > loose
+
+    run = run_protocol(
+        compiled,
+        expect(LEAKY, parameters=VerifierParameters(Fraction(1, 64), max_capacity=loose)),
+        honest_values,
+    )
+
+    assert run.report.code is VerificationCode.POLICY_REJECTED
+
+
+def test_a_transcript_recorded_under_a_permissive_cap_is_rejected_by_a_tight_one(
+    compiled, honest_values, expect
+) -> None:
+    tight, loose = capacity_caps(compiled)
+    permissive = expect(LEAKY, parameters=VerifierParameters(Fraction(1, 4), max_capacity=loose))
+    run = run_protocol(compiled, permissive, honest_values)
+    assert run.transcript is not None
+    data = encode_transcript(run.transcript)
+    assert verify_transcript(data, permissive, compiled) == run.report
+
+    report = verify_transcript(
+        data,
+        expect(LEAKY, parameters=VerifierParameters(Fraction(1, 4), max_capacity=tight)),
+        compiled,
+    )
+
+    assert report.code is VerificationCode.POLICY_REJECTED
+    assert report.sampled_replay_units == ()
+    assert f"exceeding U_max {tight}" in report.detail

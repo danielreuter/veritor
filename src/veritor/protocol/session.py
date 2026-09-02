@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from secrets import token_bytes
 
+from veritor.analysis import bound
 from veritor.core import (
     Compiled,
     ResourceLimit,
@@ -347,9 +348,9 @@ class VerifierSession:
     """The verifier's side.  Feed messages in order; each returns the next challenge.
 
     Construction admits the run: the proposal's rates, the per-unit sizes and
-    the expected work are checked against the limits and ``W_max`` before any
-    commitment is accepted, and every verdict, including a resource limit, is
-    a :class:`Reject`.
+    the expected work are checked against the limits and ``W_max``, and
+    ``Bound(C, I, theta)`` against ``U_max``, before any commitment is
+    accepted; every verdict, including a resource limit, is a :class:`Reject`.
     """
 
     def __init__(
@@ -415,7 +416,13 @@ class VerifierSession:
         self.transcript_parts: list[object] = [self.header]
 
     def _admit(self) -> None:
-        """Price the run from counts alone; ``O(#kinds)``, nothing per copy."""
+        """Price the run before any commitment; folds over the kinds, nothing per copy.
+
+        The limits and ``W_max`` are checked from counts alone in
+        ``O(#kinds)``; when the verifier fixes ``U_max``, ``Bound(C, I,
+        theta)`` at its ``eta`` is folded over the same kinds (milliseconds,
+        independent of the number of copies) and must not exceed it.
+        """
 
         index = self._layout.index
         policy = self._expectation.policy
@@ -436,6 +443,14 @@ class VerifierSession:
                 VerificationCode.WORK_BUDGET_EXCEEDED,
                 f"expected verifier work {work} exceeds W_max {budget}",
             )
+        if parameters.max_capacity is not None:
+            capacity = bound(self._layout.compiled, policy, parameters.eta).bits
+            if capacity > parameters.max_capacity:
+                raise self._reject(
+                    VerificationCode.POLICY_REJECTED,
+                    f"Bound(C, I, theta) is {capacity:.6g} bits, exceeding U_max "
+                    f"{parameters.max_capacity}",
+                )
 
     def _expect(self, phase: str) -> None:
         if self._phase != phase:

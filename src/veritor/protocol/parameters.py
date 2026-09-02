@@ -34,8 +34,9 @@ class VerifierParameters:
     """The verifier's side of the acceptance statement.
 
     ``eta`` is the strict acceptance-probability threshold of the bound;
-    ``max_capacity`` is ``U_max``, carried for the pricing step that compares
-    ``Bound(C, I, theta)`` against it; ``max_work`` is ``W_max``.
+    ``max_capacity`` is ``U_max``: a run is admitted only when ``Bound(C, I,
+    theta)`` at this ``eta`` is at most ``U_max`` bits (``None`` waives the
+    check); ``max_work`` is ``W_max``.
     """
 
     eta: Fraction
