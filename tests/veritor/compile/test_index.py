@@ -116,6 +116,7 @@ def test_kinds_table_summarizes_each_definition_once(helpers):
 
     assert len(kinds) == 5  # root, row, dot, mul, add
     assert kinds[0].copies == 1 and kinds[0].min_depth == kinds[0].max_depth == 0
+    dot = table["verification"].kind
     assert table["replay"] == KindSummary(
         kind=index.replay_units.unit(0).kind,
         role="replay",
@@ -125,16 +126,125 @@ def test_kinds_table_summarizes_each_definition_once(helpers):
         proof_cost=cols * (2 * k + k - 1),
         in_count=k + k * cols,
         out_count=cols,
+        out_bits=cols * 8,
         min_depth=1,
         max_depth=1,
+        children=((dot, cols),),
+        verification_units=cols,
+        verification_kinds=((dot, cols),),
     )
     assert table["verification"].copies == rows * cols
     assert table["verification"].in_count == 2 * k and table["verification"].out_count == 1
+    assert table["verification"].verification_kinds == ((dot, 1),)
+    assert kinds[0].verification_kinds == ((dot, rows * cols),)
     leaves = [row for row in kinds if row.size == 1]
     assert sorted(row.copies for row in leaves) == sorted(
         [rows * cols * k, rows * cols * (k - 1)]
     )
     assert all(row.min_depth == row.max_depth == 3 for row in leaves)
+    assert all(row.children == () and row.verification_kinds == () for row in leaves)
+    assert dict(table["verification"].children) == {
+        leaves[0].kind: leaves[0].copies // (rows * cols),
+        leaves[1].kind: leaves[1].copies // (rows * cols),
+    }
+
+
+def shared_kinds_payload(helpers) -> bytes:
+    """Two replay kinds reaching one verification kind through different paths.
+
+    Replay kind ``A`` (two copies) calls an unmarked ``middle`` twice, each
+    holding two copies of ``V1``; replay kind ``B`` (one copy) calls ``V1``
+    once and ``V2`` twice.  Exercises sharing, an unmarked layer between the
+    cuts and a kind at two depths.
+    """
+
+    h = helpers
+    doc = h.Document()
+    v1 = doc.add(
+        h.body(
+            2,
+            [h.gate("mul", h.rng(IN, 0, 2, 1)), h.gate("add", h.rng(LOC, 0), h.rng(IN, 1))],
+            [h.rng(LOC, 1)],
+            role="verification",
+        )
+    )
+    v2 = doc.add(h.body(2, [h.gate("add", h.rng(IN, 0, 2, 1))], [h.rng(LOC, 0)], role="verification"))
+    middle = doc.add(
+        h.body(2, [h.repeat(2, v1, h.jrng(IN, 0, 2, 1))], [h.rng(LOC, 0, 2, 1)])
+    )
+    a = doc.add(
+        h.body(
+            2,
+            [h.call(middle, h.rng(IN, 0, 2, 1)), h.call(middle, h.rng(LOC, 0, 2, 1))],
+            [h.rng(LOC, 2, 2, 1)],
+            role="replay",
+        )
+    )
+    b = doc.add(
+        h.body(
+            2,
+            [h.call(v1, h.rng(IN, 0, 2, 1)), h.repeat(2, v2, h.jrng(IN, 0), h.jrng(LOC, 0))],
+            [h.rng(LOC, 1, 2, 1)],
+            role="replay",
+        )
+    )
+    root = doc.add(
+        h.body(
+            2,
+            [h.repeat(2, a, h.jrng(IN, 0, 2, 1)), h.call(b, h.rng(LOC, 0, 2, 1))],
+            [h.rng(LOC, 4, 2, 1)],
+        )
+    )
+    return doc.serialize(root)
+
+
+@pytest.mark.parametrize("which", ["matmul", "shared"])
+def test_kinds_table_matches_enumeration_of_every_copy(helpers, which):
+    payload = helpers.matmul_payload(4, 3, 2) if which == "matmul" else shared_kinds_payload(helpers)
+    index, lazy, _flat = build(helpers, payload)
+    nodes = [IndexNode(frame) for frame in helpers.frames(index.root.frame)]
+    by_kind: dict[str, list[IndexNode]] = {}
+    for node in nodes:
+        by_kind.setdefault(node.kind, []).append(node)
+
+    def below(node: IndexNode, role: str) -> list[IndexNode]:
+        found = []
+        for frame in helpers.frames(node.frame):
+            inner = IndexNode(frame)
+            if inner != node and inner.role == role:
+                found.append(inner)
+        return found
+
+    table = index.kinds()
+    assert [row.kind for row in table] == list(by_kind)  # first-visit order, each once
+    for row in table:
+        copies = by_kind[row.kind]
+        assert row.copies == len(copies)
+        assert row.min_depth == min(c.depth for c in copies)
+        assert row.max_depth == max(c.depth for c in copies)
+        for node in copies:
+            assert row.role == node.role and row.size == node.size
+            assert row.out_count == len(lazy.Out(node))
+            assert row.out_bits == sum(lazy[a].width for a in lazy.Out(node))
+            assert row.in_count == len(lazy.In(node))
+            assert row.replay_cost == lazy.Cost(node, "replay")
+            assert row.proof_cost == lazy.Cost(node, "proof")
+            children: dict[str, int] = {}
+            for child in node.children():
+                children[child.kind] = children.get(child.kind, 0) + 1
+            assert dict(row.children) == children
+            units = [node] if node.role == "verification" else below(node, "verification")
+            assert row.verification_units == len(units)
+            kinds: dict[str, int] = {}
+            for unit in units:
+                kinds[unit.kind] = kinds.get(unit.kind, 0) + 1
+            assert dict(row.verification_kinds) == kinds
+    if which == "shared":
+        v1 = next(row for row in table if row.role == "verification" and row.size == 2)
+        assert v1.copies == 2 * 4 + 1 and (v1.min_depth, v1.max_depth) == (2, 3)
+        replay = {row.copies: row for row in table if row.role == "replay"}
+        assert replay[2].verification_kinds == ((v1.kind, 4),)
+        assert dict(replay[1].verification_kinds)[v1.kind] == 1 and replay[1].verification_units == 3
 
 
 # -- validity of marks --------------------------------------------------------

@@ -188,7 +188,16 @@ class Units:
 
 @dataclass(frozen=True, slots=True)
 class KindSummary:
-    """The profiler's row for one kind: what every copy shares."""
+    """The profiler's row for one kind: what every copy shares.
+
+    Copies of a kind are isomorphic, so everything a fold over the index
+    needs is computed once per kind here and weighted by ``copies``.
+    ``out_bits`` is the width of ``Out`` of one copy in bits (the sum of the
+    gate widths of its declared interface); ``children`` counts, per child
+    kind, the copies one copy of this kind calls directly;
+    ``verification_units`` and ``verification_kinds`` describe the
+    verification units inside one copy (a verification kind contains itself).
+    """
 
     kind: str
     role: str | None
@@ -198,8 +207,12 @@ class KindSummary:
     proof_cost: int
     in_count: int
     out_count: int
+    out_bits: int
     min_depth: int
     max_depth: int
+    children: tuple[tuple[str, int], ...]
+    verification_units: int
+    verification_kinds: tuple[tuple[str, int], ...]
 
 
 class Index:
@@ -270,40 +283,53 @@ class Index:
         )
 
     def kinds(self) -> tuple[KindSummary, ...]:
-        """One row per kind reachable from the root, in first-visit order."""
+        """One row per kind reachable from the root, in first-visit order.
 
-        copies: dict[str, int] = {}
-        depths: dict[str, list[int]] = {}
-        definitions: dict[str, Definition] = {}
-        pending: list[tuple[Definition, int, int]] = [(self._frame.definition, 1, 0)]
-        order: list[str] = []
-        while pending:
-            definition, count, depth = pending.pop()
-            digest = definition.digest
-            if digest not in definitions:
-                definitions[digest] = definition
-                order.append(digest)
-                depths[digest] = [depth, depth]
-            copies[digest] = copies.get(digest, 0) + count
-            depths[digest][0] = min(depths[digest][0], depth)
-            depths[digest][1] = max(depths[digest][1], depth)
-            for step in reversed(definition.steps):
+        ``O(|description|)``: counts flow from parents to children along the
+        definition DAG, so a kind reached through many paths is still visited
+        once.
+        """
+
+        root = self._frame.definition
+        parents_first = _reachable(root)[::-1]
+        copies: dict[str, int] = {root.digest: 1}
+        min_depth: dict[str, int] = {root.digest: 0}
+        max_depth: dict[str, int] = {root.digest: 0}
+        for definition in parents_first:
+            count = copies[definition.digest]
+            for step in definition.steps:
                 if isinstance(step, CallStep):
-                    pending.append((step.child, count * step.count, depth + 1))
+                    child = step.child.digest
+                    copies[child] = copies.get(child, 0) + count * step.count
+                    depth = min_depth[definition.digest] + 1
+                    min_depth[child] = min(min_depth.get(child, depth), depth)
+                    depth = max_depth[definition.digest] + 1
+                    max_depth[child] = max(max_depth.get(child, depth), depth)
+        verification_kinds: dict[str, tuple[tuple[str, int], ...]] = {}
+        for definition in reversed(parents_first):
+            verification_kinds[definition.digest] = (
+                ((definition.digest, 1),)
+                if definition.role == VERIFICATION
+                else _multiset(definition, verification_kinds)
+            )
         return tuple(
             KindSummary(
-                kind=digest,
-                role=definitions[digest].role,
-                copies=copies[digest],
-                size=definitions[digest].size,
-                replay_cost=definitions[digest].replay_cost,
-                proof_cost=definitions[digest].proof_cost,
-                in_count=len(definitions[digest].reads),
-                out_count=len(definitions[digest].local_outputs),
-                min_depth=depths[digest][0],
-                max_depth=depths[digest][1],
+                kind=definition.digest,
+                role=definition.role,
+                copies=copies[definition.digest],
+                size=definition.size,
+                replay_cost=definition.replay_cost,
+                proof_cost=definition.proof_cost,
+                in_count=len(definition.reads),
+                out_count=len(definition.local_outputs),
+                out_bits=definition.out_bits,
+                min_depth=min_depth[definition.digest],
+                max_depth=max_depth[definition.digest],
+                children=_multiset(definition, None),
+                verification_units=definition.verification_units,
+                verification_kinds=verification_kinds[definition.digest],
             )
-            for digest in order
+            for definition in _preorder(root)
         )
 
 
@@ -402,6 +428,45 @@ def _reachable(root: Definition) -> list[Definition]:
 
     visit(root)
     return order
+
+
+def _preorder(root: Definition) -> list[Definition]:
+    """Definitions reachable from ``root`` in first-visit (step) order."""
+
+    order: list[Definition] = []
+    seen: set[str] = set()
+    pending = [root]
+    while pending:
+        definition = pending.pop()
+        if definition.digest in seen:
+            continue
+        seen.add(definition.digest)
+        order.append(definition)
+        for step in reversed(definition.steps):
+            if isinstance(step, CallStep):
+                pending.append(step.child)
+    return order
+
+
+def _multiset(
+    definition: Definition,
+    inner: dict[str, tuple[tuple[str, int], ...]] | None,
+) -> tuple[tuple[str, int], ...]:
+    """Kinds called by one copy of ``definition`` as ``(kind, count)`` pairs.
+
+    With ``inner`` the children are expanded through the given per-kind
+    multisets (weighted by the call count); without it the direct children
+    are counted.  Pairs appear in first-visit order.
+    """
+
+    counts: dict[str, int] = {}
+    for step in definition.steps:
+        if not isinstance(step, CallStep):
+            continue
+        expansion = ((step.child.digest, 1),) if inner is None else inner[step.child.digest]
+        for kind, count in expansion:
+            counts[kind] = counts.get(kind, 0) + step.count * count
+    return tuple(counts.items())
 
 
 def _short(definition: Definition) -> str:

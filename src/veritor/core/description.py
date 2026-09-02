@@ -223,6 +223,18 @@ class Definition:
     def output_at(self, ordinal: int) -> tuple[Range, int]:
         return range_at(self.outputs, self.output_starts, ordinal)
 
+    def gate_at(self, offset: int) -> Gate:
+        """The gate at relative address ``offset``, descending through calls."""
+
+        definition = self
+        while True:
+            index = definition.step_at_address(offset)
+            step = definition.steps[index]
+            if isinstance(step, GateStep):
+                return step.gate
+            _, offset = divmod(offset - definition.step_address[index], step.child.size)
+            definition = step.child
+
     def slot_source(self, slot: int) -> tuple[bool, int]:
         """Resolve a local slot: ``(True, gate offset)`` or ``(False, input)``."""
 
@@ -270,6 +282,12 @@ class Definition:
             if is_gate
         }
         return tuple(sorted(found))
+
+    @cached_property
+    def out_bits(self) -> int:
+        """Bits carried by ``Out`` of a copy: the widths of its ``local_outputs``."""
+
+        return sum(self.gate_at(offset).width for offset in self.local_outputs)
 
     @cached_property
     def out_total(self) -> int:
