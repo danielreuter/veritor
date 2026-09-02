@@ -24,10 +24,13 @@ says "bound", it means bound through a tagged, length-framed SHA-256 hash under
 these assumptions.
 
 Throughout, "the header" is the object both parties fix before any message
-(session id, compiled digest, `theta`, `eta`, public inputs, claimed outputs,
-`kappa_W`), and "kappa_W" is the per-model commitment to the weight gates.
-Field names are avoided deliberately; the header and kappa_W are changing on
-`main`.
+(session id, compiled digest, the constructor's digest, the advice, `theta`,
+`eta`, public inputs, claimed outputs, `kappa_W`), and "kappa_W" is the
+per-model commitment to the weight *vector*: its positions are ranks (position
+`k` is the `k`-th `weight` gate in address order of whichever circuit is being
+verified), bound to a fixed tag and the gate set, so one root serves every
+description compiled from the same model. Line numbers cited below refer to
+the code as of the security pass and may have drifted by a few lines.
 
 Verdict summary (proved+tested / tested only / gap) is in the final table.
 
@@ -74,8 +77,10 @@ Files: `protocol/merkle.py`, `protocol/domains.py`, `protocol/session.py`
   which covers the session id, compiled digest, `theta`, `eta`, the public
   I/O and kappa_W; `interior_domain` uses the replay-phase digest (52-59),
   which chains back to the header and the boundary message (section 2);
-  `weight_domain` uses a fixed tag plus the index's weight-position identity
-  (30, 40-43), because kappa_W outlives sessions.
+  `weight_domain(gate_set, count)` uses a fixed tag plus the gate set digest
+  over the rank space `0 .. count-1`, because kappa_W outlives sessions *and*
+  descriptions; a sampled weight gate at address `a` is opened at position
+  `weight_rank(a)` (`_Layout.position`).
 - `verify_opening` (`merkle.py`, 174-198) rejects a count that disagrees with
   the domain, a position that is not in the domain's position set (the
   `rank` lookup fails, so padding ranks are unreachable), a path of the wrong
@@ -112,14 +117,18 @@ Files: `protocol/merkle.py`, `protocol/domains.py`, `protocol/session.py`
 
 **Gaps.**
 
-- kappa_W's domain is bound to a fixed tag, the weight-position identity and
-  the count, and its leaves to the value width -- not to the gate set's
-  semantics or to the compiled digest.  A kappa_W computed for another model
-  with the same weight positions and widths is a *valid root* for this
-  index; the header (which carries the compiled digest) is what ties a
-  kappa_W to a model, and obtaining the right kappa_W for a model is the
-  operator's duty (section 10).  On `main` the domain becomes weight ranks,
-  which binds even less; the header binding must carry the weight.
+- kappa_W's domain is bound to a fixed tag, the gate set digest and the
+  count, and its leaves to the value width -- deliberately not to the compiled
+  digest, so that a model is committed once per epoch and the same root serves
+  every circuit compiled from it (continual batching compiles a new circuit per
+  request).  The price is that kappa_W says nothing about *which* model it
+  is: any weight vector of the right length under the same gate set has a
+  valid root.  The header is what ties a kappa_W to a run, and obtaining the
+  right kappa_W for a model before the epoch's first request is the operator's
+  duty (section 10).  Because the description decides which rank feeds which
+  gate, a client could permute the weights per request -- but the description
+  is `G(x, a)`'s deterministic output, so any such choice is paid for by the
+  advice (`test_kappa_w_is_bound_to_the_gate_set_and_the_vector_not_the_description`).
 - The boundary root is bound to the header digest, so two sessions with
   identical headers share a boundary domain.  `make_expectation` draws a
   random 16-byte session id; a caller that supplies its own must keep it
@@ -699,11 +708,23 @@ Verdict: proved + tested.
 
 ## 10. What is NOT achieved, or achieved only by convention
 
-- **Client code runs in the verifier's process.**  On `main` the verifier
-  will execute the client's constructor `G` to obtain the description; there
-  is no sandbox, only output-size limits.  At this commit the verifier
-  compiles description *bytes* (data, not code) under `CompilationLimits`;
-  whoever runs `G` runs untrusted code.
+- **Client code runs in the verifier's process.**  `research.Compile(G, x,
+  a)` executes the client's constructor `G` to obtain the description: there
+  is no sandbox, only output-size limits (`CompilationLimits`) and the
+  conversion of any exception, `SystemExit` included, into a `CompileError`.
+  A `G` that loops or allocates without bound hangs or exhausts the verifier;
+  `os._exit` is not catchable.  `G.digest` is self-reported: the binding in
+  the header is meaningful only when the verifier obtains `G`'s code from its
+  own store keyed by that digest (the prototype's `compile_matmul` /
+  `compile_demo_g` construct `G` verifier-side).  The header binds the flat
+  inputs `G(x, a)[1]`, not an independent encoding of `x`; how `x` maps onto
+  the `in` gates is `G`'s, and therefore a deterministic function of
+  `(G, x, a)`.  A deployment sandboxes and meters `G`, or has the client
+  prove `Compile(G, x, a) = (C, I)` (paper §7).
+- **Advice bound in two places.**  `Compile(max_advice_bits=)` refuses to run
+  `G` on oversized advice; `VerifierParameters.max_advice_bits` is the
+  authoritative admission check (it also runs on the transcript path).  Both
+  default to 0; a mismatch only causes rejections.
 - **kappa_W provenance.**  The verifier must obtain the model's kappa_W from a
   trusted source before the epoch's first request.  Nothing in the code
   enforces when or from whom; the `Expectation` takes it as an argument.  A
@@ -781,12 +802,13 @@ Sound but loose.  Fixed by the `l = 0` rule of section 5, with the soundness
 argument there and tests `test_source_only_units_contribute_no_error_terms`,
 `test_source_only_rule_is_exact_against_the_enumerated_union`.
 
-**F5 -- kappa_W is not self-describing (low, convention; documented).**  The
-weight root's domain binds a fixed tag, the index's weight positions and the
-count, not the compiled digest or gate-set semantics; the header binds kappa_W
-to the model.  Operators must not reuse a kappa_W across models with the same
-weight layout (`test_kappa_w_is_bound_to_the_index_of_its_model` shows what is
-and is not bound).
+**F5 -- kappa_W is not self-describing (low, by design; documented).**  The
+weight root's domain binds a fixed tag, the gate set digest and the count, not
+the compiled digest: one model, one root, across every description compiled
+from it.  The header binds kappa_W to the run; operators must hold the right
+root for each model
+(`test_kappa_w_is_bound_to_the_gate_set_and_the_vector_not_the_description`
+shows what is and is not bound).
 
 **F6 -- Dead limits (informational).**  `VerificationLimits.max_nesting_depth`
 and `max_artifact_bytes` are fields nothing reads.  Transcript nesting is
