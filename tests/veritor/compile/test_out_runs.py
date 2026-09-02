@@ -156,7 +156,10 @@ def random_strided_payload(helpers, seed: int) -> bytes | None:
     m = rng.randint(1, 4)
     steps = [h.gate("add", h.rng(IN, 0, 2, 0))]
     for g in range(1, m):
-        steps.append(h.gate("mul", h.rng(LOC, rng.randrange(g)), h.rng(IN, 0)))
+        if rng.random() < 0.25:  # a source gate among the leaf's gates: a pinned piece when declared
+            steps.append(h.gate(rng.choice(("in", "weight"))))
+        else:
+            steps.append(h.gate("mul", h.rng(LOC, rng.randrange(g)), h.rng(IN, 0)))
     order = list(range(m))
     rng.shuffle(order)
     leaf = doc.add(h.body(1, steps, [h.rng(LOC, p) for p in order], role="verification"))
