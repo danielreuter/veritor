@@ -530,12 +530,12 @@ then the whole header with the verifier's own.
   verifier built with the defaults accepts any claimed output under
   `theta = (0, 0)`: nothing is sampled and the only checks compare the
   client's boundary with the client's header.  `Bound` reports this honestly
-  (`bits == out_bits`), but nobody asks it (Finding F2).
+  (`bits == out_bits`); with no default `U_max`, a verifier has to decide (F2, fixed).
 - `W_max` bounds *expected* work; the realized work of one run can exceed it
   (the selection is random).  The hard limits (`max_openings`,
   `max_proof_bytes`, ...) bound the worst case.
 
-Verdict: proved + tested; default `U_max` is a gap.
+Verdict: proved + tested; the former default `U_max = None` is gone (F2).
 
 ---
 
@@ -751,7 +751,7 @@ Verdict: proved + tested.
 - **Denial of service.**  Bounded by explicit limits (`CompilationLimits`,
   `VerificationLimits`), which are conservative defaults, not proofs of
   linear work.
-- **Default parameters.**  `VerifierParameters()` waives `U_max` (Finding F2).
+- **Waived parameters.**  `VerifierParameters(max_capacity=None)` waives `U_max`; the waiver is explicit (F2, fixed).
 - **`ProtocolError` vs verdict.**  Misuse of the API by the verifier's own
   operator (wrong compiled, unencodable values, calls out of order on the
   prover side) raises exceptions rather than producing verdicts.
@@ -773,17 +773,16 @@ the session id (`HMAC(master, session_id || "q")`), so that seed freshness
 reduces to session-id uniqueness, and document that the seeds must never be
 supplied by anything the client can influence.
 
-**F2 -- Default `U_max = None` waives the capacity check (medium, design
-footgun; documented, not fixed).**  `VerifierParameters()` has
-`max_capacity=None` and `policy()` accepts every `theta`; under the defaults a
-client proposing `theta = (0, 0)` gets any claimed output accepted with
-nothing sampled (`test_default_parameters_waive_u_max_and_admit_a_policy_that_checks_nothing`).
-The module docstring documents `None` as "waives the check", so this is a
-documented default rather than a broken property, but it contradicts the
-README's framing of `U_max` as the verifier's guarantee.  Proposed fix: make
-`max_capacity` a required argument, or default it to `0` (only fully checked
-runs admitted), or refuse `q = 0` / `s = 0` unless `U_max` is set.  Not
-changed here because the `Expectation`/header API is being changed on `main`.
+**F2 -- A default `U_max = None` waived the capacity check (medium, design
+footgun; fixed).**  `VerifierParameters()` used to default `max_capacity` to
+`None`, and `make_expectation` used to default to `VerifierParameters()`, so a
+verifier that never thought about capacity admitted `theta = (0, 0)` and
+accepted any claimed output with nothing sampled
+(`test_waiving_u_max_admits_a_policy_that_checks_nothing`).  Now
+`max_capacity` is a required keyword (`None` still waives the check, but has
+to be written), and `make_expectation` / `make_verification_expectation`
+require the verifier's parameters.  The conformance fixture
+`build_executable_conformance_transcript` states its waiver explicitly.
 
 **F3 -- `_integer_count` could round below the true count (low; fixed).**
 `floor(2.0 ** bits)` could return `n - 1` when `bits` was `math.log2(n)`
@@ -832,7 +831,7 @@ check.
 | 5B | `Bound` upper-bounds `log2 |Y_eta|` under the union definition; every approximation rounds toward admitting more | proved + tested exhaustively on small random circuits with random marks |
 | 5 | Source-only rule `l = 0` | implemented + tested |
 | 6 | `eta` the verifier's and in the header; denominators capped; `U_max`, `W_max` from counts before any commitment; other `eta` is `EXPECTATION_MISMATCH` | proved + tested |
-| 6 | `U_max` enforced by default | gap (F2) |
+| 6 | `U_max` stated by every verifier (no default) | fixed (F2) |
 | 7 | Deterministic digest and `(C, I)`; non-canonical bytes rejected first; bounded compile work; marks in the digest; canonical transcripts | proved + tested |
 | 8 | Tiling, refinement, cut through declared outputs | proved + tested (cross-cut read on a forged circuit only) |
 | 9 | Offline verification recomputes every challenge; every post-hoc alteration caught | proved + tested |
