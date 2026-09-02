@@ -1,10 +1,10 @@
 # Honest-server frontier: the 70B serving shape
 
-Re-run on Sep 2, 2026 under the recompute-honest cost model (commit b9c0188). The earlier report (commit 62005fe, 588 points) priced every replay unit (RU, defined below) as if its inputs were free; that made the fine partitions look nearly free and made `cell/gate` the calibration answer at every budget. Those cost numbers were wrong and are corrected here. The security column (`U`, the covert-capacity bound) was and is computed by `Bound` and is unchanged for every partition and policy that appeared in the earlier run.
+Third run, Sep 2, 2026, under the recompute-honest cost model (commit b9c0188) and the reach-aware `Bound` (commit fb3d074). The first report (commit 62005fe, 588 points) priced every replay unit (RU, defined below) as if its inputs were free; the second (commit ebf31f0, 1008 points) corrected the cost and left the intermediate RU levels at the 16 Mbit cap because `Bound` charged an unsampled node its whole interface, capped only by the whole output. This run charges a node the smaller of its interface and the circuit outputs it can reach. Costs and verifier work are identical to the second run at all 1008 points (reach touches only `Bound`); `U` never increased at any point, fell at 307 points, and the number of points at the cap fell from 802 to 495. No operating point changed: the calibration answer is the one of the second report.
 
 ## Summary
 
-This report prices what an honest inference server naturally achieves under the protocol, so that the verifier's maximum admissible capacity `U_max` can be calibrated to it rather than dictated. The circuit is `FRONTIER_SHAPE` from `veritor.evaluation.frontier`: a 70B-class dense decoder (`d_model = 8192`, 80 layers, 64 heads, `hidden = 4 * d_model`, vocabulary 32768, 16-bit words) serving 2048 requests of 512 prompt + 512 generated tokens, batched 32 at a time: 2.7e17 gates, an output interface of 2048 × 512 × 16 = 16,777,216 bits (16 Mbit; 1,048,576 generated tokens of 16 bits), and an honest cost of 4.117e17 in the gate set's cost measure, identical for all twelve partitions since they tile the same gates.
+This report prices what an honest inference server naturally achieves under the protocol, so that the verifier's maximum admissible capacity `U_max` can be calibrated to it rather than dictated. The circuit is `FRONTIER_SHAPE` from `veritor.evaluation.frontier`: a 70B-class dense decoder (`d_model = 8192`, 80 layers, 64 heads, `hidden = 4 * d_model`, vocabulary 32768, 16-bit words) serving 2048 requests of 512 prompt + 512 generated tokens, batched 32 at a time first-come-first-served, so the run is 64 waves of 32 identical requests: 2.7e17 gates, an output interface of 2048 × 512 × 16 = 16,777,216 bits (16 Mbit; 1,048,576 generated tokens of 16 bits), and an honest cost of 4.117e17 in the gate set's cost measure, identical for all twelve partitions since they tile the same gates.
 
 Terminology. The circuit is partitioned into *replay units* (RUs, coarse; the prover commits their declared outputs up front and, when one is sampled at rate `q`, recomputes and commits its interior) and *verification units* (VUs, fine, refining the RUs; inside a sampled RU each VU is sampled at rate `s` and every gate in it is checked). A partition is written `RU level/VU level`.
 
@@ -14,9 +14,11 @@ The retention assumption. The honest prover retains only the circuit inputs (the
 recompute = sum over closed kinds A with m_A > 0 of  copies_A x (1 - (1 - q)^{m_A}) x replay_cost_A
 ~~~
 
-where `m_A` is the number of RUs whose smallest closed ancestor (their *recomputation unit*, in the terms of `cost.py`) is `A`. For a closed RU `m = 1` and the term is `q x replay_cost`, the old formula, so `request/*` costs are unchanged. For a decode `step` RU the smallest closed ancestor is the whole run (`m = 32,704` decode steps under the root); for a `layer`, `matvec`, `row` or `cell` RU it is the enclosing `prefill` or `request` (`m` from 593 to 9.9e9 per request). With `q × m ≫ 1` the probability of re-execution is 1 and the recompute term is the whole honest computation: **every RU level finer than `request` shows `recompute = 1.000` of the honest cost at every grid policy** (0.982 and 0.994 for `step` and `layer` at `q = 1/8192`, where `q × m` is only 4 to 5). The old report's overhead columns for `step/row`, `layer/row`, `matvec/row`, `row/gate` and `cell/gate` (0.0002 to 1.33) were wrong; the corrected values are 0.98 to 1.83.
+where `m_A` is the number of RUs whose smallest closed ancestor (their *recomputation unit*, in the terms of `cost.py`) is `A`. For a closed RU `m = 1` and the term is `q x replay_cost`, the original formula, so `request/*` costs are unchanged from the first report. For a decode `step` RU the smallest closed ancestor is the whole run (`m = 32,704` decode steps under the root); for a `layer`, `matvec`, `row` or `cell` RU it is the enclosing `prefill` or `request` (`m` from 593 to 9.9e9 per request). With `q × m ≫ 1` the probability of re-execution is 1 and the recompute term is the whole honest computation: **every RU level finer than `request` shows `recompute = 1.000` of the honest cost at every grid policy** (0.982 and 0.994 for `step` and `layer` at `q = 1/8192`, where `q × m` is only 4 to 5). Only closed RUs replay at `q ×` their cost.
 
-The corrected calibration answer. The only RU levels an honest server can afford below 100% prover overhead are `request/*`. Among them the VU level matters a great deal once `s < 1`: with `request/row` a single sampled-and-failed VU error in the one-hot (524 kbit of declared output) is charged the whole request's 8,192 bits at the cheap VU price, so at `q = 1/8, s = 1/8, eta = 1/100` `request/row` certifies 2,396,735 bits (2.29 Mbit with Mbit = 2^20 bits as in the tables, 14% of the output) while `request/cell` certifies 284,048 bits (277 kbit, 1.7%), essentially the RU channel alone, `Lambda_q × 8192 = 282,522` bits (`Lambda_q = ln(1/eta) / -ln(1 - q) = 34.5` whole requests), at the same prover overhead 0.224 and verifier work 1.24. "Request RUs, dot-product VUs" (`request/cell`; `request/gate` gives the same `U` at 1.5× the verifier work) is the honest server's natural operating point, and it is the cheapest compliant partition in every non-vacuous cell of the calibration tables below with prover overhead ≤ 1.
+The reach. `Bound` bounds the outputs an adversary can reach with acceptance probability above `eta` by charging every unsampled node a downstream cut. The interface `Out(S)` of a node is such a cut (every path out of the node leaves through a declared output), and so are the circuit outputs reachable from the node along argument reads (every path from the node to the output ends at one of them); any superset of the reachable outputs is a cut too, so an over-approximation is sound. `KindSummary.reach_bits` is that over-approximation, computed in `Index.kinds()` top-down over the definition DAG at step granularity without enumerating copies, and `Bound` now charges `min(out_bits, reach_bits)` per node (`bound.cut_bits`), with the whole output still capping everything. In this shape a `request` reaches its own 8,192 token bits (requests never read each other); everything inside a request (`layer`, `matvec`, `row`, `cell` RUs, and every VU) reaches at most those 8,192 bits whatever its interface; the steps of one wave are chained through the tokens and the cache, so a `prefill_step` reaches its wave's 32 × 512 × 16 = 262,144 token bits and the decode step at context `c` the wave's remaining 32 × (1024 − c) × 16; the next wave's prefill reads only the weights, so nothing reaches across waves; the weights reach everything.
+
+The calibration answer, unchanged from the second report. The only RU levels an honest server can afford below 100% prover overhead are `request/*`. Among them the VU level matters a great deal once `s < 1`: with `request/row` a single sampled-and-failed VU error in the one-hot (524 kbit of declared output, reach 8,192) is charged the whole request's 8,192 bits at the cheap VU price, so at `q = 1/8, s = 1/8, eta = 1/100` `request/row` certifies 2,396,735 bits (2.29 Mbit with Mbit = 2^20 bits as in the tables, 14% of the output) while `request/cell` certifies 284,048 bits (277 kbit, 1.7%), essentially the RU channel alone, `Lambda_q × 8192 = 282,522` bits (`Lambda_q = ln(1/eta) / -ln(1 - q) = 34.5` whole requests), at the same prover overhead 0.224 and verifier work 1.24. "Request RUs, dot-product VUs" (`request/cell`; `request/gate` gives the same `U` at 1.5× the verifier work) is the honest server's natural operating point, and it is the cheapest compliant partition in every non-vacuous cell of the calibration tables below with prover overhead ≤ 1.
 
 | eta | budget (prover overhead, verifier work) | cheapest compliant partition and policy | `U` (bits) | of output | bits per generated token | overhead (of which recompute) | work |
 |---|---|---|---|---|---|---|---|
@@ -30,7 +32,9 @@ The corrected calibration answer. The only RU levels an honest server can afford
 | 1/10^6 | (≤ 10%, ≤ 100%) | `request/cell` q=1/32 s=1/8 | 3,586,234 | 21% | 3.42 | 0.056 (0.031) | 0.31 |
 | 1/10^6 | (≤ 100%, ≤ 10×) | `request/cell` q=1/2 s=1/8 | 164,200 | 0.98% | 0.157 | 0.896 (0.500) | 4.96 |
 
-The `cell/gate` partition, which the old report recommended, is kept in every table as the "commit everything, prove a sparse sample" baseline: with 3.5e13 RUs of one dot product each, sampling any of them at any `q ≥ 1/8192` forces the prover to re-run the request, so its prover overhead is at least 1.0002 (at `q = 1/8192, s = 1/512`) and is 1.396 at `q = 1/2, s = 1/8` (recompute 1.000 + interior commitment 0.333 + proof 0.0625). Its `U` numbers (640 bits / 4,021 bits / 11,712 bits at the three etas, `q = 1/2, s = 1/8`) are correct and are the smallest in the sweep, but they are available only to a prover willing to pay 140% overhead; under the 100% budget `cell/gate` never qualifies.
+What reach changed is the reading of the intermediate RU levels. `layer/*`, `matvec/*` and `row/*` are no longer vacuous: at `q = 1/8, s = 1/8, eta = 1/100` they fall from 16,777,216 bits to 2,399,690 (`layer/row`, `matvec/row`) and 284,580 to 284,714 (`layer/cell`, `matvec/cell`, `row/cell`, `row/gate`), within 0.25% of `request/cell`, because every RU inside a request now reaches exactly that request's tokens whatever its interface, so their RU channel is the same `Lambda_q × 8192` plus a slightly larger position term. `step/cell` falls to 9,081,475 (54%) at that policy, a free step leaking up to 32× a free request, and `step/row` stays at the cap there. But their prover overhead is unchanged at 1.10 (recompute 1.00), so reach makes these levels *finite* without making any of them affordable: under (overhead ≤ 1, work ≤ 10) `step/*` and `layer/*` still admit only `q = 1/8192`, where they are capped, and `matvec/*`, `row/*` and `cell/gate` admit nothing.
+
+The `cell/gate` partition, which the first report recommended, is kept in every table as the "commit everything, prove a sparse sample" baseline: with 3.5e13 RUs of one dot product each, sampling any of them at any `q ≥ 1/8192` forces the prover to re-run the request, so its prover overhead is at least 1.0002 (at `q = 1/8192, s = 1/512`) and is 1.396 at `q = 1/2, s = 1/8` (recompute 1.000 + interior commitment 0.333 + proof 0.0625). Its `U` numbers (640 bits / 4,021 bits / 11,712 bits at the three etas, `q = 1/2, s = 1/8`) are unchanged by reach (a dot product's 16-bit interface is already below its 8,192-bit reach) and are the smallest in the sweep, but they are available only to a prover willing to pay 140% overhead; under the 100% budget `cell/gate` never qualifies.
 
 ## Method
 
@@ -44,24 +48,24 @@ points = sweep(FRONTIER_SHAPE)           # DEFAULT_PARTITIONS x DEFAULT_GRID x D
 save(points, FRONTIER_SHAPE, Path("docs/data/frontier-70b.json"))
 ~~~
 
-(the actual run was chunked by partition across processes and merged in canonical order) and the raw points are in `docs/data/frontier-70b.json`; `veritor.evaluation.frontier.load(path)` returns the shape and the points, and `calibration_table`, `partition_table` and `certify` reproduce every table below. Every admissible partition was swept: `request/row`, `request/cell`, `request/gate`, `step/row`, `step/cell`, `layer/row`, `layer/cell`, `matvec/row`, `matvec/cell`, `row/cell`, `row/gate`, `cell/gate` (the VU level `cell`, one VU per dot product or per single-output cell, is new in this run) over the grid `q ∈ {1/2, 1/8, 1/32, 1/128, 1/512, 1/2048, 1/8192}` × `s ∈ {1, 1/8, 1/64, 1/512}` at `eta ∈ {1/2, 1/100, 1/10^6}`: 12 × 28 × 3 = 1008 points. Each point is the protocol's own `Bound` (Laplace-only fold, `BoundOptions(knapsack=False, max_buckets=1 << 22)`), `Cost` (prover's expected cost divided by the honest cost, with the recompute share reported separately as `Point.recompute`) and `expected_work` (verifier's, same denominator).
+(the actual run was chunked by partition across processes and merged in canonical order) and the raw points are in `docs/data/frontier-70b.json`; `veritor.evaluation.frontier.load(path)` returns the shape and the points, and `calibration_table`, `partition_table` and `certify` reproduce every table below. Every admissible partition was swept: `request/row`, `request/cell`, `request/gate`, `step/row`, `step/cell`, `layer/row`, `layer/cell`, `matvec/row`, `matvec/cell`, `row/cell`, `row/gate`, `cell/gate` (the VU level `cell` is one VU per dot product or per single-output cell) over the grid `q ∈ {1/2, 1/8, 1/32, 1/128, 1/512, 1/2048, 1/8192}` × `s ∈ {1, 1/8, 1/64, 1/512}` at `eta ∈ {1/2, 1/100, 1/10^6}`: 12 × 28 × 3 = 1008 points. Each point is the protocol's own `Bound` (Laplace-only fold, `BoundOptions(knapsack=False, max_buckets=1 << 22)`, charging `min(out_bits, reach_bits)` per node), `Cost` (prover's expected cost divided by the honest cost, with the recompute share reported separately as `Point.recompute`) and `expected_work` (verifier's, same denominator).
 
 Budgets are relative to the honest cost: overhead `1` means the prover's expected extra cost equals the honest computation (so the checked run is 2× honest in total), work `10` means the verifier does ten honest runs' worth of checking. In the tables `kbit`, `Mbit` and `Gbit` are 2^10, 2^20 and 2^30 bits (as rendered by `frontier._bits`); the prose quotes exact bit counts where the distinction matters. Bits per generated token divide by `shape.requests × shape.generated = 1,048,576`; the cap is 16 bits per token.
 
 ### The partitions
 
-| partition | RUs | widest RU kind | its `out_bits` | copies | closed RU kinds | recomputation unit of the open RUs (`m`) |
-|---|---|---|---|---|---|---|
-| `request/row`, `request/cell`, `request/gate` | 2.05e+03 | `request` | 8 kbit | 2.05e+03 | `weights`, `request` | none (every RU is closed) |
-| `step/row`, `step/cell` | 3.28e+04 | `prefill_step(32)` | 320 Gbit | 64 | `weights`, `prefill_step` | the run (`m = 32,704` decode steps) |
-| `layer/row`, `layer/cell` | 8.7e+07 | `layer(512 positions, prefill)` | 192 Mbit | 1.64e+05 | `weights`, `prompt` (zero cost) | `prefill` (`m = 593`) and `request` (`m = 41,902`), per request |
-| `matvec/row`, `matvec/cell` | 1.2e+10 | `square_block(16777216)` | 256 Mbit | 1.64e+05 | `weights`, `prompt` | `prefill` (2.87e6) and `request` (2.99e6) |
-| `row/cell`, `row/gate` | 1.24e+13 | `square_block(16777216)` | 256 Mbit | 1.64e+05 | `weights`, `prompt` | `prefill` (3.03e9) and `request` (3.04e9) |
-| `cell/gate` | 3.47e+13 | `dot(8192)` | 16 bit | 1.1e+13 | `weights`, `prompt` | `prefill` (7.07e9) and `request` (9.87e9) |
+| partition | RUs | widest RU kind | its `out_bits` | its `reach_bits` | copies | closed RU kinds | recomputation unit of the open RUs (`m`) |
+|---|---|---|---|---|---|---|---|
+| `request/row`, `request/cell`, `request/gate` | 2.05e+03 | `request` | 8 kbit | 8 kbit | 2.05e+03 | `weights`, `request` | none (every RU is closed) |
+| `step/row`, `step/cell` | 3.28e+04 | `prefill_step(32)` | 320 Gbit | 256 kbit | 64 | `weights`, `prefill_step` | the run (`m = 32,704` decode steps) |
+| `layer/row`, `layer/cell` | 8.7e+07 | `layer(512 positions, prefill)` | 192 Mbit | 8 kbit | 1.64e+05 | `weights`, `prompt` (zero cost) | `prefill` (`m = 593`) and `request` (`m = 41,902`), per request |
+| `matvec/row`, `matvec/cell` | 1.2e+10 | `square_block(16777216)` | 256 Mbit | 8 kbit | 1.64e+05 | `weights`, `prompt` | `prefill` (2.87e6) and `request` (2.99e6) |
+| `row/cell`, `row/gate` | 1.24e+13 | `square_block(16777216)` | 256 Mbit | 8 kbit | 1.64e+05 | `weights`, `prompt` | `prefill` (3.03e9) and `request` (3.04e9) |
+| `cell/gate` | 3.47e+13 | `dot(8192)` | 16 bit | 8 kbit | 1.1e+13 | `weights`, `prompt` | `prefill` (7.07e9) and `request` (9.87e9) |
 
-Only `request` RUs have an interface narrower than the circuit's output (a request's 512 generated tokens, 8,192 bits); the `step`, `layer`, `matvec` and `row` RUs expose internal activations wider than the whole output, and `cell` RUs expose one word. In `layer/*` and finer the only closed RUs are the weights and the prompt tokens (source gates, zero replay cost); the prefill layers of a request are contained in the closed `prefill` kind while the decode layers are contained only in `request`, hence two recomputation kinds per request: a sampled prefill-side RU costs a prefill (about half of the request's cost), a sampled decode-side RU costs the whole request.
+Only `request` RUs have an interface as narrow as their reach; the `step`, `layer`, `matvec` and `row` RUs expose internal activations wider than the whole output but reach 262,144 bits (a wave) or 8,192 bits (a request), and `cell` RUs expose one word. The decode steps' reach declines along the wave, from 261,632 bits at context 513 to 512 bits at the last step. In `layer/*` and finer the only closed RUs are the weights and the prompt tokens (source gates, zero replay cost); the prefill layers of a request are contained in the closed `prefill` kind while the decode layers are contained only in `request`, hence two recomputation kinds per request: a sampled prefill-side RU costs a prefill (about half of the request's cost), a sampled decode-side RU costs the whole request.
 
-### Cost terms per partition (`s = 1/8`, as fractions of the honest cost)
+### Cost terms per partition (`s = 1/8`, as fractions of the honest cost; identical to the second run)
 
 | partition | q | overhead | recompute | commit interior | boundary | proof |
 |---|---|---|---|---|---|---|
@@ -77,7 +81,7 @@ Only `request` RUs have an interface narrower than the circuit's output (a reque
 | `cell/gate` | 1/2 | 1.3959 | 1.0000 | 0.3333 | 8e-05 | 0.0625 |
 | `cell/gate` | 1/8192 | 1.0002 | 1.0000 | 0.0001 | 8e-05 | 0.00002 |
 
-The three partitions with the same RU level have identical costs (the VU level enters only through the proof term, `q s × 1.000`). For `request/*` the overhead is `q (1.6666 + s)` to four digits at all 28 policies; for every other RU level it is `≈ 1 + q (0.6667 + s)`.
+The partitions with the same RU level have identical costs (the VU level enters only through the proof term, `q s × 1.000`). For `request/*` the overhead is `q (1.6666 + s)` to four digits at all 28 policies; for every other RU level it is `≈ 1 + q (0.6667 + s)`.
 
 ## Calibration tables
 
@@ -87,8 +91,8 @@ Each cell is the smallest certified capacity over all partitions and grid polici
 
 | verifier work \ prover overhead | 1% | 10% | 50% | 100% | 200% | 500% |
 |---|---|---|---|---|---|---|
-| 1% | 2.93 Mbit (18%) `request/cell` q=1/512 s=1/64 | 578 kbit (3.5%) `request/cell` q=1/32 s=1/512 | 578 kbit (3.5%) `request/cell` q=1/32 s=1/512 | 578 kbit (3.5%) `request/cell` q=1/32 s=1/512 | 543 kbit (3.3%) `cell/gate` q=1/2048 s=1/8 | 543 kbit (3.3%) `cell/gate` q=1/2048 s=1/8 |
-| 10% | 2.77 Mbit (17%) `request/cell` q=1/512 s=1/8 | 185 kbit (1.1%) `request/cell` q=1/32 s=1/64 | 143 kbit (0.88%) `request/cell` q=1/8 s=1/512 | 36.7 kbit (0.22%) `request/cell` q=1/2 s=1/512 | 36.7 kbit (0.22%) `request/cell` q=1/2 s=1/512 | 36.7 kbit (0.22%) `request/cell` q=1/2 s=1/512 |
+| 1% | 2.93 Mbit (18%) `request/cell` q=1/512 s=1/64 | 578 kbit (3.5%) `request/cell` q=1/32 s=1/512 | 578 kbit (3.5%) `request/cell` q=1/32 s=1/512 | 578 kbit (3.5%) `request/cell` q=1/32 s=1/512 | 543 kbit (3.3%) `matvec/cell` q=1/32 s=1/512 | 543 kbit (3.3%) `matvec/cell` q=1/32 s=1/512 |
+| 10% | 2.77 Mbit (17%) `request/cell` q=1/512 s=1/8 | 185 kbit (1.1%) `request/cell` q=1/32 s=1/64 | 143 kbit (0.88%) `request/cell` q=1/8 s=1/512 | 36.7 kbit (0.22%) `request/cell` q=1/2 s=1/512 | 36.7 kbit (0.22%) `matvec/cell` q=1/2 s=1/512 | 36.7 kbit (0.22%) `matvec/cell` q=1/2 s=1/512 |
 | 100% | 2.77 Mbit (17%) `request/cell` q=1/512 s=1 | 176 kbit (1.1%) `request/cell` q=1/32 s=1/8 | 44 kbit (0.27%) `request/cell` q=1/8 s=1/64 | 8.65 kbit (0.05%) `request/cell` q=1/2 s=1/64 | 4.86 kbit (0.03%) `cell/gate` q=1/2 s=1/64 | 4.86 kbit (0.03%) `cell/gate` q=1/2 s=1/64 |
 | 1000% | 2.77 Mbit (17%) `request/cell` q=1/512 s=1 | 175 kbit (1.1%) `request/cell` q=1/32 s=1 | 41.6 kbit (0.25%) `request/cell` q=1/8 s=1 | 8.05 kbit (0.05%) `request/cell` q=1/2 s=1/8 | 640 bit (0.004%) `cell/gate` q=1/2 s=1/8 | 640 bit (0.004%) `cell/gate` q=1/2 s=1/8 |
 | 10000% | 2.77 Mbit (17%) `request/cell` q=1/512 s=1 | 175 kbit (1.1%) `request/cell` q=1/32 s=1 | 41.6 kbit (0.25%) `request/cell` q=1/8 s=1 | 8.05 kbit (0.05%) `request/cell` q=1/2 s=1/8 | 63.9 bit (0.0004%) `cell/gate` q=1/2 s=1 | 63.9 bit (0.0004%) `cell/gate` q=1/2 s=1 |
@@ -97,8 +101,8 @@ Each cell is the smallest certified capacity over all partitions and grid polici
 
 | verifier work \ prover overhead | 1% | 10% | 50% | 100% | 200% | 500% |
 |---|---|---|---|---|---|---|
-| 1% | 16 Mbit (100%) `request/row` q=1/8192 s=1/512 | 3.74 Mbit (23%) `request/cell` q=1/32 s=1/512 | 3.74 Mbit (23%) `request/cell` q=1/32 s=1/512 | 3.74 Mbit (23%) `request/cell` q=1/32 s=1/512 | 3.33 Mbit (21%) `cell/gate` q=1/2048 s=1/8 | 3.33 Mbit (21%) `cell/gate` q=1/2048 s=1/8 |
-| 10% | 16 Mbit (100%) `request/row` q=1/8192 s=1/512 | 1.2 Mbit (7.5%) `request/cell` q=1/32 s=1/64 | 946 kbit (5.8%) `request/cell` q=1/8 s=1/512 | 231 kbit (1.4%) `request/cell` q=1/2 s=1/512 | 231 kbit (1.4%) `request/cell` q=1/2 s=1/512 | 231 kbit (1.4%) `request/cell` q=1/2 s=1/512 |
+| 1% | 16 Mbit (100%) `request/row` q=1/8192 s=1/512 | 3.74 Mbit (23%) `request/cell` q=1/32 s=1/512 | 3.74 Mbit (23%) `request/cell` q=1/32 s=1/512 | 3.74 Mbit (23%) `request/cell` q=1/32 s=1/512 | 3.32 Mbit (21%) `matvec/cell` q=1/32 s=1/512 | 3.32 Mbit (21%) `matvec/cell` q=1/32 s=1/512 |
+| 10% | 16 Mbit (100%) `request/row` q=1/8192 s=1/512 | 1.2 Mbit (7.5%) `request/cell` q=1/32 s=1/64 | 946 kbit (5.8%) `request/cell` q=1/8 s=1/512 | 231 kbit (1.4%) `request/cell` q=1/2 s=1/512 | 231 kbit (1.4%) `matvec/cell` q=1/2 s=1/512 | 231 kbit (1.4%) `matvec/cell` q=1/2 s=1/512 |
 | 100% | 16 Mbit (100%) `request/row` q=1/8192 s=1/512 | 1.14 Mbit (7.1%) `request/cell` q=1/32 s=1/8 | 293 kbit (1.8%) `request/cell` q=1/8 s=1/64 | 57.5 kbit (0.35%) `request/cell` q=1/2 s=1/64 | 30.5 kbit (0.19%) `cell/gate` q=1/2 s=1/64 | 30.5 kbit (0.19%) `cell/gate` q=1/2 s=1/64 |
 | 1000% | 16 Mbit (100%) `request/row` q=1/8192 s=1/512 | 1.13 Mbit (7.1%) `request/cell` q=1/32 s=1 | 276 kbit (1.7%) `request/cell` q=1/8 s=1 | 53.5 kbit (0.33%) `request/cell` q=1/2 s=1/8 | 3.93 kbit (0.02%) `cell/gate` q=1/2 s=1/8 | 3.93 kbit (0.02%) `cell/gate` q=1/2 s=1/8 |
 | 10000% | 16 Mbit (100%) `request/row` q=1/8192 s=1/512 | 1.13 Mbit (7.1%) `request/cell` q=1/32 s=1 | 276 kbit (1.7%) `request/cell` q=1/8 s=1 | 53.5 kbit (0.33%) `request/cell` q=1/2 s=1/8 | 402 bit (0.002%) `cell/gate` q=1/2 s=1 | 402 bit (0.002%) `cell/gate` q=1/2 s=1 |
@@ -107,13 +111,13 @@ Each cell is the smallest certified capacity over all partitions and grid polici
 
 | verifier work \ prover overhead | 1% | 10% | 50% | 100% | 200% | 500% |
 |---|---|---|---|---|---|---|
-| 1% | 16 Mbit (100%) `request/row` q=1/8192 s=1/512 | 11.2 Mbit (70%) `request/cell` q=1/32 s=1/512 | 11.2 Mbit (70%) `request/cell` q=1/32 s=1/512 | 11.2 Mbit (70%) `request/cell` q=1/32 s=1/512 | 9.63 Mbit (60%) `cell/gate` q=1/2048 s=1/8 | 9.63 Mbit (60%) `cell/gate` q=1/2048 s=1/8 |
-| 10% | 16 Mbit (100%) `request/row` q=1/8192 s=1/512 | 3.59 Mbit (22%) `request/cell` q=1/32 s=1/64 | 2.77 Mbit (17%) `request/cell` q=1/8 s=1/512 | 676 kbit (4.1%) `request/cell` q=1/2 s=1/512 | 676 kbit (4.1%) `request/cell` q=1/2 s=1/512 | 676 kbit (4.1%) `request/cell` q=1/2 s=1/512 |
+| 1% | 16 Mbit (100%) `request/row` q=1/8192 s=1/512 | 11.2 Mbit (70%) `request/cell` q=1/32 s=1/512 | 11.2 Mbit (70%) `request/cell` q=1/32 s=1/512 | 11.2 Mbit (70%) `request/cell` q=1/32 s=1/512 | 9.63 Mbit (60%) `matvec/cell` q=1/32 s=1/512 | 9.63 Mbit (60%) `matvec/cell` q=1/32 s=1/512 |
+| 10% | 16 Mbit (100%) `request/row` q=1/8192 s=1/512 | 3.59 Mbit (22%) `request/cell` q=1/32 s=1/64 | 2.77 Mbit (17%) `request/cell` q=1/8 s=1/512 | 676 kbit (4.1%) `request/cell` q=1/2 s=1/512 | 671 kbit (4.1%) `matvec/cell` q=1/2 s=1/512 | 671 kbit (4.1%) `matvec/cell` q=1/2 s=1/512 |
 | 100% | 16 Mbit (100%) `request/row` q=1/8192 s=1/512 | 3.42 Mbit (21%) `request/cell` q=1/32 s=1/8 | 877 kbit (5.4%) `request/cell` q=1/8 s=1/64 | 172 kbit (1.1%) `request/cell` q=1/2 s=1/64 | 88.9 kbit (0.54%) `cell/gate` q=1/2 s=1/64 | 88.9 kbit (0.54%) `cell/gate` q=1/2 s=1/64 |
 | 1000% | 16 Mbit (100%) `request/row` q=1/8192 s=1/512 | 3.4 Mbit (21%) `request/cell` q=1/32 s=1 | 828 kbit (5.1%) `request/cell` q=1/8 s=1 | 160 kbit (0.98%) `request/cell` q=1/2 s=1/8 | 11.4 kbit (0.07%) `cell/gate` q=1/2 s=1/8 | 11.4 kbit (0.07%) `cell/gate` q=1/2 s=1/8 |
 | 10000% | 16 Mbit (100%) `request/row` q=1/8192 s=1/512 | 3.4 Mbit (21%) `request/cell` q=1/32 s=1 | 828 kbit (5.1%) `request/cell` q=1/8 s=1 | 160 kbit (0.98%) `request/cell` q=1/2 s=1/8 | 1.14 kbit (0.007%) `cell/gate` q=1/2 s=1 | 1.14 kbit (0.007%) `cell/gate` q=1/2 s=1 |
 
-Reading across a row: up to 100% prover overhead the answer is always `request/cell`; from 200% on it becomes `cell/gate`, which buys a smaller `U` at the same verifier work (1.1× at 1% work, 1.9× at 100%, 14× at 1000%, 130× at 10000%) by paying the whole honest computation again in recomputation. Reading down the 1% column: at `eta = 1/100` and below, no honest partition certifies anything with prover overhead ≤ 1%, because 1% overhead forces `q ≤ 1/512` for request RUs and then `Lambda_q × 8192` bits exceeds the output.
+Reading across a row: up to 100% prover overhead the answer is always `request/cell`; from 200% on it becomes `cell/gate` where the verifier's budget is 100% or more, and `matvec/cell` in the 1% and 10% work rows, where `cell/gate` at `q = 1/2048` used to sit: at `s = 1/512` the VU channel dominates and every partition with `cell` or `gate` VUs lands within 7% of the others (555,766 to 591,749 bits at `q = 1/32, eta = 1/2`; 236,651 to 236,952 at `q = 1/2, eta = 1/100`), the finer RU levels a few percent below `request/cell`, so those cells are decided by small differences. Reading down the 1% column: at `eta = 1/100` and below, no honest partition certifies anything with prover overhead ≤ 1%, because 1% overhead forces `q ≤ 1/512` for request RUs and then `Lambda_q × 8192` bits exceeds the output.
 
 ## Per-partition tables
 
@@ -126,14 +130,14 @@ For each partition, the smallest capacity within the verifier work budget (no pr
 | `request/row` | 41.6 kbit | 0.25% | 1/8 | 1 | 33% | 12% | 989% |
 | `request/cell` | 8.05 kbit | 0.05% | 1/2 | 1/8 | 90% | 50% | 496% |
 | `request/gate` | 8.06 kbit | 0.05% | 1/2 | 1/8 | 90% | 50% | 742% |
-| `step/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 98% | 98% | 0.002% |
-| `step/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 98% | 98% | 0.002% |
-| `layer/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 99% | 99% | 0.002% |
-| `layer/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 99% | 99% | 0.002% |
-| `matvec/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.002% |
-| `matvec/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.002% |
-| `row/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.003% |
-| `row/gate` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.003% |
+| `step/row` | 1.3 Mbit | 8.1% | 1/8 | 1 | 121% | 100% | 989% |
+| `step/cell` | 257 kbit | 1.6% | 1/2 | 1/8 | 140% | 100% | 496% |
+| `layer/row` | 41.7 kbit | 0.25% | 1/8 | 1 | 121% | 100% | 989% |
+| `layer/cell` | 8.07 kbit | 0.05% | 1/2 | 1/8 | 140% | 100% | 496% |
+| `matvec/row` | 41.7 kbit | 0.25% | 1/8 | 1 | 121% | 100% | 992% |
+| `matvec/cell` | 8.07 kbit | 0.05% | 1/2 | 1/8 | 140% | 100% | 496% |
+| `row/cell` | 8.08 kbit | 0.05% | 1/2 | 1/8 | 140% | 100% | 739% |
+| `row/gate` | 8.08 kbit | 0.05% | 1/2 | 1/8 | 140% | 100% | 742% |
 | `cell/gate` | 640 bit | 0.004% | 1/2 | 1/8 | 140% | 100% | 742% |
 
 ### eta = 1/2, verifier work ≤ 1
@@ -143,14 +147,14 @@ For each partition, the smallest capacity within the verifier work budget (no pr
 | `request/row` | 708 kbit | 4.3% | 1/2 | 1/64 | 84% | 50% | 62% |
 | `request/cell` | 8.65 kbit | 0.05% | 1/2 | 1/64 | 84% | 50% | 62% |
 | `request/gate` | 8.68 kbit | 0.05% | 1/2 | 1/64 | 84% | 50% | 93% |
-| `step/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 98% | 98% | 0.002% |
-| `step/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 98% | 98% | 0.002% |
-| `layer/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 99% | 99% | 0.002% |
-| `layer/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 99% | 99% | 0.002% |
-| `matvec/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.002% |
-| `matvec/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.002% |
-| `row/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.003% |
-| `row/gate` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.003% |
+| `step/row` | 11.1 Mbit | 69% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `step/cell` | 263 kbit | 1.6% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `layer/row` | 708 kbit | 4.3% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `layer/cell` | 8.35 kbit | 0.05% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `matvec/row` | 708 kbit | 4.3% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `matvec/cell` | 8.27 kbit | 0.05% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `row/cell` | 8.29 kbit | 0.05% | 1/2 | 1/64 | 134% | 100% | 92% |
+| `row/gate` | 8.3 kbit | 0.05% | 1/2 | 1/64 | 134% | 100% | 93% |
 | `cell/gate` | 4.86 kbit | 0.03% | 1/2 | 1/64 | 134% | 100% | 93% |
 
 ### eta = 1/100, verifier work ≤ 10
@@ -160,14 +164,14 @@ For each partition, the smallest capacity within the verifier work budget (no pr
 | `request/row` | 276 kbit | 1.7% | 1/8 | 1 | 33% | 12% | 989% |
 | `request/cell` | 53.5 kbit | 0.33% | 1/2 | 1/8 | 90% | 50% | 496% |
 | `request/gate` | 53.5 kbit | 0.33% | 1/2 | 1/8 | 90% | 50% | 742% |
-| `step/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 98% | 98% | 0.002% |
-| `step/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 98% | 98% | 0.002% |
-| `layer/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 99% | 99% | 0.002% |
-| `layer/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 99% | 99% | 0.002% |
-| `matvec/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.002% |
-| `matvec/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.002% |
-| `row/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.003% |
-| `row/gate` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.003% |
+| `step/row` | 8.62 Mbit | 54% | 1/8 | 1 | 121% | 100% | 989% |
+| `step/cell` | 1.67 Mbit | 10% | 1/2 | 1/8 | 140% | 100% | 496% |
+| `layer/row` | 277 kbit | 1.7% | 1/8 | 1 | 121% | 100% | 989% |
+| `layer/cell` | 53.6 kbit | 0.33% | 1/2 | 1/8 | 140% | 100% | 496% |
+| `matvec/row` | 277 kbit | 1.7% | 1/8 | 1 | 121% | 100% | 992% |
+| `matvec/cell` | 53.6 kbit | 0.33% | 1/2 | 1/8 | 140% | 100% | 496% |
+| `row/cell` | 53.6 kbit | 0.33% | 1/2 | 1/8 | 140% | 100% | 739% |
+| `row/gate` | 53.6 kbit | 0.33% | 1/2 | 1/8 | 140% | 100% | 742% |
 | `cell/gate` | 3.93 kbit | 0.02% | 1/2 | 1/8 | 140% | 100% | 742% |
 
 ### eta = 1/100, verifier work ≤ 1
@@ -178,13 +182,13 @@ For each partition, the smallest capacity within the verifier work budget (no pr
 | `request/cell` | 57.5 kbit | 0.35% | 1/2 | 1/64 | 84% | 50% | 62% |
 | `request/gate` | 57.5 kbit | 0.35% | 1/2 | 1/64 | 84% | 50% | 93% |
 | `step/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 98% | 98% | 0.002% |
-| `step/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 98% | 98% | 0.002% |
-| `layer/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 99% | 99% | 0.002% |
-| `layer/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 99% | 99% | 0.002% |
-| `matvec/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.002% |
-| `matvec/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.002% |
-| `row/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.003% |
-| `row/gate` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.003% |
+| `step/cell` | 1.7 Mbit | 11% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `layer/row` | 4.59 Mbit | 29% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `layer/cell` | 55.4 kbit | 0.34% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `matvec/row` | 4.59 Mbit | 29% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `matvec/cell` | 54.9 kbit | 0.34% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `row/cell` | 54.9 kbit | 0.34% | 1/2 | 1/64 | 134% | 100% | 92% |
+| `row/gate` | 54.9 kbit | 0.34% | 1/2 | 1/64 | 134% | 100% | 93% |
 | `cell/gate` | 30.5 kbit | 0.19% | 1/2 | 1/64 | 134% | 100% | 93% |
 
 ### eta = 1/10^6, verifier work ≤ 10
@@ -195,13 +199,13 @@ For each partition, the smallest capacity within the verifier work budget (no pr
 | `request/cell` | 160 kbit | 0.98% | 1/2 | 1/8 | 90% | 50% | 496% |
 | `request/gate` | 160 kbit | 0.98% | 1/2 | 1/8 | 90% | 50% | 742% |
 | `step/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 98% | 98% | 0.002% |
-| `step/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 98% | 98% | 0.002% |
-| `layer/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 99% | 99% | 0.002% |
-| `layer/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 99% | 99% | 0.002% |
-| `matvec/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.002% |
-| `matvec/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.002% |
-| `row/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.003% |
-| `row/gate` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.003% |
+| `step/cell` | 5.01 Mbit | 31% | 1/2 | 1/8 | 140% | 100% | 496% |
+| `layer/row` | 830 kbit | 5.1% | 1/8 | 1 | 121% | 100% | 989% |
+| `layer/cell` | 161 kbit | 0.98% | 1/2 | 1/8 | 140% | 100% | 496% |
+| `matvec/row` | 830 kbit | 5.1% | 1/8 | 1 | 121% | 100% | 992% |
+| `matvec/cell` | 161 kbit | 0.98% | 1/2 | 1/8 | 140% | 100% | 496% |
+| `row/cell` | 161 kbit | 0.98% | 1/2 | 1/8 | 140% | 100% | 739% |
+| `row/gate` | 161 kbit | 0.98% | 1/2 | 1/8 | 140% | 100% | 742% |
 | `cell/gate` | 11.4 kbit | 0.07% | 1/2 | 1/8 | 140% | 100% | 742% |
 
 ### eta = 1/10^6, verifier work ≤ 1
@@ -212,13 +216,13 @@ For each partition, the smallest capacity within the verifier work budget (no pr
 | `request/cell` | 172 kbit | 1.1% | 1/2 | 1/64 | 84% | 50% | 62% |
 | `request/gate` | 172 kbit | 1.1% | 1/2 | 1/64 | 84% | 50% | 93% |
 | `step/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 98% | 98% | 0.002% |
-| `step/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 98% | 98% | 0.002% |
-| `layer/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 99% | 99% | 0.002% |
-| `layer/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 99% | 99% | 0.002% |
-| `matvec/row` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.002% |
-| `matvec/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.002% |
-| `row/cell` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.003% |
-| `row/gate` | 16 Mbit | 100% | 1/8192 | 1/512 | 100% | 100% | 0.003% |
+| `step/cell` | 5.11 Mbit | 32% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `layer/row` | 13.8 Mbit | 86% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `layer/cell` | 166 kbit | 1% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `matvec/row` | 13.8 Mbit | 86% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `matvec/cell` | 165 kbit | 1% | 1/2 | 1/64 | 134% | 100% | 62% |
+| `row/cell` | 165 kbit | 1% | 1/2 | 1/64 | 134% | 100% | 92% |
+| `row/gate` | 165 kbit | 1% | 1/2 | 1/64 | 134% | 100% | 93% |
 | `cell/gate` | 88.9 kbit | 0.54% | 1/2 | 1/64 | 134% | 100% | 93% |
 
 ### Best point per partition under both budgets (overhead ≤ 1, work ≤ 10)
@@ -238,7 +242,7 @@ For each partition, the smallest capacity within the verifier work budget (no pr
 | `layer/*` | all | 1/8192 | 1/512 | 16,777,216.0 | 16 Mbit | 100% | 16 | 0.994 | 0.994 | 0.000 |
 | `matvec/*`, `row/*`, `cell/gate` | all | -- | | | | | | > 1 at every policy | | |
 
-`step/*` and `layer/*` qualify only at `q = 1/8192`, where `q × m` is small enough that the run is not re-executed with certainty, and there they are at the cap. `matvec/*`, `row/*` and `cell/gate` have prover overhead above 1 at every grid policy and never qualify.
+`step/*` and `layer/*` qualify only at `q = 1/8192`, where `q × m` is small enough that the run is not re-executed with certainty, and there they are at the cap (with `Lambda_q` in the thousands, even a 262,144-bit or 8,192-bit reach per free RU exceeds the output). `matvec/*`, `row/*` and `cell/gate` have prover overhead above 1 at every grid policy and never qualify.
 
 ### Grids at eta = 1/100
 
@@ -268,7 +272,17 @@ Cells are `U as % of output / prover overhead / of which recompute / verifier wo
 | 1/2048 | 100% / 0.0013 / 0.000488 / 0.0387 | 100% / 0.000875 / 0.000488 / 0.00484 | 100% / 0.000821 / 0.000488 / 0.000605 | 100% / 0.000815 / 0.000488 / 7.57e-05 |
 | 1/8192 | 100% / 0.000326 / 0.000122 / 0.00968 | 100% / 0.000219 / 0.000122 / 0.00121 | 100% / 0.000205 / 0.000122 / 0.000151 | 100% / 0.000204 / 0.000122 / 1.89e-05 |
 
-`request/gate` has the same `U` as `request/cell` to within 0.02% in every cell and 1.5× its verifier work (118.7 `q s` against 79.3 `q s`).
+`request/gate` has the same `U` as `request/cell` to within 0.02% in every cell and 1.5× its verifier work (118.7 `q s` against 79.3 `q s`). `layer/cell`, `matvec/cell`, `row/cell` and `row/gate` have the same `U` as `request/cell` to within 0.25% wherever `request/cell` is below the cap, and overhead `1 + q (0.667 + s)`.
+
+`step/cell` (the RU channel is a wave, 262,144 bits; every row from `q = 1/32` down is at the cap):
+
+| q \ s | 1 | 1/8 | 1/64 | 1/512 |
+|---|---|---|---|---|
+| 1/2 | 10% / 1.83 / 1 / 39.7 | 10% / 1.4 / 1 / 4.96 | 11% / 1.34 / 1 / 0.62 | 33% / 1.33 / 1 / 0.0775 |
+| 1/8 | 54% / 1.21 / 1 / 9.92 | 54% / 1.1 / 1 / 1.24 | 55% / 1.09 / 1 / 0.155 | 100% / 1.08 / 1 / 0.0194 |
+| 1/32 | 100% / 1.05 / 1 / 2.48 | 100% / 1.02 / 1 / 0.31 | 100% / 1.02 / 1 / 0.0387 | 100% / 1.02 / 1 / 0.00484 |
+
+`step/row` reads 10% / 58% / 100% / 100% along `q = 1/2` and 54% / 100% / 100% / 100% along `q = 1/8`: identical to `step/cell` at `s = 1`, at the cap as soon as `s < 1` at `q = 1/8`.
 
 `cell/gate` (the "commit everything, prove a sparse sample" baseline):
 
@@ -282,23 +296,53 @@ Cells are `U as % of output / prover overhead / of which recompute / verifier wo
 | 1/2048 | 2.8% / 1 / 1 / 0.0579 | 21% / 1 / 1 / 0.00724 | 100% / 1 / 1 / 0.000905 | 100% / 1 / 1 / 0.000113 |
 | 1/8192 | 11% / 1 / 1 / 0.0145 | 80% / 1 / 1 / 0.00181 | 100% / 1 / 1 / 0.000226 | 100% / 1 / 1 / 2.83e-05 |
 
+## What reach changed
+
+Before is the second run (commit ebf31f0, `Bound` charging `min(out_bits, whole output)`), after is this run (`min(out_bits, reach_bits)`); same data otherwise. Costs, recompute and work are identical at all 1008 points; `U` is unchanged at 701 points and smaller at 307; no point grew.
+
+At `q = 1/8, s = 1/8, eta = 1/100`:
+
+| partition | before (bits) | after (bits) | after, of output | prover overhead | verifier work |
+|---|---|---|---|---|---|
+| `request/row` | 2,396,735 | 2,396,735 | 14% | 0.224 | 1.24 |
+| `request/cell` | 284,048 | 284,048 | 1.7% | 0.224 | 1.24 |
+| `request/gate` | 284,053 | 284,053 | 1.7% | 0.224 | 1.85 |
+| `step/row` | 16,777,216 | 16,777,216 | 100% | 1.099 | 1.24 |
+| `step/cell` | 16,777,216 | 9,081,475 | 54% | 1.099 | 1.24 |
+| `layer/row` | 16,777,216 | 2,399,690 | 14% | 1.099 | 1.24 |
+| `layer/cell` | 16,777,216 | 284,580 | 1.7% | 1.099 | 1.24 |
+| `matvec/row` | 16,777,216 | 2,399,690 | 14% | 1.099 | 1.24 |
+| `matvec/cell` | 16,777,216 | 284,714 | 1.7% | 1.099 | 1.24 |
+| `row/cell` | 16,777,216 | 284,638 | 1.7% | 1.099 | 1.85 |
+| `row/gate` | 16,777,216 | 284,640 | 1.7% | 1.099 | 1.85 |
+| `cell/gate` | 15,864 | 15,864 | 0.095% | 1.099 | 1.85 |
+
+Points at the cap, before → after, per partition: `request/row` 55 → 55, `request/cell` 30 → 30, `request/gate` 30 → 30, `step/row` 84 → 74, `step/cell` 84 → 61, `layer/row` 84 → 55, `layer/cell` 84 → 30, `matvec/row` 84 → 55, `matvec/cell` 84 → 30, `row/cell` 84 → 30, `row/gate` 84 → 30, `cell/gate` 15 → 15; in total 802 → 495.
+
+- `request/*` and `cell/gate` are untouched because their RUs' interfaces were already their reach or below it: a request's declared outputs are its 8,192 token bits, a dot product's 16-bit output is far below the 8,192 bits it can reach. The largest before/after ratio is 2041× (`layer/*`, `matvec/*`, `row/*` at `q = 1/2, s = 1`, from the cap to 54.6 kbit) and 64× for `step/*`.
+- Inside a request, the RU level stops mattering for `U`. A `layer` (192 Mbit interface), a `square_block` (256 Mbit) or an `attend_head` (2 kbit) inside a request reaches exactly that request's 8,192 bits, so a free RU of any of these levels is charged what a free request is, and the RU channel of `layer/*`, `matvec/*` and `row/*` is `Lambda_q × 8192`, the same as `request/*`'s. The VU level then decides exactly as it does for request RUs: with `row` VUs the one-hot is charged `min(524 kbit, 8192)` at the VU price and `layer/row` = `matvec/row` = 2,399,690 bits ≈ `request/row`'s 2,396,735; with `cell` or `gate` VUs the bound is the RU channel plus a position term that grows with the number of RUs (`log2` of 8.7e7 to 1.2e13 instead of 2048), 284,580 to 284,714 bits against `request/cell`'s 284,048, a difference of at most 0.25%.
+- Steps are different. Under first-come-first-served with identical requests the run is 64 waves of 32 requests; the steps of a wave are chained through the tokens they emit and the KV cache they extend, so a `prefill_step` reaches its wave's 262,144 remaining token bits, the decode step at context `c` the wave's 32 × (1024 − c) × 16 remaining bits, and no step reaches another wave. A free step therefore leaks up to 32× a free request, and the RU channel of `step/*` is `Lambda_q × 262,144`: 9,040,704 predicted against 9,040,767 measured for `step/cell` at `q = 1/8, s = 1, eta = 1/100`, 1,741,647 against 1,741,678 at `q = 1/2`. Step RUs are non-vacuous only where `Lambda_q < 64`: `q ≥ 1/8` at `eta = 1/100` (34.5 free steps), `q = 1/2` at `eta = 1/10^6` (19.9). With `row` VUs the one-hot inside a step is charged the step's 262,144 bits at the VU price (see the next point), which is why `step/row` stays at the cap at `q = 1/8, s = 1/8` and reaches 9,685,509 at `q = 1/2, s = 1/8`, where `step/cell` is 1,749,765.
+- Residual looseness. The reach is computed at step granularity: within a definition a step depends on every earlier step whose slots any of its argument runs meet, a call or a `repeat` is one node (any input to it may reach any of its outputs), and below the root every output of a copy shares the copy's reach, so a definition's output pieces are not told apart. Two consequences show in the data. A decode step inside a `request` (in `layer/*` and finer) is charged the whole request's 8,192 bits rather than the tokens still to come after it; and inside a `step` the one-hot of one slot, which can only change its own request's remaining tokens, is charged the whole wave's 262,144 bits. The serving builder already tracks the declining reach of the decode steps of a wave (261,632 down to 512 bits), which the step-granularity computation on a compiled `ClusterG` reproduces exactly at toy scale; per-slot and per-piece tracking below the root is a possible refinement, and the layouts here show what it would buy: `step/row` would move towards `step/cell`, and the intermediate levels' `U` would fall below `request/cell`'s by the ratio of remaining to total tokens. The brute-force oracle in `tests/veritor/core/test_reach.py` confirms soundness on every table and, for the toy layouts, exactness of the wave result.
+- Nothing moved in the calibration. The reach makes the intermediate RU levels finite, but their prover overhead is still 1.10 to 1.40 at the policies where they are finite, so under a 100% prover budget the cheapest compliant partition is `request/cell` in every non-vacuous cell, exactly as before. The only visible changes in the calibration tables are in the 200% and 500% columns at the 1% and 10% verifier-work rows, where `matvec/cell` at `q = 1/32, s = 1/512` or `q = 1/2, s = 1/512` now edges out the `cell/gate` and `request/cell` points that stood there (555,766 against `cell/gate`'s 555,927 bits at `eta = 1/2`, 37,558 against `request/cell`'s 37,565; 3,486,309 against 3,487,195 and 236,651 against 236,921 at `eta = 1/100`): differences in the third or fourth digit at policies where the VU channel dominates and the RU level hardly matters.
+
 ## Reading the frontier
 
-- The bound is governed by the interface of the unsampled RUs. An RU that is not sampled (probability `1 - q`) has its interior unchecked, so the adversary controls its whole declared interface for one factor of `1 - q` in survival probability; with `Lambda = ln(1/eta)` the adversary affords `Lambda_q = Lambda / -ln(1 - q)` whole RUs. For request RUs each buys 8,192 bits, so the RU channel alone is `Lambda_q × 8192`: 54,426 bits at `q = 1/2, eta = 1/100` (measured `U` for `request/cell` at `s = 1/8`: 54,744), 282,522 at `q = 1/8` (measured 284,048), 1,188,255 at `q = 1/32` (measured 1,195,659). The channel exceeds the output as soon as `Lambda_q > 2048`, i.e. roughly `q < Lambda / 2048`: `1/2955`, `1/445` and `1/148` at the three etas. So request-level replay needs `q ≳ 1/128` for any bound at all and `q ≳ 1/8` for a bound below 2% of the output at `eta = 1/100`; the 1% prover budget (`q ≤ 1/512`) is incompatible with a non-vacuous bound at `eta ≤ 1/100`.
-- Finer RUs are not honestly replayable. A decode step, a layer, a matvec or a dot product reads the KV cache or an activation, which the honest prover did not keep, so to replay it the prover re-runs the smallest closed kind containing it: the whole run for a decode step (steps batch 32 requests, so no single request contains one), the request for everything finer. With `m` such RUs per recomputation unit the probability that at least one is sampled is `1 - (1 - q)^m`, which is 1 to machine precision when `q × m ≥ 64` (`survival` in `cost.py`); `q × m` is about 4 for `step` at `q = 1/8192` (0.07 for the prefill side of `layer`, 5.1 for its decode side) and at least 350 for `matvec` and finer. Hence `recompute = 1.000` for every RU level below `request` at every grid policy except `step` and `layer` at `q = 1/8192` (0.982, 0.994), and the honest prover's overhead at those levels is at least the honest computation itself. That the number is exactly 100% and not more is the deduplication in the fold: once the request is re-executed, all sampled RUs inside it are covered.
-- With request RUs, the VU level decides the bound once `s < 1`. `request/row` and `request/cell` share RUs, but a `row` VU covering the one-hot has 524 kbit of declared output and an attention head 2 kbit, so a single sampled-and-failed VU error is charged `min(524 kbit, 8192)` = the whole request at the VU price `c(1) = -ln(1 - q s)` instead of the RU price `-ln(1 - q)`. At `q = 1/2, s = 1/8, eta = 1/100` that is `Lambda / c(1) = 71.4` errors × 8,192 bits = 585 kbit for `request/row` against 54.7 kbit for `request/cell`; at `q = 1/8, s = 1/8` it is 2,396,735 against 284,048 bits at identical prover overhead 0.224 and verifier work 1.24. With `cell` VUs a single VU error buys 16 bits plus its position, `16 + log2(1.1e13) ≈ 59` bits, and the RU channel dominates: `request/cell` stays within 0.7% of `Lambda_q × 8192` down to `s = 1/8` and within 9% at `s = 1/64`, while `request/row` is 8× to 11× above the channel at `s = 1/8` and 88× at `s = 1/64, q = 1/2`, and is at the cap from `s = 1/64` at `q ≤ 1/8`. At `s = 1` the two coincide (282,809 vs 282,775 bits at `q = 1/8`), because then a VU error and an RU escape cost the same. "Request RUs, dot-product VUs" is therefore the honest server's natural operating point: the prover overhead is `q (1.667 + s)` (0.224 at `q = 1/8, s = 1/8`; 0.896 at `q = 1/2, s = 1/8`), the verifier's work is `79.3 q s`, and the bound is the RU channel.
-- Why the intermediate RU levels are vacuous, and what part of that is the cost model versus the bound. Under the corrected cost model `step/*`, `layer/*`, `matvec/*` and `row/*` are unaffordable below 98% overhead regardless of `U`. Their `U` is also at the cap at every grid policy (672 of the 802 capped points), and part of that is a cap in `Bound` rather than in the theorem: `Bound` charges an unsampled node `min(interface, whole output)`, whereas the theorem's cut is `min(interface, reachable output)`. A `prefill_step(32)` exposes 320 Gbit of activations but can influence only its 32 occupants' remaining tokens (≤ 262 kbit); a prefill `layer` or a `square_block` only its own request's 8,192 bits. A reach-aware `Bound` is being implemented separately and this report will be re-run under it; until then the 100% rows for those levels should be read as "not yet bounded", though their cost rows will not change.
-- The `cell/gate` baseline. Marking every dot product as an RU and committing every one of the 3.5e13 interiors on demand gives the smallest `U` in the sweep (640 bits / 4,021 bits / 11,712 bits at `q = 1/2, s = 1/8`; `U ≈ (Lambda / c(1)) × (16 + log2(3.5e13))` per error), but the prover pays the honest computation again in recomputation at every `q` in the grid, so its overhead is `1 + q (0.667 + s)`: 1.40 at `q = 1/2, s = 1/8`, 1.0002 at `q = 1/8192, s = 1/512`. It is what a prover that keeps nothing and re-derives everything on demand pays; a prover that instead *retained* every intermediate value (making every cell closed) would pay the storage and a hash per value up front, which this model does not price. Where the calibration tables show `cell/gate` (prover overhead ≥ 200%), it is 1.1× to 140× below `request/cell` at the same verifier work, the gap widening with the work budget.
-- Monotonicities hold without exception: `bits` is nondecreasing as `eta` decreases (0 violations over 1008 pairs), as `q` decreases (0 of 3024) and as `s` decreases (0 of 1512); `bits ≤ out_bits` everywhere; `cell/gate ≤ request/row` at all 84 `(q, s, eta)` triples and `cell/gate ≤ request/cell` and `≤ request/gate` at 83 of 84 (the exception is a 1-bit fold-rounding difference at `q = 1/2, s = 1/512, eta = 1/2`). Going from `eta = 1/2` to `1/100` multiplies `U` by about 6.6 for `request/cell` and 6.3 for `cell/gate`, and to `1/10^6` by about 20 and 18, tracking `ln(1/eta)`.
-- Recommendation for `U_max`. The verifier does not choose the partition; the server does, and it will choose the cheapest one the verifier accepts. Under this cost model the cheapest compliant partition with prover overhead ≤ 1 is `request/cell` at every non-vacuous budget, so `U_max` should be calibrated to it: with prover overhead ≤ 10% and verifier work ≤ 1× (`q = 1/32, s = 1/8`), `U_max ≈ 180,026 / 1,195,659 / 3,586,234` bits (0.17 / 1.14 / 3.42 bits per generated token) at the three etas; with prover overhead ≤ 1× and verifier work ≤ 10× (`q = 1/2, s = 1/8`), `U_max ≈ 8,248 / 54,744 / 164,200` bits (0.008 / 0.052 / 0.157 bits per token). A verifier that also accepts `request/row` servers must set `U_max` 4× (first budget, where `request/row` needs `s = 1` and falls back to `q = 1/128`) to 5.2× (second budget) looser. Any `U_max` below the cheapest compliant partition's number turns honest servers away; any `U_max` set to the `cell/gate` numbers of the earlier report would admit only servers paying ≥ 140% overhead.
+- The bound is governed by the interface, or now the reach, of the unsampled RUs. An RU that is not sampled (probability `1 - q`) has its interior unchecked, so the adversary controls it for one factor of `1 - q` in survival probability; with `Lambda = ln(1/eta)` the adversary affords `Lambda_q = Lambda / -ln(1 - q)` whole RUs, each charged `min(out_bits, reach_bits)`. For request RUs each buys 8,192 bits, so the RU channel alone is `Lambda_q × 8192`: 54,426 bits at `q = 1/2, eta = 1/100` (measured `U` for `request/cell` at `s = 1/8`: 54,744), 282,522 at `q = 1/8` (measured 284,048), 1,188,255 at `q = 1/32` (measured 1,195,659). The channel exceeds the output as soon as `Lambda_q > 2048`, i.e. roughly `q < Lambda / 2048`: `1/2955`, `1/445` and `1/148` at the three etas. So request-level replay needs `q ≳ 1/128` for any bound at all and `q ≳ 1/8` for a bound below 2% of the output at `eta = 1/100`; the 1% prover budget (`q ≤ 1/512`) is incompatible with a non-vacuous bound at `eta ≤ 1/100`. For step RUs each free step buys a wave, 262,144 bits, and the channel exceeds the output at `Lambda_q > 64`.
+- Finer RUs are not honestly replayable. A decode step, a layer, a matvec or a dot product reads the KV cache or an activation, which the honest prover did not keep, so to replay it the prover re-runs the smallest closed kind containing it: the whole run for a decode step (steps batch 32 requests, so no single request contains one), the request for everything finer. With `m` such RUs per recomputation unit the probability that at least one is sampled is `1 - (1 - q)^m`, which is 1 to machine precision when `q × m ≥ 64` (`survival` in `cost.py`); `q × m` is about 4 for `step` at `q = 1/8192` (0.07 for the prefill side of `layer`, 5.1 for its decode side) and at least 350 for `matvec` and finer. Hence `recompute = 1.000` for every RU level below `request` at every grid policy except `step` and `layer` at `q = 1/8192` (0.982, 0.994), and the honest prover's overhead at those levels is at least the honest computation itself. That the number is exactly 100% and not more is the deduplication in the fold: once the request is re-executed, all sampled RUs inside it are covered. Reach changes none of this: with a request re-executed anyway, the server gains nothing from marking finer RUs, and pays the interior commitment of everything it re-executes.
+- With request RUs, the VU level decides the bound once `s < 1`. `request/row` and `request/cell` share RUs, but a `row` VU covering the one-hot has 524 kbit of declared output (reach 8,192) and an attention head 2 kbit, so a single sampled-and-failed VU error is charged `min(524 kbit, 8192)` = the whole request at the VU price `c(1) = -ln(1 - q s)` instead of the RU price `-ln(1 - q)`. At `q = 1/2, s = 1/8, eta = 1/100` that is `Lambda / c(1) = 71.4` errors × 8,192 bits = 585 kbit for `request/row` against 54.7 kbit for `request/cell`; at `q = 1/8, s = 1/8` it is 2,396,735 against 284,048 bits at identical prover overhead 0.224 and verifier work 1.24. With `cell` VUs a single VU error buys 16 bits plus its position, `16 + log2(1.1e13) ≈ 59` bits, and the RU channel dominates: `request/cell` stays within 0.7% of `Lambda_q × 8192` down to `s = 1/8` and within 9% at `s = 1/64`, while `request/row` is 8× to 11× above the channel at `s = 1/8` and 88× at `s = 1/64, q = 1/2`, and is at the cap from `s = 1/64` at `q ≤ 1/8`. At `s = 1` the two coincide (282,809 vs 282,775 bits at `q = 1/8`), because then a VU error and an RU escape cost the same. "Request RUs, dot-product VUs" is therefore the honest server's natural operating point: the prover overhead is `q (1.667 + s)` (0.224 at `q = 1/8, s = 1/8`; 0.896 at `q = 1/2, s = 1/8`), the verifier's work is `79.3 q s`, and the bound is the RU channel.
+- The `cell/gate` baseline. Marking every dot product as an RU and committing every one of the 3.5e13 interiors on demand gives the smallest `U` in the sweep (640 bits / 4,021 bits / 11,712 bits at `q = 1/2, s = 1/8`; `U ≈ (Lambda / c(1)) × (16 + log2(3.5e13))` per error), but the prover pays the honest computation again in recomputation at every `q` in the grid, so its overhead is `1 + q (0.667 + s)`: 1.40 at `q = 1/2, s = 1/8`, 1.0002 at `q = 1/8192, s = 1/512`. It is what a prover that keeps nothing and re-derives everything on demand pays; a prover that instead *retained* every intermediate value (making every cell closed) would pay the storage and a hash per value up front, which this model does not price. Where the calibration tables show `cell/gate` (prover overhead ≥ 200%, verifier work ≥ 100%), it is 1.9× to 140× below `request/cell` at the same verifier work, the gap widening with the work budget.
+- Monotonicities hold without exception: `bits` is nondecreasing as `eta` decreases (0 violations over 1008 pairs), as `q` decreases (0 of 3024) and as `s` decreases (0 of 1512); `bits ≤ out_bits` everywhere; `cell/gate ≤ request/row` at all 84 `(q, s, eta)` triples and `cell/gate ≤ request/cell` and `≤ request/gate` at 83 of 84 (the exception is a 1-bit fold-rounding difference at `q = 1/2, s = 1/512, eta = 1/2`). Going from `eta = 1/2` to `1/100` multiplies `U` by about 6.6 for `request/cell` and `step/cell` and 6.3 for `cell/gate`, and to `1/10^6` by about 20 and 18, tracking `ln(1/eta)`.
+- Recommendation for `U_max`. The verifier does not choose the partition; the server does, and it will choose the cheapest one the verifier accepts. Under this cost model the cheapest compliant partition with prover overhead ≤ 1 is `request/cell` at every non-vacuous budget, so `U_max` should be calibrated to it: with prover overhead ≤ 10% and verifier work ≤ 1× (`q = 1/32, s = 1/8`), `U_max ≈ 180,026 / 1,195,659 / 3,586,234` bits (0.17 / 1.14 / 3.42 bits per generated token) at the three etas; with prover overhead ≤ 1× and verifier work ≤ 10× (`q = 1/2, s = 1/8`), `U_max ≈ 8,248 / 54,744 / 164,200` bits (0.008 / 0.052 / 0.157 bits per token). A verifier that also accepts `request/row` servers must set `U_max` 4× (first budget, where `request/row` needs `s = 1` and falls back to `q = 1/128`) to 5.2× (second budget) looser. Any `U_max` below the cheapest compliant partition's number turns honest servers away; any `U_max` set to the `cell/gate` numbers of the first report would admit only servers paying ≥ 140% overhead.
 
 ## Sanity checks
 
 - The honest cost `honest_cost(serving_table(FRONTIER_SHAPE, "request", "row"))` is 411,684,960,876,888,064 (4.117e17) and is identical for all twelve partitions; `out_bits` is 16,777,216 for every point.
 - 1008 points, one per (partition, q, s, eta); every partition has its 84 points; the file is in canonical `DEFAULT_PARTITIONS × DEFAULT_GRID × DEFAULT_ETAS` order.
-- All monotonicity checks passed (see above); no point exceeds `out_bits`; 802 of 1008 points are at the cap (all 672 points of the eight `step`, `layer`, `matvec` and `row` partitions; 55 of `request/row`, 30 each of `request/cell` and `request/gate`, 15 of `cell/gate`).
-- Every RU level below `request` shows `recompute ≥ 0.98` of the honest cost at every policy and exactly `1.0000` wherever `q × m > 64`; `request/*` shows `recompute = q` exactly (the closed-RU case reduces to the old formula).
-- `cost(compiled) == cost(compiled.kind_table())` and the synthetic tables' `closed` flags agree with compiled `RequestsG` and `ClusterG` at toy scale (`tests/veritor/analysis/test_cost.py`, `tests/veritor/evaluation/test_serving.py`).
+- Against the second run: `overhead`, `recompute` and `work` identical at all 1008 points; `bits` never larger, smaller at 307 points; 802 → 495 points at the cap.
+- All monotonicity checks passed (see above); no point exceeds `out_bits`; 495 of 1008 points are at the cap (55 of `request/row`, 30 each of `request/cell` and `request/gate`, 74 of `step/row`, 61 of `step/cell`, 55 each of `layer/row` and `matvec/row`, 30 each of `layer/cell`, `matvec/cell`, `row/cell` and `row/gate`, 15 of `cell/gate`).
+- Every RU level below `request` shows `recompute ≥ 0.98` of the honest cost at every policy and exactly `1.0000` wherever `q × m > 64`; `request/*` shows `recompute = q` exactly (the closed-RU case reduces to the original formula).
+- The RU channel predicts the `cell`-VU bounds: `Lambda_q × 8192` for `request/cell` (within 0.7% at `s ≤ 1/8` below the cap) and `Lambda_q × 262,144` for `step/cell` (within 0.01% at `s = 1`).
+- `cost(compiled) == cost(compiled.kind_table())`; the synthetic tables' `closed` and `reach_bits` agree with compiled `RequestsG` and `ClusterG` at toy scale (`tests/veritor/analysis/test_cost.py`, `tests/veritor/evaluation/test_serving.py`); the brute-force reach oracle passes on every table (`tests/veritor/core/test_reach.py`).
 
 ## Timing
 
@@ -306,26 +350,26 @@ Bound computation per partition (`Point.seconds`, summed):
 
 | partition | points | total s | mean s | max s |
 |---|---|---|---|---|
-| `request/row` | 84 | 343 | 4.1 | 7.2 |
-| `request/cell` | 84 | 666 | 7.9 | 14.0 |
-| `request/gate` | 84 | 1082 | 12.9 | 26.0 |
-| `step/row` | 84 | 460 | 5.5 | 9.7 |
-| `step/cell` | 84 | 786 | 9.4 | 16.7 |
-| `layer/row` | 84 | 156 | 1.9 | 2.9 |
-| `layer/cell` | 84 | 341 | 4.1 | 6.9 |
-| `matvec/row` | 84 | 205 | 2.4 | 4.0 |
-| `matvec/cell` | 84 | 233 | 2.8 | 4.3 |
-| `row/cell` | 84 | 239 | 2.8 | 4.2 |
-| `row/gate` | 84 | 826 | 9.8 | 17.5 |
-| `cell/gate` | 84 | 225 | 2.7 | 4.1 |
+| `request/row` | 84 | 1375 | 16.4 | 34.3 |
+| `request/cell` | 84 | 2875 | 34.2 | 78.1 |
+| `request/gate` | 84 | 4323 | 51.5 | 101.3 |
+| `step/row` | 84 | 1738 | 20.7 | 38.1 |
+| `step/cell` | 84 | 3245 | 38.6 | 76.4 |
+| `layer/row` | 84 | 597 | 7.1 | 11.8 |
+| `layer/cell` | 84 | 1340 | 15.9 | 28.6 |
+| `matvec/row` | 84 | 962 | 11.5 | 23.2 |
+| `matvec/cell` | 84 | 984 | 11.7 | 19.3 |
+| `row/cell` | 84 | 1028 | 12.2 | 21.5 |
+| `row/gate` | 84 | 2966 | 35.3 | 72.2 |
+| `cell/gate` | 84 | 535 | 6.4 | 11.8 |
 
-Total: 5562 s (92.7 min) of bound time; the sweep was run as parallel chunks by partition, so wall time is not comparable with the earlier single-process run (3019 s for 588 points). `Cost` and `expected_work` are negligible. `request/gate` is slowest because its `request` kind has 1.3e14 VUs and the per-copy power series runs to the error limit at every eta.
+Total: 21,967 s (366 min) of bound time summed over points. The sweep ran as many parallel processes on one machine, so per-point times are inflated about 4× relative to the second run (5,562 s for the same 1008 points on lightly loaded cores) and are not a measure of the reach computation, which is a one-off pass over the description. `Cost` and `expected_work` are negligible. `request/gate` is slowest because its `request` kind has 1.3e14 VUs and the per-copy power series runs to the error limit at every eta.
 
 ## Caveats
 
-- The `KindTable` is synthetic: `veritor.evaluation.serving` writes the per-kind profile the compiler would produce for the toy decoder of `veritor.constructors.lm` at these dimensions, including the `closed` flag derived from the builder's wiring. It has been checked against compiled toy circuits only at toy scale (`tests/veritor/evaluation/test_serving.py`); at 70B scale nothing is traced, and the structure is the toy's (square MLP, argmax head, no normalisation, no softmax).
+- The `KindTable` is synthetic: `veritor.evaluation.serving` writes the per-kind profile the compiler would produce for the toy decoder of `veritor.constructors.lm` at these dimensions, including the `closed` flag and `reach_bits` derived from the builder's wiring and the run's dataflow. It has been checked against compiled toy circuits only at toy scale (`tests/veritor/evaluation/test_serving.py`); at 70B scale nothing is traced, and the structure is the toy's (square MLP, argmax head, no normalisation, no softmax). The wave structure assumes identical requests served first-come-first-served in batches of 32; a scheduler that mixes requests of different lengths across batches would chain steps differently and the step reach would have to be recomputed.
 - The bound is the Laplace-only fold (`BoundOptions(knapsack=False, max_buckets = 1 << 22)`). It is an upper bound on `U` and is looser than the knapsack fold, which was not run because at these scales a single VU error costs far less than `Lambda / 2048` and the knapsack grid would round it to zero. The Chernoff bound also does not use the strict inequality `sigma(E) > eta`, so at `q = 1/2, s = 1` it admits the single error that survives with probability exactly `1/2`.
+- The reach is an over-approximation at step granularity (see "What reach changed"); it is sound (any superset of the reachable outputs is a downstream cut) and exact for the wave result on the toy layouts, but charges a node inside a request or a step the whole request's or wave's remaining-token bits rather than its own.
 - Proof cost is a placeholder: the ISA gate set sets `proof_cost == replay_cost` for arithmetic gates (`add`/`sub`/`lt`/`eq`/`shr` 1, `mul` 2; sources 0 to replay and 1 to prove) and `c_0 = 0`, whereas real proof systems are 10^2 to 10^10 × native. The hash cost `h = 1` (one hash per committed value costs one `add`) is uncalibrated. Both enter the overhead column additively (`q s × proof` and `h × (boundary + q × interior)`), so the overhead column is a lower bound on what a real prover pays; the recompute term does not depend on either.
 - The cost model prices no per-unit fixed cost (an interior root and a message per sampled RU); with 3.5e13 RUs that would matter for `cell/gate`, and it does not price storage, so a prover that retained every intermediate value to make fine RUs replayable is not represented.
-- The bound is not reach-aware (see "Reading the frontier"); the intermediate RU levels' 100% rows should be read as "not yet bounded" rather than "unsafe". Their cost rows are final under this model.
 - The grid is coarse (powers of 2 in `q` and 8 in `s`), so the optima quoted are grid optima; `certify` breaks ties towards the cheaper prover.
