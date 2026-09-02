@@ -4,6 +4,13 @@ Everything here enumerates explicitly -- every error set, every transcript
 -- and is exponential in the circuit size.  It exists to pin down the
 statement :func:`veritor.analysis.bound.bound` certifies, not to bound
 anything real.
+
+Source gates (the circuit's ``in`` and ``weight`` gates) are never
+incorrect in an accepted transcript: the inputs are checked against the
+public inputs at commit and the weights are what κ_W binds.  So a transcript
+enumerates the other gates only, and a source gate is never a source of a
+cut.  An error set may still name a verification unit holding nothing but
+source gates; its cover has no capacity.
 """
 
 from __future__ import annotations
@@ -101,6 +108,7 @@ def cut_bits(compiled: Compiled, errors: ErrorSet) -> int:
         str(address)
         for unit in errors
         for address in compiled.index.verification_unit(unit).interval
+        if not circuit[address].is_source  # a source gate holds its pinned value
     }
     if not sources:
         return 0
@@ -140,24 +148,30 @@ type Output = tuple[int, ...]
 type ErrorCounts = tuple[int, ...]
 
 
-def transcript_outputs(compiled: Compiled, inputs: Sequence[int]) -> dict[Output, set[ErrorCounts]]:
+def transcript_outputs(
+    compiled: Compiled, inputs: Sequence[int], weights: Sequence[int] = ()
+) -> dict[Output, set[ErrorCounts]]:
     """Every output some transcript produces, with the ``(l_r)_r`` of those transcripts.
 
-    Enumerates every assignment of every gate (``2**(width * gates)``
-    transcripts) and derives each one's error set from the gates whose
-    value disagrees with their recorded arguments.  Policy-independent, so
-    one enumeration serves every ``theta``.
+    Enumerates every assignment of every non-source gate (``2**(width *
+    gates)`` transcripts) over the pinned ``inputs`` and ``weights`` (by
+    rank) and derives each one's error set from the gates whose value
+    disagrees with their recorded arguments.  Policy-independent, so one
+    enumeration serves every ``theta``.
     """
 
     circuit = compiled.circuit
     index = compiled.index
     owner = unit_owner(index)
     replay_of = [index.verification_unit(u).replay_unit for u in range(index.verification_unit_count)]
-    gates = range(index.input_count, circuit.n)
+    pinned = dict(zip(circuit.inputs, inputs, strict=True))
+    pinned.update(zip(circuit.weights, weights, strict=True))
+    gates = [address for address in range(circuit.n) if address not in pinned]
     refs = [circuit[address] for address in gates]
     outputs: dict[Output, set[ErrorCounts]] = {}
     for values in itertools.product(*(range(1 << ref.width) for ref in refs)):
-        cells = list(inputs) + list(values)
+        cells = dict(pinned)
+        cells.update(zip(gates, values, strict=True))
         counts = [0] * index.replay_units.count
         seen: set[int] = set()
         for address, ref in zip(gates, refs, strict=True):

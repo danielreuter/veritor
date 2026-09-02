@@ -44,8 +44,11 @@ class DemoG:
     """A memoized demo constructor: chained multiply-accumulates.
 
     Every multiply-accumulate is a verification unit and every dot product (a
-    chain of them) is a replay unit.  Consecutive requests of equal length are
-    one ``repeat`` step, so the description is ``O(distinct lengths + runs)``.
+    chain of them) is a replay unit that holds its own cells (accumulator,
+    values, weights) as ``in`` gates, so the root has no ports and the public
+    inputs are the requests' cells in request order.  Consecutive requests of
+    equal length are one ``repeat`` step, so the description is ``O(distinct
+    lengths + runs)``.
     """
 
     def __init__(self, width: int = 8) -> None:
@@ -65,31 +68,23 @@ class DemoG:
         if type(length) is not int or length < 0:
             raise TracerError("dot length must be a nonnegative integer")
 
-        @self.tracer.definition(
-            input_count=1 + 2 * length, key=("dot", length), role="replay"
-        )
-        def dot(v: Wires) -> object:
-            accumulator = v[0]
+        @self.tracer.definition(input_count=0, key=("dot", length), role="replay")
+        def dot(_v: Wires) -> object:
+            cells = self.tracer.inputs(1 + 2 * length)  # accumulator, values, weights
+            accumulator = cells[0]
             for index in range(length):
-                accumulator = self.mac(accumulator, v[1 + index], v[1 + length + index])
+                accumulator = self.mac(accumulator, cells[1 + index], cells[1 + length + index])
             return accumulator
 
         return dot
 
     def batch(self, lengths: tuple[int, ...]) -> TracedDefinition:
-        @self.tracer.definition(
-            input_count=sum(1 + 2 * length for length in lengths), key=("batch", lengths)
-        )
-        def batch(v: Wires) -> object:
-            outputs = []
-            offset = 0
-            for length, run in groupby(lengths):
-                count = len(list(run))
-                stride = 1 + 2 * length
-                block = v[offset : offset + stride]
-                outputs.append(self.tracer.repeat(count, self.dot(length), block.by(stride)))
-                offset += count * stride
-            return outputs
+        @self.tracer.definition(input_count=0, key=("batch", lengths))
+        def batch(_v: Wires) -> object:
+            return [
+                self.tracer.repeat(len(list(run)), self.dot(length))
+                for length, run in groupby(lengths)
+            ]
 
         return batch
 

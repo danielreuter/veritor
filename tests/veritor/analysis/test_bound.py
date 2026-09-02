@@ -173,6 +173,59 @@ def test_whole_unit_corruption_is_cheap_and_covered_once(make_compiled):
     assert result.bits < subset_sum_bits(compiled, policy, eta)
 
 
+def source_only_units(inputs: int, weights: int) -> Compiled:
+    """A replay unit of nothing but source gates beside one two-gate unit reading them."""
+
+    gate_set = make_word_gate_set(8)
+    tracer = Tracer(gate_set)
+    add = tracer.gate("add")
+    pair = tracer.definition(input_count=2, key="pair", role="verification")(lambda v: add(v[0], v[1]))
+
+    @tracer.definition(input_count=0, key=("sources", inputs, weights), role="replay")
+    def sources(_v):
+        return tracer.inputs(inputs), tracer.weights(weights)
+
+    @tracer.definition(input_count=2, key="work", role="replay")
+    def work(v):
+        return pair(v[0], v[1])
+
+    @tracer.definition(input_count=0, key="root")
+    def root(_v):
+        cells = sources()
+        return work(cells[0], cells[inputs])
+
+    return Compiler(gate_set).compile(tracer.serialize(root), [1] * inputs)
+
+
+def test_a_unit_of_source_gates_has_no_capacity(make_compiled):
+    compiled = source_only_units(3, 2)
+    index = compiled.index
+    rows = {row.kind: row for row in index.kinds()}
+    sources = index.replay_units.unit(0)
+    cells = list(index.verification_units(0))
+
+    assert rows[sources.kind].out_bits == 0 and rows[sources.kind].out_count == 0
+    assert all(rows[cell.kind].out_bits == 0 for cell in cells) and len(cells) == 5
+    assert index.interior(0).count == 0
+    # the error set may name the source cells: they cover nothing, and the exact cut is empty
+    for errors in error_sets(index):
+        expected = 8 if any(index.verification_unit(u).replay_unit == 1 for u in errors) else 0
+        assert cover_bits(compiled, errors) == cut_bits(compiled, errors) == expected
+    for policy, eta in POLICIES[:4]:
+        result = bound(compiled, policy, eta)
+        assert result.out_bits == 8 and 0 <= result.bits <= 8
+        # the same bound as a circuit without the source unit: one 8-bit unit, one replay unit
+        # (the knapsack sum still ranges over the source unit's error counts, each weighing
+        # 2**0; the root's interface caps that multiplicity away here)
+        alone = bound(make_compiled((1,)), policy, eta)
+        assert result.bits == pytest.approx(alone.bits, abs=TOLERANCE)
+        assert result.knapsack_bits >= alone.knapsack_bits - TOLERANCE
+    outputs = transcript_outputs(compiled, [1, 2, 3], [4, 5])
+    everything = accepted_outputs(outputs, VerificationPolicy(0, 1), Fraction(1, 2))
+    honest = accepted_outputs(outputs, VerificationPolicy(1, 1), Fraction(0))
+    assert len(everything) == 256 and honest == {(5,)}  # 1 + 4: the sources hold their values
+
+
 def test_bound_rejects_foreign_inputs_and_bad_options(make_compiled):
     compiled = make_compiled((1,))
     policy, eta = POLICIES[0]
@@ -219,9 +272,13 @@ def synthetic_transformer_shape() -> Compiled:
             current = list(block(*current))
         return current
 
-    @tracer.definition(input_count=width, key="root")
-    def root(v):
-        current = list(v)
+    @tracer.definition(input_count=0, key="inputs", role="replay")
+    def source(_v):
+        return tracer.inputs(width)
+
+    @tracer.definition(input_count=0, key="root")
+    def root(_v):
+        current = list(source())
         for _ in range(12):
             current = list(layer(*current))
         return current
@@ -232,7 +289,7 @@ def synthetic_transformer_shape() -> Compiled:
 def test_fold_never_enumerates_copies():
     compiled = synthetic_transformer_shape()
     assert compiled.circuit.n > 10**8
-    assert compiled.index.verification_unit_count == 12 * 1024 * 64
+    assert compiled.index.verification_unit_count == 12 * 1024 * 64 + 64  # the heads and the input cells
 
     for policy, eta in (
         (VerificationPolicy(Fraction(1, 2), Fraction(1, 2)), Fraction(1, 4)),

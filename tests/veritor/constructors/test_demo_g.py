@@ -33,12 +33,25 @@ def test_demo_g_marks_dots_as_replay_and_macs_as_verification() -> None:
 
     lengths = [dot.length for dot in request.batch.requests]
     assert index.replay_units.count == len(lengths)
-    assert index.verification_unit_count == sum(lengths)
+    # every cell is an `in` gate in its own verification unit, then one mac per step
+    assert index.verification_unit_count == sum(1 + 2 * n + n for n in lengths)
+    assert index.input_count == len(request.public_inputs) == sum(1 + 2 * n for n in lengths)
+    assert index.weight_count == 0 and index.root.frame.definition.input_count == 0
     for unit, length in enumerate(lengths):
         node = index.replay_units.unit(unit)
-        assert node.size == 2 * length
-        assert index.verification_units(unit).count == length
-        assert all(v.size == 2 for v in index.verification_units(unit))
+        cells = 1 + 2 * length
+        assert node.size == cells + 2 * length
+        assert index.verification_units(unit).count == cells + length
+        sizes = [v.size for v in index.verification_units(unit)]
+        assert sizes == [1] * cells + [2] * length
+        # the interior is the macs' gates but the declared final add; the cells are pinned
+        assert index.interior(unit).count == 2 * length - 1
+    cells_in_order = [
+        a
+        for unit in index.replay_units
+        for a in range(unit.interval.start, unit.interval.start + 1 + 2 * lengths[unit.replay_unit])
+    ]
+    assert list(index.inputs()) == cells_in_order
 
 
 def test_demo_g_digest_binds_the_batch_shape_not_its_values() -> None:
@@ -70,7 +83,8 @@ def test_demo_g_description_is_one_repeat_per_run_of_equal_lengths() -> None:
 
     compiled = compile_demo_g(DemoGCompileRequest(batch=_batch((4,) * 30 + (2,) * 50)))
     assert compiled.index.replay_units.count == 80
-    assert compiled.index.verification_unit_count == 4 * 30 + 2 * 50
+    assert compiled.index.verification_unit_count == 30 * (9 + 4) + 50 * (5 + 2)
+    assert compiled.index.input_count == 30 * 9 + 50 * 5
 
 
 def test_demo_g_rejects_malformed_batches() -> None:

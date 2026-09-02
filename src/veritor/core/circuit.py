@@ -23,13 +23,20 @@ flat circuit):
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal, Protocol, runtime_checkable
 
 from .description import Definition, Frame
 from .errors import InvalidArtifact
-from .gates import INPUT_SOURCE, WEIGHT_SOURCE, GateSet, decode_value, encode_value
+from .gates import (
+    INPUT_SOURCE,
+    WEIGHT_SOURCE,
+    GateSet,
+    check_value,
+    decode_value,
+    encode_value,
+)
 
 type CostKind = Literal["replay", "proof"]
 
@@ -169,6 +176,12 @@ def _checked_sources(values: Sequence[int], count: int, what: str) -> Sequence[i
     return values
 
 
+def _source_value(given: dict[str, Iterator[int]], source: str, width: int) -> int:
+    """The next value of ``source`` by rank, checked to be a ``width``-bit value."""
+
+    return check_value(width, next(given[source]), where=f"{source} value")
+
+
 class FlatCircuit(_Semantics):
     """An explicit gate list; the reference implementation used in tests.
 
@@ -286,7 +299,7 @@ class FlatCircuit(_Semantics):
         values: list[int] = []
         for ref in self._gates:
             if ref.source is not None:
-                values.append(next(given[ref.source]))
+                values.append(_source_value(given, ref.source, ref.width))
             else:
                 values.append(
                     self.gate_set[ref.op].evaluate(tuple(values[a] for a in ref.args))
@@ -438,7 +451,7 @@ class DescriptionCircuit(_Semantics):
         for address in range(self.n):
             gate, args = self.frame.gate(address)
             if gate.source is not None:
-                values.append(next(given[gate.source]))
+                values.append(_source_value(given, gate.source, gate.width))
             else:
                 values.append(gate.evaluate(tuple(values[a] for a in args)))
         return tuple(values)

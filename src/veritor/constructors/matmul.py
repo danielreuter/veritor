@@ -9,9 +9,17 @@ from typing import TypeAlias
 from veritor.compile import Compiler
 from veritor.core import CompilationLimits, Compiled, JSONValue, make_word_gate_set
 
-from .tracer import TracedDefinition, Tracer, TracerError, Wires
+from .tracer import TracedDefinition, Tracer, TracerError, Wire, Wires
 
 WordMatrix: TypeAlias = tuple[tuple[int, ...], ...]  # noqa: UP040
+
+
+def _wires(value: Wire | Wires) -> Wires:
+    """A call's result as a range (a one-output call returns a single wire)."""
+
+    if isinstance(value, Wire):
+        return Wires(value.trace, value.space, value.index, 1, 0)
+    return value
 
 
 def _canonical_matrix(
@@ -99,17 +107,17 @@ class MatmulWorkload:
 
     @property
     def public_inputs(self) -> tuple[int, ...]:
-        """Flatten shared weights once, then activations, all row-major."""
+        """The activations, row-major in activation order: the ``in`` gates by rank."""
 
-        return (
-            *(item for row in self.weights for item in row),
-            *(
-                item
-                for activation in self.activations
-                for row in activation
-                for item in row
-            ),
+        return tuple(
+            item for activation in self.activations for row in activation for item in row
         )
+
+    @property
+    def weight_values(self) -> tuple[int, ...]:
+        """The shared weights, row-major: the ``weight`` gates by rank (under κ_W)."""
+
+        return tuple(item for row in self.weights for item in row)
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
@@ -118,8 +126,9 @@ class MatmulWorkload:
             "activations": [
                 [list(row) for row in activation] for activation in self.activations
             ],
-            "input_order": "weights-row-major-then-activations-row-major",
+            "input_order": "activations-row-major",
             "output_order": "activation-order-then-row-major",
+            "weight_order": "row-major",
             "weight_shape": list(self.weight_shape),
             "weights": [list(row) for row in self.weights],
             "width": self.width,
@@ -144,11 +153,22 @@ def expected_matmul_outputs(workload: MatmulWorkload) -> tuple[int, ...]:
 class MatmulG:
     """The constructor for repeated matrix products with shared weights.
 
-    Every row ``x_i W`` is a replay unit and every output dot product is a
-    verification unit.  Rows, columns and the products inside a dot are
-    ``repeat`` steps and the dot's sum is a tree of ``repeat`` steps, so the
-    description is ``O(log k)`` in the contraction length and independent of
-    the number of rows and columns.
+    The root ``batch`` has no ports.  The activations are a replay unit of
+    ``in`` gates and the weights a replay unit of ``weight`` gates (each gate
+    its own verification unit, through the tracer's one-gate cells), both
+    declaring every gate they hold; every row ``x_i W`` is a replay unit of
+    dot products (each a verification unit) that reads its activation row and
+    ``W`` through ports from those two units' slots.  Rows, columns and the
+    products inside a dot are ``repeat`` steps and the dot's sum is a tree of
+    ``repeat`` steps, so the description is ``O(log k)`` in the contraction
+    length and independent of the number of rows and columns.
+
+    The activations live in their own unit rather than inside the rows so
+    that a row is nothing but dots: its ``Out`` then tiles the row, the
+    batch's ``rows x columns`` outputs are a single run, and admission stays
+    flat in the number of rows.  (A row holding its ``k`` activations first
+    would put the batch's outputs on a two-dimensional grid of
+    ``min(rows, columns)`` runs.)
     """
 
     def __init__(self, width: int = 8) -> None:
@@ -199,6 +219,20 @@ class MatmulG:
 
         return row
 
+    def activations_unit(self, count: int) -> TracedDefinition:
+        """The replay unit holding ``count`` input gates, all declared."""
+
+        return self.tracer.definition(
+            input_count=0, key=("activations", count), role="replay"
+        )(lambda _v: self.tracer.inputs(count))
+
+    def weights_unit(self, count: int) -> TracedDefinition:
+        """The replay unit holding ``count`` weight gates, all declared."""
+
+        return self.tracer.definition(input_count=0, key=("weights", count), role="replay")(
+            lambda _v: self.tracer.weights(count)
+        )
+
     def batch(
         self,
         activation_shapes: tuple[tuple[int, int], ...],
@@ -206,17 +240,18 @@ class MatmulG:
     ) -> TracedDefinition:
         inner, columns = weight_shape
         weight_cells = inner * columns
-        input_count = weight_cells + sum(rows * k for rows, k in activation_shapes)
+        activation_cells = sum(rows * k for rows, k in activation_shapes)
+        activations = self.activations_unit(activation_cells)
+        weights = self.weights_unit(weight_cells)
 
-        @self.tracer.definition(
-            input_count=input_count, key=("batch", activation_shapes, weight_shape)
-        )
-        def batch(v: Wires) -> object:
-            w = v[:weight_cells]
+        @self.tracer.definition(input_count=0, key=("batch", activation_shapes, weight_shape))
+        def batch(_v: Wires) -> object:
+            x_all = _wires(activations())
+            w = weights()
             outputs = []
-            offset = weight_cells
+            offset = 0
             for rows, k in activation_shapes:
-                x = v[offset : offset + rows * k]
+                x = x_all[offset : offset + rows * k]
                 offset += rows * k
                 outputs.append(self.tracer.repeat(rows, self.row(k, columns), x[0:k].by(k), w))
             return outputs
@@ -281,22 +316,15 @@ class MatmulCompileRequest:
 
     @property
     def public_inputs(self) -> tuple[int, ...]:
-        """Every input value: the weights first, then the activations."""
+        """The activations: the values of the ``in`` gates by rank."""
 
         return self.workload.public_inputs
 
     @property
-    def weight_addresses(self) -> range:
-        """The input addresses holding the shared weights, row-major."""
+    def weight_values(self) -> tuple[int, ...]:
+        """The shared weights, row-major: the values of the ``weight`` gates by rank."""
 
-        rows, columns = self.workload.weight_shape
-        return range(rows * columns)
-
-    @property
-    def activation_inputs(self) -> tuple[int, ...]:
-        """The input values outside :attr:`weight_addresses`, in address order."""
-
-        return self.workload.public_inputs[self.weight_addresses.stop :]
+        return self.workload.weight_values
 
     @property
     def expected_outputs(self) -> tuple[int, ...]:

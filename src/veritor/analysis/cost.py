@@ -1,15 +1,17 @@
 """``Cost(C, I, theta)``: the expected cost of one run of the protocol.
 
-Committing the boundary costs ``h`` per position; a replay unit, selected
-with probability ``q``, costs its replay and ``h`` per interior position it
-commits; a verification unit, selected with probability ``q s``, costs its
+Committing the boundary ``∂ = In ∪ ⋃_r Out(R_r)`` costs ``h`` per position; a
+replay unit, selected with probability ``q``, costs its replay and ``h`` per
+interior position it commits (its gates but ``Out`` and its pinned source
+gates); a verification unit, selected with probability ``q s``, costs its
 proof and a fixed ``c_0``::
 
     Cost = h |∂| + q sum_r (Cost_replay(R_r) + h |Int(r)|) + q s sum_v (Cost_proof(V_v) + c_0)
 
-Everything is a count per kind weighted by copies, so the fold is
-``O(#kinds)`` and exact.  The verifier's own expected work is priced by
-:func:`veritor.protocol.expected_work`.
+The weights are committed once per epoch under κ_W, ``h |W|``, reported
+separately from the per-run total.  Everything is a count per kind weighted
+by copies, so the fold is ``O(#kinds)`` and exact.  The verifier's own
+expected work is priced by :func:`veritor.protocol.expected_work`.
 """
 
 from __future__ import annotations
@@ -39,11 +41,16 @@ class CostParameters:
 
 @dataclass(frozen=True, slots=True)
 class ExpectedCost:
-    """The three terms of the expected cost, exactly."""
+    """The three per-run terms of the expected cost, exactly, and the per-epoch weight commitment.
+
+    ``weights`` is ``h |W|``: paid once per epoch when κ_W is built, not per
+    run, so it is not part of ``total``.
+    """
 
     boundary: Fraction
     replay: Fraction
     proof: Fraction
+    weights: Fraction = Fraction(0)
 
     @property
     def total(self) -> Fraction:
@@ -64,16 +71,22 @@ def cost(
     parameters = CostParameters() if parameters is None else parameters
     h, c0 = parameters.hash_cost, parameters.proof_overhead
     index = compiled.index
-    boundary = Fraction(index.input_count)
+    boundary = Fraction(index.input_count)  # the input gates, then every unit's Out
     replay = Fraction(0)
     proof = Fraction(0)
     for kind in index.kinds():
         if kind.role == REPLAY:
             boundary += kind.copies * kind.out_count
-            replay += kind.copies * (kind.replay_cost + h * (kind.size - kind.out_count))
+            interior = kind.size - kind.out_count - kind.source_inputs - kind.source_weights
+            replay += kind.copies * (kind.replay_cost + h * interior)
         elif kind.role == VERIFICATION:
             proof += kind.copies * (kind.proof_cost + c0)
-    return ExpectedCost(h * boundary, policy.q * replay, policy.q * policy.s * proof)
+    return ExpectedCost(
+        h * boundary,
+        policy.q * replay,
+        policy.q * policy.s * proof,
+        h * index.weight_count,
+    )
 
 
 __all__ = ["CostParameters", "ExpectedCost", "cost"]

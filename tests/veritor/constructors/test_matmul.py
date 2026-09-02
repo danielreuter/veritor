@@ -36,8 +36,8 @@ def compile_workload(workload: MatmulWorkload) -> Compiled:
     return Compiler(gate_set).compile(description, workload.public_inputs)
 
 
-def outputs_of(compiled: Compiled, inputs: tuple[int, ...]) -> tuple[int, ...]:
-    values = compiled.circuit.evaluate(inputs)
+def outputs_of(compiled: Compiled, workload: MatmulWorkload) -> tuple[int, ...]:
+    values = compiled.circuit.evaluate(workload.public_inputs, workload.weight_values)
     return tuple(values[address] for address in compiled.circuit.outputs)
 
 
@@ -48,21 +48,36 @@ def test_shared_weight_matmul_executes_in_canonical_order() -> None:
     assert workload.weight_shape == (3, 2)
     assert workload.activation_shapes == ((2, 3), (1, 3))
     assert workload.output_shapes == ((2, 2), (1, 2))
-    assert workload.public_inputs == (1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+    assert workload.public_inputs == (1, 2, 3, 4, 5, 6, 7, 8, 9)  # the activations only
+    assert workload.weight_values == (1, 2, 3, 4, 5, 6)
+    assert workload.manifest["input_order"] == "activations-row-major"
     assert expected_matmul_outputs(workload) == (22, 28, 49, 64, 76, 100)
-    assert outputs_of(compiled, workload.public_inputs) == expected_matmul_outputs(workload)
+    assert outputs_of(compiled, workload) == expected_matmul_outputs(workload)
+    assert (compiled.circuit.input_count, compiled.circuit.weight_count) == (9, 6)
+    with pytest.raises(Exception, match="expected 6 weights, got 0"):
+        compiled.circuit.evaluate(workload.public_inputs)
 
 
-def test_marks_make_rows_replay_units_and_dots_verification_units() -> None:
+def test_marks_make_source_units_rows_replay_units_and_dots_verification_units() -> None:
     workload = _workload()
     compiled = compile_workload(workload)
     index, circuit = compiled.index, compiled.circuit
     inner, columns = workload.weight_shape
     rows = sum(rows for rows, _ in workload.activation_shapes)
+    x_cells, w_cells = rows * inner, inner * columns
 
-    assert index.replay_units.count == rows == 3
-    assert index.verification_unit_count == rows * columns == 6
-    for r in range(rows):
+    assert index.root.frame.definition.input_count == 0  # the root has no ports
+    assert index.replay_units.count == 2 + rows == 5
+    assert index.verification_unit_count == x_cells + w_cells + rows * columns
+    activations, weights = index.replay_units.unit(0), index.replay_units.unit(1)
+    assert activations.interval == range(x_cells) and weights.interval == range(x_cells, x_cells + w_cells)
+    assert list(circuit.inputs) == list(activations.interval)
+    assert list(circuit.weights) == list(weights.interval)
+    for r, unit in enumerate((activations, weights)):
+        assert unit.role == "replay" and circuit.Out(unit) == () and index.interior(r).count == 0
+        assert index.verification_units(r).count == unit.size
+        assert all(v.size == 1 and circuit[v.interval.start].is_source for v in index.verification_units(r))
+    for r in range(2, 2 + rows):
         unit = index.replay_units.unit(r)
         assert unit.role == "replay"
         assert unit.size == columns * (2 * inner - 1)
@@ -70,37 +85,41 @@ def test_marks_make_rows_replay_units_and_dots_verification_units() -> None:
         assert all(v.size == 2 * inner - 1 for v in index.verification_units(r))
         assert all(v.replay_unit == r for v in index.verification_units(r))
         assert len(circuit.Out(unit)) == columns
-    covered = [a for r in range(rows) for a in index.replay_units.unit(r).interval]
-    assert covered == list(range(circuit.input_count, circuit.n))
+        # a row reads its activation row and all of W through ports
+        assert circuit.In(unit) == tuple(range((r - 2) * inner, (r - 1) * inner)) + tuple(weights.interval)
+    covered = [a for r in range(index.replay_units.count) for a in index.replay_units.unit(r).interval]
+    assert covered == list(range(circuit.n))  # every gate, source gates included, is in a unit
+    assert len(index.root.frame.definition.out_runs) == 1  # rows are pure dots: one run of outputs
 
 
-def test_shared_weight_inputs_fan_out_across_replay_units() -> None:
+def test_shared_weight_gates_fan_out_across_replay_units() -> None:
     workload = MatmulWorkload(((3,), (5,)), (((7, 11),), ((13, 17),)))
     compiled = compile_workload(workload)
     circuit, index = compiled.circuit, compiled.index
-    weights = {0, 1}
+    weights = set(circuit.weights)
 
-    reads_by_replay = [
-        set(circuit.In(index.replay_units.unit(r))) & weights
-        for r in range(index.replay_units.count)
+    reads_by_row = [
+        set(circuit.In(index.replay_units.unit(r))) & weights for r in range(2, index.replay_units.count)
     ]
 
-    assert workload.public_inputs[:2] == (3, 5)
-    assert reads_by_replay == [weights, weights]
+    assert workload.weight_values == (3, 5) and workload.public_inputs == (7, 11, 13, 17)
+    assert weights == {4, 5}
+    assert reads_by_row == [weights, weights]
 
 
-def test_boundary_is_exactly_the_public_io_of_the_rows() -> None:
+def test_boundary_is_the_inputs_and_the_rows_outputs() -> None:
     workload = _workload()
     compiled = compile_workload(workload)
     circuit, index = compiled.circuit, compiled.index
     boundary = index.boundary()
     io = set(circuit.inputs) | set(circuit.outputs)
 
-    assert set(boundary) == io
+    assert set(boundary) == io  # the weight gates are under κ_W, not in the boundary
+    assert set(index.weights()).isdisjoint(boundary)
     for r in range(index.replay_units.count):
         unit = index.replay_units.unit(r)
         interior = index.interior(r)
-        assert set(interior) == set(unit.interval) - io
+        assert set(interior) == set(unit.interval) - io - set(circuit.weights)
         assert all(index.replay_units.owner(a) == r for a in interior)
 
 
@@ -109,7 +128,8 @@ def test_modular_overflow_is_applied_to_every_output() -> None:
     compiled = compile_workload(workload)
 
     assert expected_matmul_outputs(workload) == (1, 2)
-    assert outputs_of(compiled, workload.public_inputs) == (1, 2)
+    assert outputs_of(compiled, workload) == (1, 2)
+    assert (compiled.circuit.input_count, compiled.circuit.weight_count) == (2, 1)
 
 
 @pytest.mark.parametrize(
