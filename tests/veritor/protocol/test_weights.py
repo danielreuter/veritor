@@ -8,15 +8,20 @@ from dataclasses import replace
 
 import pytest
 
-from veritor.compile import Compiler
-from veritor.constructors import MatmulCompileRequest, MatmulG
-from veritor.core import VerificationPolicy, make_word_gate_set
+from veritor.constructors import (
+    MatmulCompileRequest,
+    MatmulG,
+    MatmulWorkload,
+    TracedDefinition,
+)
+from veritor.core import Gate, GateSet, VerificationPolicy, make_word_gate_set
 from veritor.protocol import (
     BOUNDARY_OWNER,
     WEIGHT_OWNER,
     Expectation,
     Opening,
     ProtocolError,
+    ProtocolRun,
     ProverSession,
     VerificationCode,
     VerifierSession,
@@ -29,7 +34,8 @@ from veritor.protocol import (
     run_protocol,
     verify_transcript,
 )
-from veritor.protocol.domains import public_boundary
+from veritor.protocol.domains import weight_domain
+from veritor.research import Compile
 
 CHECK_EVERYTHING = VerificationPolicy(1, 1)
 SEEDS = {"session_id": b"weights", "q_seed": b"Q" * 32, "s_seed": b"S" * 32}
@@ -42,18 +48,50 @@ def matmul_request(n: int, rows: int) -> MatmulCompileRequest:
     return MatmulCompileRequest(weights, (activation,))
 
 
+class PublicWeightsG(MatmulG):
+    """The same matmul with the weights as ``in`` gates: every value is public I/O."""
+
+    def weights_unit(self, count: int) -> TracedDefinition:
+        return self.tracer.definition(
+            input_count=0, key=("public-weights", count), role="replay"
+        )(lambda _v: self.tracer.inputs(count))
+
+    def __call__(self, x: object, a: bytes) -> tuple[bytes, tuple[int, ...]]:
+        description, _ = super().__call__(x, a)
+        assert isinstance(x, MatmulWorkload)
+        return description, (*x.public_inputs, *x.weight_values)
+
+
 class Model:
     """A compiled matmul with its weights committed once."""
 
     def __init__(self, n: int = 4, rows: int = 2) -> None:
         self.request = matmul_request(n, rows)
         workload = self.request.workload
-        self.compiled = Compiler(GATE_SET).compile(
-            MatmulG(8)(workload, b""), workload.public_inputs
+        self.compilation = Compile(MatmulG(8), workload, b"", GATE_SET)
+        self.compiled = self.compilation.compiled
+        self.circuit = self.compiled.circuit
+        self.weight_addresses = frozenset(self.circuit.weights)
+        self.values = dict(
+            enumerate(self.circuit.evaluate(workload.public_inputs, workload.weight_values))
         )
-        self.values = dict(enumerate(self.compiled.circuit.evaluate(workload.public_inputs)))
-        span = self.request.weight_addresses
-        self.weights, self.tree = commit_weights(self.compiled, span.start, span.stop, self.values)
+        self.weights, self.tree = commit_weights(GATE_SET, workload.weight_values)
+
+    def weight_openings(self, run: ProtocolRun) -> list[tuple[int, int, int, Opening]]:
+        """``(unit, index, address, opening)`` for every ``kappa_W`` opening in the evidence."""
+
+        assert run.transcript is not None
+        layout = VerifierSession(self.expectation(), self.compiled)._layout
+        return [
+            (unit, index, address, item)
+            for unit, batch in zip(
+                run.report.sampled_verification_units, run.transcript.evidence.units, strict=True
+            )
+            for index, ((owner, address), item) in enumerate(
+                zip(layout.required(unit), batch, strict=True)
+            )
+            if owner == WEIGHT_OWNER
+        ]
 
     def expectation(self, **overrides) -> Expectation:
         arguments = {
@@ -63,20 +101,16 @@ class Model:
             **overrides,
         }
         return make_expectation(
-            self.compiled,
-            CHECK_EVERYTHING,
-            self.request.activation_inputs,
-            arguments.pop("claimed_outputs"),
-            **arguments,
+            self.compilation, CHECK_EVERYTHING, arguments.pop("claimed_outputs"), **arguments
         )
 
-    def tampered(self, address: int) -> tuple[Expectation, dict[int, object]]:
+    def tampered(self, rank: int) -> tuple[Expectation, dict[int, object]]:
         """A prover who computed with one weight changed and claims that result."""
 
-        inputs = list(self.request.public_inputs)
-        inputs[address] = (inputs[address] + 1) % 256
-        values = dict(enumerate(self.compiled.circuit.evaluate(inputs)))
-        outputs = tuple(values[o] for o in self.compiled.circuit.outputs)
+        weights = list(self.request.weight_values)
+        weights[rank] = (weights[rank] + 1) % 256
+        values = dict(enumerate(self.circuit.evaluate(self.request.public_inputs, weights)))
+        outputs = tuple(values[o] for o in self.circuit.outputs)
         return self.expectation(claimed_outputs=outputs), values
 
 
@@ -94,13 +128,12 @@ def model() -> Model:
     return cached_model(4, 2)
 
 
-def test_matmul_request_names_its_weight_inputs() -> None:
+def test_matmul_request_separates_activations_from_weights() -> None:
     request = matmul_request(3, 2)
 
-    assert request.weight_addresses == range(9)
-    assert request.public_inputs[:9] == tuple(v for row in request.weights for v in row)
-    assert request.activation_inputs == request.public_inputs[9:]
-    assert len(request.activation_inputs) == 6
+    assert request.weight_values == tuple(v for row in request.weights for v in row)
+    assert len(request.weight_values) == 9 and len(request.public_inputs) == 6
+    assert request.public_inputs == tuple(v for row in request.activations[0] for v in row)
 
 
 def test_honest_run_under_a_weight_root_accepts_and_round_trips(model: Model) -> None:
@@ -111,13 +144,13 @@ def test_honest_run_under_a_weight_root_accepts_and_round_trips(model: Model) ->
     assert run.report.accepted
     assert run.transcript is not None
     header = run.transcript.header
-    assert header.weights == model.weights
-    assert len(header.public_inputs) == len(model.request.activation_inputs)
-    weight_count = model.weights.count
+    assert header.weights == model.weights == Weights(16, model.weights.root)
+    assert len(header.public_inputs) == len(model.request.public_inputs) == 8
     boundary = model.compiled.index.boundary()
-    assert run.transcript.boundary.commitment.count == boundary.count - weight_count
+    assert run.transcript.boundary.commitment.count == boundary.count == 8 + 8
     opened = {item.position for item in run.transcript.boundary.io_openings}
-    assert opened.isdisjoint(model.request.weight_addresses)
+    assert opened.isdisjoint(model.weight_addresses)
+    assert opened == set(model.circuit.inputs) | set(model.circuit.outputs)
     data = encode_transcript(run.transcript)
     assert decode_transcript(data) == run.transcript
     assert verify_transcript(data, expectation, model.compiled) == run.report
@@ -126,25 +159,55 @@ def test_honest_run_under_a_weight_root_accepts_and_round_trips(model: Model) ->
     assert without_tree.report.accepted
 
 
-def test_sampled_evidence_opens_weights_under_kappa_w(model: Model) -> None:
+def test_sampled_evidence_opens_weights_under_kappa_w_at_their_ranks(model: Model) -> None:
     run = run_protocol(model.compiled, model.expectation(), model.values, weight_tree=model.tree)
-    assert run.transcript is not None
-    weight_openings = [
-        item
-        for batch in run.transcript.evidence.units
-        for item in batch
-        if item.position in model.weights
-    ]
+    weight_openings = model.weight_openings(run)
 
-    assert weight_openings
-    assert all(len(item.path) == merkle.merkle_depth(model.weights.count) for item in weight_openings)
-    assert {len(item.path) for item in weight_openings} == {
+    # every weight cell opens itself and every dot opens the column it reads
+    assert len(weight_openings) == 16 + 2 * 4 * 4
+    assert {len(item.path) for *_, item in weight_openings} == {
         merkle.merkle_depth(model.weights.count)
     }
+    # a weight opening names the weight's rank, the position in kappa_W, not its address
+    assert all(item.position == model.circuit.weight_rank(a) for _, _, a, item in weight_openings)
+    assert {a for _, _, a, _ in weight_openings} == model.weight_addresses
+    assert {item.position for *_, item in weight_openings} == set(range(16))
+    assert all(
+        item.value == bytes((model.request.weight_values[item.position],))
+        for *_, item in weight_openings
+    )
+
+
+def test_one_weight_root_serves_every_batch_shape_of_the_model() -> None:
+    """``kappa_W`` is per model: requests of different shapes compile different circuits
+    from the same weights and all open them under the one root committed for the model."""
+
+    two_rows, one_row = cached_model(4, 2), cached_model(4, 1)
+    assert two_rows.compiled.digest != one_row.compiled.digest
+    assert two_rows.request.weight_values == one_row.request.weight_values
+    assert two_rows.weights == one_row.weights == Weights(16, two_rows.weights.root)
+    assert two_rows.tree.domain == one_row.tree.domain
+
+    for model in (two_rows, one_row):
+        run = run_protocol(
+            model.compiled,
+            model.expectation(weights=two_rows.weights),
+            model.values,
+            weight_tree=two_rows.tree,
+        )
+        assert run.report.accepted and run.transcript is not None
+        assert run.transcript.header.weights == two_rows.weights
+        assert len(model.weight_openings(run)) == 16 + model.request.output_shapes[0][0] * 16
+
+    # the root is the model's under this gate set: other words, other root
+    wider, _ = commit_weights(make_word_gate_set(16), two_rows.request.weight_values)
+    assert wider.count == 16 and wider.root != two_rows.weights.root
 
 
 def test_a_tampered_weight_is_caught_at_a_sampled_gate(model: Model) -> None:
-    expectation, values = model.tampered(address=5)
+    """The dot used a weight that differs from the kappa_W leaf it must open."""
+
+    expectation, values = model.tampered(rank=5)
 
     run = run_protocol(model.compiled, expectation, values, weight_tree=model.tree)
 
@@ -153,10 +216,10 @@ def test_a_tampered_weight_is_caught_at_a_sampled_gate(model: Model) -> None:
 
 
 def test_a_prover_cannot_substitute_its_own_weight_root(model: Model) -> None:
-    expectation, values = model.tampered(address=5)
+    expectation, values = model.tampered(rank=5)
     verifier = VerifierSession(expectation, model.compiled)
-    span = model.request.weight_addresses
-    _, own_tree = commit_weights(model.compiled, span.start, span.stop, values)
+    own_weights = [values[address] for address in model.circuit.weights]
+    _, own_tree = commit_weights(GATE_SET, own_weights)
 
     with pytest.raises(ProtocolError, match="does not match"):
         ProverSession(model.compiled, verifier.header, values, weight_tree=own_tree)
@@ -171,86 +234,135 @@ def test_a_forged_weight_opening_fails_under_kappa_w(model: Model) -> None:
     run = run_protocol(model.compiled, expectation, model.values, weight_tree=model.tree)
     assert run.transcript is not None
     units = list(run.transcript.evidence.units)
-    batch = list(units[0])
-    position = next(i for i, item in enumerate(batch) if item.position in model.weights)
-    item = batch[position]
+    unit, position, address, item = model.weight_openings(run)[0]
+    batch = list(units[unit])
     batch[position] = Opening(item.position, bytes((item.value[0] ^ 1,)) + item.value[1:], item.path)
-    units[0] = tuple(batch)
+    units[unit] = tuple(batch)
     tampered = replace(run.transcript, evidence=replace(run.transcript.evidence, units=tuple(units)))
 
     report = verify_transcript(encode_transcript(tampered), expectation, model.compiled)
 
     assert report.code is VerificationCode.INVALID_OPENING
-    assert f"owner {WEIGHT_OWNER}" in report.detail
+    assert f"address {address}" in report.detail and f"owner {WEIGHT_OWNER}" in report.detail
+
+    # ... and so does an opening moved to another rank
+    batch[position] = Opening((item.position + 1) % 16, item.value, item.path)
+    units[unit] = tuple(batch)
+    moved = replace(run.transcript, evidence=replace(run.transcript.evidence, units=tuple(units)))
+    report = verify_transcript(encode_transcript(moved), expectation, model.compiled)
+    assert report.code is VerificationCode.COVERAGE_MISMATCH
 
 
-def test_a_weight_range_outside_the_inputs_is_rejected(model: Model) -> None:
-    inputs = model.compiled.index.input_count
-    beyond = Weights(0, inputs + 1, model.weights.root)
+def test_kappa_w_must_bind_exactly_the_circuits_weight_gates(model: Model) -> None:
+    count = model.compiled.index.weight_count
+    wrong_count = Weights(count + 1, model.weights.root)
 
-    run = run_protocol(model.compiled, model.expectation(weights=beyond), model.values)
-
+    run = run_protocol(model.compiled, model.expectation(weights=wrong_count), model.values)
     assert run.report.code is VerificationCode.INVALID_COMPILED_RESULT
+    assert "binds 17 weights" in run.report.detail
+
+    unbound = run_protocol(model.compiled, model.expectation(weights=None), model.values)
+    assert unbound.report.code is VerificationCode.INVALID_COMPILED_RESULT
+    assert "no kappa_W" in unbound.report.detail
+
     with pytest.raises(ProtocolError, match="nonnegative"):
-        Weights(3, 2, model.weights.root)
+        Weights(-1, model.weights.root)
+    # a weight vector of the wrong length commits fine (the model is committed before any
+    # request) and is rejected by every circuit whose weight gates it does not count
+    short, short_tree = commit_weights(GATE_SET, model.request.weight_values[:-1])
+    assert short.count == 15
+    rejected = run_protocol(
+        model.compiled, model.expectation(weights=short), model.values, weight_tree=short_tree
+    )
+    assert rejected.report.code is VerificationCode.INVALID_COMPILED_RESULT
+    assert "binds 15 weights" in rejected.report.detail
+    header = VerifierSession(model.expectation(), model.compiled).header
+    with pytest.raises(ProtocolError, match="does not match"):
+        ProverSession(model.compiled, header, model.values, weight_tree=short_tree)
 
 
-def test_public_boundary_is_the_boundary_without_the_weights(model: Model) -> None:
+def test_the_weight_domain_is_the_rank_space_and_the_boundary_excludes_the_weight_gates(
+    model: Model,
+) -> None:
     index = model.compiled.index
-    full = list(index.boundary())
-    span = model.request.weight_addresses
-    public = public_boundary(index, model.weights)
-    expected = [address for address in full if address not in span]
+    domain = weight_domain(GATE_SET, index.weight_count)
+    boundary = index.boundary()
+    weights = list(model.circuit.weights)
 
-    assert public.count == len(expected)
-    assert [public.unrank(rank) for rank in range(public.count)] == expected
-    assert all(public.rank(address) == rank for rank, address in enumerate(expected))
-    assert all(not public.contains(address) for address in span)
-    assert all(public.contains(address) for address in expected)
-    assert not public.contains(index.n - 1) or (index.n - 1) in expected
+    assert domain.owner == WEIGHT_OWNER and domain.count == 16
+    assert list(domain.positions) == list(range(16))  # ranks, not addresses
+    assert domain == model.tree.domain == weight_domain(GATE_SET, 16)
+    assert domain.domain_id != weight_domain(GATE_SET, 17).domain_id
+    assert domain.domain_id != weight_domain(make_word_gate_set(16), 16).domain_id
+    assert all(not boundary.contains(address) for address in weights)
+    assert list(boundary)[: index.input_count] == list(model.circuit.inputs)
+    assert list(index.weights()) == weights
+    assert all(
+        index.weights().rank(address) == model.circuit.weight_rank(address) == rank
+        for rank, address in enumerate(weights)
+    )
     with pytest.raises(KeyError):
-        public.rank(span.start)
+        index.weights().rank(model.circuit.inputs[0])
     with pytest.raises(IndexError):
-        public.unrank(public.count)
+        domain.positions.unrank(16)
+    with pytest.raises(ProtocolError, match="nonnegative"):
+        weight_domain(GATE_SET, -1)
+    with pytest.raises(ProtocolError, match="GateSet"):
+        weight_domain(model.compiled, 16)  # type: ignore[arg-type]
+    weightless = GateSet(
+        (Gate("add", 2, 8, replay_cost=1, proof_cost=1, evaluate=lambda a: (a[0] + a[1]) % 256),),
+        name="weightless",
+        version="1",
+    )
+    with pytest.raises(ProtocolError, match="one width"):
+        commit_weights(weightless, (1, 2, 3))
 
 
 def test_ownership_rule_weights_then_boundary_then_interior(model: Model) -> None:
     session = VerifierSession(model.expectation(), model.compiled)
     layout = session._layout
     index = model.compiled.index
-    span = model.request.weight_addresses
 
-    assert all(layout.owner(address) == WEIGHT_OWNER for address in span)
+    assert all(layout.owner(address) == WEIGHT_OWNER for address in model.circuit.weights)
     assert all(layout.owner(address) == BOUNDARY_OWNER for address in layout.public_inputs)
-    assert all(layout.owner(address) == BOUNDARY_OWNER for address in model.compiled.circuit.outputs)
-    interior = int(index.interior(1).unrank(0))
-    assert layout.owner(interior) == 1
+    assert all(layout.owner(address) == BOUNDARY_OWNER for address in model.circuit.outputs)
+    assert index.interior(0).count == index.interior(1).count == 0  # the source units
+    interior = int(index.interior(2).unrank(0))
+    assert layout.owner(interior) == 2
 
 
 # -- the verifier's work does not grow with |W| ----------------------------------
 
 
 class BoundaryPhase:
-    """The verifier's setup and boundary phase for one ``n``, ready to rerun."""
+    """The verifier's setup and boundary phase for one ``n``, ready to rerun.
+
+    With ``weights`` the model is the matmul under ``kappa_W``; without, the
+    same product with the weights as ``in`` gates, so they are public inputs
+    the verifier opens one by one.
+    """
 
     def __init__(self, n: int, *, weights: bool) -> None:
         model = cached_model(n, 1)
+        workload = model.request.workload
         if weights:
+            compiled = model.compiled
             expectation = model.expectation()
-            tree = model.tree
+            values, tree = model.values, model.tree
         else:
+            compilation = Compile(PublicWeightsG(8), workload, b"", GATE_SET)
+            compiled = compilation.compiled
+            assert compiled.index.weight_count == 0
+            assert len(compilation.inputs) == len(workload.public_inputs) + n * n
+            values = dict(enumerate(compiled.circuit.evaluate(compilation.inputs)))
             expectation = make_expectation(
-                model.compiled,
-                CHECK_EVERYTHING,
-                model.request.public_inputs,
-                model.request.expected_outputs,
-                **SEEDS,
+                compilation, CHECK_EVERYTHING, model.request.expected_outputs, **SEEDS
             )
             tree = None
-        header = VerifierSession(expectation, model.compiled).header
-        prover = ProverSession(model.compiled, header, model.values, weight_tree=tree)
+        header = VerifierSession(expectation, compiled).header
+        prover = ProverSession(compiled, header, values, weight_tree=tree)
         self.boundary = prover.boundary()
-        self.compiled = model.compiled
+        self.compiled = compiled
         self.expectation = expectation
         self.io = len(header.public_inputs) + len(header.claimed_outputs)
         self.weight_count = model.weights.count

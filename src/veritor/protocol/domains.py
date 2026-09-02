@@ -3,36 +3,37 @@
 Three kinds of commitment cover the address space, and every address has
 exactly one owner:
 
-* ``W = [start, stop)``, the weight inputs, under the per-model root
-  ``kappa_W`` (:func:`weight_domain`, owner ``WEIGHT_OWNER``);
-* ``∂ \\ W``, the rest of the boundary, under the boundary root bound to the
-  header (:func:`boundary_domain`, owner ``BOUNDARY_OWNER``);
+* ``W``, the model's weight vector, under the per-model root ``kappa_W``
+  (:func:`weight_domain`, owner ``WEIGHT_OWNER``).  Its positions are ranks:
+  position ``k`` is the ``k``-th weight gate in address order, whatever the
+  circuit.  The domain is bound to a fixed tag and the gate set, never to a
+  description, so a model is committed once and the same root serves every
+  circuit compiled from it;
+* ``∂ = In ∪ ⋃_r Out(R_r)``, the boundary -- the ``in`` gates and every
+  replay unit's declared, unpinned outputs -- under the boundary root bound to
+  the header (:func:`boundary_domain`, owner ``BOUNDARY_OWNER``);
 * ``Int(r)`` for each replay unit ``r``, under its interior root bound to the
   replay phase (:func:`interior_domain`, owner ``r``).
 
-All position domains are lazy: membership, rank and unrank cost ``O(depth)``
-through the index, never a scan.
+Source gates are never in an interior: an ``in`` gate is a boundary position
+and the ``weight`` gate at address ``a`` is the ``kappa_W`` position
+``weight_rank(a)``.  All position domains are lazy: membership, rank and
+unrank cost ``O(depth)`` through the index, never a scan.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Sequence
 
-from veritor.core import (
-    Circuit,
-    Compiled,
-    Index,
-    IndexedDomain,
-    RangeIndexedDomain,
-)
+from veritor.core import Circuit, Compiled, GateSet, RangeIndexedDomain, encode_value
 
 from .merkle import CommitmentDomain, MerkleTree
 from .messages import Header, ProtocolError, Weights, raw_digest
 
 BOUNDARY_OWNER = -1
 WEIGHT_OWNER = -2
-WEIGHT_BINDING = raw_digest("veritor/protocol/weights/v1", {"owner": WEIGHT_OWNER})
-"""Weight roots outlive sessions, so their domain is bound to a fixed tag."""
+WEIGHT_TAG = "veritor/protocol/weights/v3"
+"""Weight roots outlive sessions and descriptions: their domain is bound to this tag."""
 
 
 def leaf_schema(circuit: Circuit, address: int) -> str:
@@ -41,26 +42,36 @@ def leaf_schema(circuit: Circuit, address: int) -> str:
     return f"u{circuit[address].width}"
 
 
-def public_boundary(index: Index, weights: Weights | None) -> IndexedDomain[int]:
-    """``∂ \\ W`` straight from the index; ``∂`` itself when there are no weights."""
+def weight_width(gate_set: GateSet) -> int:
+    """The width of the gate set's weight gates, which fixes the ``kappa_W`` leaf schema."""
 
-    return index.boundary(
-        exclude=None if weights is None else range(weights.start, weights.stop)
-    )
+    widths = {gate_set[name].width for name in gate_set.weight_gates}
+    if len(widths) != 1:
+        raise ProtocolError("kappa_W needs a gate set with weight gates of one width")
+    return widths.pop()
 
 
-def weight_domain(start: int, stop: int) -> CommitmentDomain:
-    """The domain of ``kappa_W``: the inputs ``[start, stop)``, per model."""
+def weight_domain(gate_set: GateSet, count: int) -> CommitmentDomain:
+    """The domain of ``kappa_W``: the ranks ``0 .. count - 1`` of a model's weight vector.
 
-    return CommitmentDomain(WEIGHT_BINDING, WEIGHT_OWNER, RangeIndexedDomain(start, stop))
+    Position ``k`` is the ``k``-th weight gate in address order of whichever
+    circuit is being verified; the binding is a fixed tag and the gate set
+    (whose weight width fixes the leaf schema), so the root does not depend
+    on the description and is committed once per model.
+    """
+
+    if not isinstance(gate_set, GateSet):
+        raise ProtocolError("the weight domain requires a GateSet")
+    if type(count) is not int or count < 0:
+        raise ProtocolError("weight count must be a nonnegative integer")
+    binding = raw_digest(WEIGHT_TAG, {"gate_set": gate_set.digest, "owner": WEIGHT_OWNER})
+    return CommitmentDomain(binding, WEIGHT_OWNER, RangeIndexedDomain(count))
 
 
 def boundary_domain(header: Header, compiled: Compiled) -> CommitmentDomain:
-    """The boundary commitment covers ``∂ \\ W`` and is bound to the header."""
+    """The boundary commitment covers ``∂`` and is bound to the header."""
 
-    return CommitmentDomain(
-        header.digest, BOUNDARY_OWNER, public_boundary(compiled.index, header.weights)
-    )
+    return CommitmentDomain(header.digest, BOUNDARY_OWNER, compiled.index.boundary())
 
 
 def interior_domain(
@@ -73,26 +84,18 @@ def interior_domain(
     )
 
 
-def commit_weights(
-    compiled: Compiled, start: int, stop: int, values: Mapping[int, object]
-) -> tuple[Weights, MerkleTree]:
-    """Commit the weights at inputs ``[start, stop)`` once for a model.
+def commit_weights(gate_set: GateSet, values: Sequence[object]) -> tuple[Weights, MerkleTree]:
+    """Commit a model's weight vector, once per model: leaf ``k`` holds ``values[k]``.
 
+    No circuit is needed: the model is committed before any request exists.
     The verifier holds the :class:`Weights`; the prover keeps the tree to open
-    sampled weights under ``kappa_W``.
+    sampled weight gates under ``kappa_W`` at their ranks.
     """
 
-    circuit = compiled.circuit
-    if type(start) is not int or type(stop) is not int or not 0 <= start <= stop:
-        raise ProtocolError("weights must be a range of nonnegative addresses")
-    if stop > compiled.index.input_count:
-        raise ProtocolError("weights must be circuit inputs")
-    domain = weight_domain(start, stop)
-    try:
-        encoded = {
-            address: circuit.encode(address, values[address]) for address in range(start, stop)
-        }
-    except KeyError as error:
-        raise ProtocolError(f"no value for weight {error.args[0]}") from None
-    tree = MerkleTree(domain, encoded, lambda address: leaf_schema(circuit, address))
-    return Weights(start, stop, tree.commitment.root), tree
+    if not isinstance(gate_set, GateSet):
+        raise ProtocolError("commit_weights requires a GateSet")
+    width = weight_width(gate_set)
+    domain = weight_domain(gate_set, len(values))
+    encoded = {rank: encode_value(width, value) for rank, value in enumerate(values)}
+    tree = MerkleTree(domain, encoded, lambda _rank: f"u{width}")
+    return Weights(domain.count, tree.commitment.root), tree

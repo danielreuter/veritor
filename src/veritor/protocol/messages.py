@@ -8,11 +8,13 @@ The protocol has five messages after the public header::
     verifier -> prover     SampleChallenge    (s seed, T)
     prover   -> verifier   EvidenceMessage    (openings for every sampled unit)
 
-The header binds the client's proposal ``theta`` and the verifier's ``eta``,
-so the whole hash chain does.  It may also bind :class:`Weights`: a per-model
-commitment ``kappa_W`` over the weight inputs ``W`` that the verifier holds,
-so a run never carries the weights themselves.  A :class:`Transcript` is the
-header plus these five messages in order.
+The header binds ``(C, I)``, the constructor ``G`` that produced it and the
+advice ``a`` it was run on, the client's proposal ``theta`` and the
+verifier's ``eta``, so the whole hash chain does.  It may also bind
+:class:`Weights`: a per-model commitment ``kappa_W`` to the model's weight
+vector, which the circuit's ``weight`` gates read by rank and the verifier
+holds, so a run never carries the weights themselves.  A :class:`Transcript`
+is the header plus these five messages in order.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ from veritor.core import (
     validate_digest,
 )
 
-PROTOCOL_VERSION = "veritor/protocol/v4"
+PROTOCOL_VERSION = "veritor/protocol/v6"
 
 
 class ProtocolError(InvalidArtifact):
@@ -155,50 +157,49 @@ class Opening:
 
 @dataclass(frozen=True, slots=True)
 class Weights:
-    """The weight inputs ``W = [start, stop)`` and their root ``kappa_W``.
+    """The root ``kappa_W`` over a model's weight vector of ``count`` values.
 
-    Committed once per model, not per run: the verifier holds this and binds
-    it into the header, and weight values are opened only where sampled.
+    Leaf ``k`` is the ``k``-th weight, read by the ``k``-th ``weight`` gate in
+    address order of whichever circuit is verified, so the root is committed
+    once per model and is the same for every description compiled from it.
+    The verifier holds this and binds it into the header, and weight values
+    are opened only where sampled, at their ranks.
     """
 
-    start: int
-    stop: int
+    count: int
     root: bytes
 
     def __post_init__(self) -> None:
-        if type(self.start) is not int or type(self.stop) is not int:
-            raise ProtocolError("weight bounds must be integers")
-        if not 0 <= self.start <= self.stop:
-            raise ProtocolError("weights must be a range of nonnegative addresses")
+        if type(self.count) is not int or self.count < 0:
+            raise ProtocolError("weight count must be a nonnegative integer")
         _bytes32(self.root, "weight root")
-
-    @property
-    def count(self) -> int:
-        return self.stop - self.start
 
     @property
     def commitment(self) -> Commitment:
         return Commitment(self.root, self.count)
 
-    def __contains__(self, address: object) -> bool:
-        return type(address) is int and self.start <= address < self.stop
-
     @property
     def manifest(self) -> dict[str, JSONValue]:
-        return {"root": self.root.hex(), "start": self.start, "stop": self.stop}
+        return {"count": self.count, "root": self.root.hex()}
 
 
 @dataclass(frozen=True, slots=True)
 class Header:
     """Public parameters both parties fix before any message is sent.
 
-    ``policy`` is the client's ``theta = (q, s)`` and ``eta`` the verifier's
-    acceptance threshold.  ``public_inputs`` are the encoded inputs outside
-    ``weights`` in address order; with no weights, every input.
+    ``compiled_digest`` names ``(C, I)``, ``constructor`` the digest of the
+    ``G`` that produced it and ``advice`` the ``a`` it was run on, so a
+    transcript is bound to one ``Compile(G, x, a)``.  ``policy`` is the
+    client's ``theta = (q, s)`` and ``eta`` the verifier's acceptance
+    threshold.  ``public_inputs`` are the encoded values of the circuit's
+    ``in`` gates by rank (address order); the weight gates are under
+    ``weights``.
     """
 
     session_id: bytes
     compiled_digest: Digest
+    constructor: Digest
+    advice: bytes
     policy: VerificationPolicy
     eta: Fraction
     public_inputs: tuple[bytes, ...]
@@ -212,6 +213,11 @@ class Header:
         object.__setattr__(
             self, "compiled_digest", validate_digest(self.compiled_digest, "compiled digest")
         )
+        object.__setattr__(
+            self, "constructor", validate_digest(self.constructor, "constructor digest")
+        )
+        if type(self.advice) is not bytes:
+            raise ProtocolError("advice must be bytes")
         if not isinstance(self.policy, VerificationPolicy):
             raise ProtocolError("policy must be a VerificationPolicy")
         if not isinstance(self.eta, Fraction) or not 0 <= self.eta < 1:
@@ -224,10 +230,12 @@ class Header:
             self,
             "digest",
             raw_digest(
-                "veritor/protocol/header/v4",
+                "veritor/protocol/header/v6",
                 {
+                    "advice": self.advice.hex(),
                     "claimed_outputs": [item.hex() for item in self.claimed_outputs],
                     "compiled_digest": self.compiled_digest,
+                    "constructor": self.constructor,
                     "eta": rational_manifest(self.eta),
                     "policy": self.policy.manifest,
                     "protocol_version": PROTOCOL_VERSION,

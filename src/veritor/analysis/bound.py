@@ -36,6 +36,16 @@ errors, again admitting more.  Everything is computed once per kind in
 ``log2`` with upward rounding (:mod:`veritor.analysis.series`) and weighted
 by copy counts; no copy is ever enumerated, and the running time is
 polynomial in ``buckets`` and ``errors_limit`` only.
+
+Source gates (``in``/``weight``) are pinned to the boundary or to ``kappa_W``
+and never counted in a node's ``out_bits``: a unit holding nothing but
+source gates has capacity ``2**0``.  Such a unit is never in the error set
+of a transcript the verifier can accept: every input gate is compared with
+the public input at the boundary, before any sampling, and a weight gate's
+only admissible value is its opening under ``kappa_W``.  The fold therefore
+gives a kind with no non-source gate the series of the empty subset alone
+(``l = 0``); counting its ``l >= 1`` subsets would add terms of weight one
+for error sets that never survive.
 """
 
 from __future__ import annotations
@@ -161,17 +171,28 @@ def _integer_count(bits: float) -> float:
     """``log2`` of the largest integer count consistent with ``bits``.
 
     ``|Y_eta|`` is an integer, so ``|Y_eta| <= 2**bits`` implies
-    ``|Y_eta| <= floor(2**bits)``.  The power is rounded up before the floor,
-    so the result is still an upper bound; it removes the upward-rounding
-    slack of the fold where that slack is visible, e.g. a fully checked run
-    is exactly ``0.0`` rather than ``1e-14`` bits.  Above ``2**53`` the count
-    is not an exact float and ``bits`` is returned unchanged.
+    ``|Y_eta| <= floor(2**bits)``.  The power is scaled up by ``1 + 2**-45``
+    before the floor: that covers the rounding of ``2.0**bits`` itself and
+    a few ulps of error in ``bits`` (e.g. ``math.log2(n)`` for an integer
+    ``n`` may sit below ``log2 n``), so the count is never below the true
+    one; ``log2`` of the count is exact for a power of two and rounded up
+    by an ulp otherwise, so the result is never below the true ``log2`` of
+    the count; and the result never exceeds ``bits``, which is an upper
+    bound by itself.  This removes the upward-rounding slack of the fold
+    where that slack is visible, e.g. a fully checked run is exactly ``0.0``
+    rather than ``1e-14`` bits.  Above ``2**53`` the count is not an exact
+    float and ``bits`` is returned unchanged.
     """
 
     if not bits < 53.0:
         return bits
-    count = math.floor(math.nextafter(2.0**bits, math.inf))
-    return math.log2(count) if count > 1 else 0.0
+    count = math.floor(2.0**bits * (1 + 2.0**-45))
+    if count <= 1:
+        return 0.0
+    log_count = math.log2(count)
+    if count & (count - 1):
+        log_count = math.nextafter(log_count, math.inf)
+    return min(bits, log_count)
 
 
 class _Fold:
@@ -233,7 +254,11 @@ class _Fold:
             return found
         row = self.rows[kind]
         if row.role == VERIFICATION:
-            result = unit_series(row.out_bits)
+            if row.size == row.source_inputs + row.source_weights:
+                # nothing but source gates: never incorrect, so only l = 0
+                result = empty_series()
+            else:
+                result = unit_series(row.out_bits)
         else:
             result = empty_series()
             for child, count in row.children:

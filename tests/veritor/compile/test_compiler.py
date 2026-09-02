@@ -33,7 +33,7 @@ def test_compile_returns_the_circuit_the_index_and_a_bound_digest(helpers):
     assert compiled.digest != Compiler(GATES).compile(helpers.matmul_payload(4, 3, 1), inputs[:4]).digest
 
 
-def test_compile_checks_inputs_advice_and_marks(helpers):
+def test_compile_checks_inputs_and_marks(helpers):
     h = helpers
     payload = h.matmul_payload(4, 2, 1)
     compiler = Compiler(GATES)
@@ -42,11 +42,7 @@ def test_compile_checks_inputs_advice_and_marks(helpers):
         compiler.compile(payload, (1, 2))
     with pytest.raises(CompileError, match="expects 4 inputs, got 12"):
         compiler.compile(payload, (0,) * 12)  # weights are not inputs
-    with pytest.raises(CompileError, match="advice exceeds the public bit bound"):
-        compiler.compile(payload, (0,) * 4, b"hint", advice_bound_bits=16)
-    assert compiler.compile(payload, (0,) * 4, b"hint", advice_bound_bits=32).digest
-    with pytest.raises(CompileError, match="advice must be bytes"):
-        compiler.compile(payload, (0,) * 4, "hint")  # type: ignore[arg-type]
+    assert compiler.compile(payload, (0,) * 4).digest
     with pytest.raises(CompileError, match="not inside a replay unit"):
         compiler.compile(h.single(h.body(0, [h.gate("in"), h.gate("add", h.rng(LOC, 0, 2, 0))], [h.rng(LOC, 1)])), (1,))
     with pytest.raises(CompileError, match="the root has no ports; inputs are `in` gates"):

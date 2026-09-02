@@ -29,7 +29,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from veritor.core import Digest, JSONValue, identity_digest
+from veritor.compile import constructor_digest
+from veritor.core import Digest, JSONValue
 from veritor.core.description import REPLAY
 
 from .lm import LMShape, ToyLM, wires
@@ -38,7 +39,6 @@ from .tracer import TracedDefinition, TracerError, Wire, Wires
 
 PREFILL = "prefill"
 DECODE = "decode"
-CONSTRUCTOR_DIGEST_TAG = "veritor/constructor/v1"
 
 type OccupantShape = tuple[str, int]
 """``("prefill", prompt length)`` or ``("decode", context length)``."""
@@ -69,7 +69,12 @@ class _Plan:
 
 
 class ClusterG:
-    """``G(x, a)`` for a cluster run: ``x`` the requests, ``a`` the encoded schedule."""
+    """``G(x, a)`` for a cluster run: ``x`` the requests, ``a`` the encoded schedule.
+
+    A :class:`veritor.compile.Constructor`: ``digest`` names the class, its
+    version and ``(shape, pods, slots, steps)``; ``G(x, a)`` returns the
+    description bytes and the prompt tokens as the ``in`` gates consume them.
+    """
 
     VERSION = "1"
 
@@ -82,10 +87,7 @@ class ClusterG:
         self.shape = shape
         self.pods, self.slots, self.steps = pods, slots, steps
         self.lm = ToyLM(shape)
-        self.digest: Digest = identity_digest(
-            CONSTRUCTOR_DIGEST_TAG,
-            {"name": type(self).__name__, "parameters": self.manifest, "version": self.VERSION},
-        )
+        self.digest: Digest = constructor_digest(type(self).__name__, self.VERSION, self.manifest)
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
