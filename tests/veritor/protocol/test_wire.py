@@ -16,9 +16,9 @@ from veritor.protocol import (
 
 
 @pytest.fixture
-def recorded(artifact, honest_values, expect):
+def recorded(compiled, honest_values, expect):
     expectation = expect()
-    run = run_protocol(artifact, expectation, honest_values)
+    run = run_protocol(compiled, expectation, honest_values)
     assert run.transcript is not None
     return encode_transcript(run.transcript), run.transcript, expectation
 
@@ -58,14 +58,14 @@ def uppercase_root(document: dict) -> dict:
         pytest.param(lambda doc: canonical(uppercase_root(doc)), id="uppercase-hex"),
     ],
 )
-def test_noncanonical_bytes_are_rejected(artifact, recorded, rewrite) -> None:
+def test_noncanonical_bytes_are_rejected(compiled, recorded, rewrite) -> None:
     data, _, expectation = recorded
     altered = rewrite(json.loads(data))
     assert altered != data
 
     with pytest.raises(NoncanonicalTranscript):
         decode_transcript(altered)
-    report = verify_transcript(altered, expectation, artifact)
+    report = verify_transcript(altered, expectation, compiled)
     assert report.code is VerificationCode.NONCANONICAL_TRANSCRIPT
 
 
@@ -85,14 +85,14 @@ def test_noncanonical_bytes_are_rejected(artifact, recorded, rewrite) -> None:
         ),
     ],
 )
-def test_malformed_bytes_are_rejected(artifact, recorded, corrupt) -> None:
+def test_malformed_bytes_are_rejected(compiled, recorded, corrupt) -> None:
     data, _, expectation = recorded
     altered = corrupt(data)
     assert altered != data
 
     with pytest.raises(MalformedTranscript):
         decode_transcript(altered)
-    report = verify_transcript(altered, expectation, artifact)
+    report = verify_transcript(altered, expectation, compiled)
     assert report.code is VerificationCode.MALFORMED_TRANSCRIPT
 
 

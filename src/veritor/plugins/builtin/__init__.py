@@ -1,6 +1,5 @@
 """Built-in architecture plug-ins."""
 
-from ._call_dag_capacity import CallDagCapacityBoundProvider
 from .deepseek_v4_pro import (
     DEEPSEEK_V4_PRO_ARCHITECTURE_ID,
     DEEPSEEK_V4_PRO_NUMERICAL_PROFILE_ID,
@@ -15,13 +14,10 @@ from .demo_g import (
     DEMO_G_PLUGIN,
     BatchInput,
     DemoG,
-    DemoGCapacityBoundProvider,
     DemoGCompileRequest,
     DemoGPlugin,
     DotRequest,
     compile_demo_g,
-    demo_expected_outputs,
-    demo_public_inputs,
     expected_dot_outputs,
     make_demo_request,
 )
@@ -59,8 +55,6 @@ from .matmul import (
     MatmulPlugin,
     compile_matmul,
     matmul_expected_matrices,
-    matmul_expected_outputs,
-    matmul_public_inputs,
 )
 
 __all__ = [
@@ -80,11 +74,9 @@ __all__ = [
     "MATMUL_ARCHITECTURE_ID",
     "MATMUL_PLUGIN",
     "BatchInput",
-    "CallDagCapacityBoundProvider",
     "DeepSeekV4ProCompileRequest",
     "DeepSeekV4ProPlugin",
     "DemoG",
-    "DemoGCapacityBoundProvider",
     "DemoGCompileRequest",
     "DemoGPlugin",
     "DotRequest",
@@ -107,11 +99,7 @@ __all__ = [
     "compile_kimi_k3",
     "compile_kimi_k3_bound_model",
     "compile_matmul",
-    "demo_expected_outputs",
-    "demo_public_inputs",
     "expected_dot_outputs",
     "make_demo_request",
     "matmul_expected_matrices",
-    "matmul_expected_outputs",
-    "matmul_public_inputs",
 ]

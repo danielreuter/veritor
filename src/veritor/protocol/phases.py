@@ -7,7 +7,7 @@ prefix of the interaction.
 
 from __future__ import annotations
 
-from veritor.core import CompiledArtifact
+from veritor.core import Compiled
 
 from .merkle import CommitmentDomain
 from .messages import (
@@ -50,20 +50,25 @@ def sample_phase(interior_phase_digest: bytes, challenge: SampleChallenge) -> by
     )
 
 
-def boundary_domain(header: Header, artifact: CompiledArtifact) -> CommitmentDomain:
+def boundary_domain(header: Header, compiled: Compiled) -> CommitmentDomain:
     """The boundary commitment covers ``∂`` and is bound to the header alone."""
 
-    return CommitmentDomain(header.digest, header.digest, BOUNDARY_OWNER, artifact.boundary)
+    return CommitmentDomain(
+        header.digest, header.digest, BOUNDARY_OWNER, compiled.index.boundary()
+    )
 
 
 def interior_domain(
     header: Header,
     replay_phase_digest: bytes,
-    artifact: CompiledArtifact,
+    compiled: Compiled,
     replay_unit: int,
 ) -> CommitmentDomain:
     """The interior commitment of ``r`` covers ``Int(r)`` and is bound to ``J``."""
 
     return CommitmentDomain(
-        header.digest, replay_phase_digest, replay_unit, artifact.interior(replay_unit)
+        header.digest,
+        replay_phase_digest,
+        replay_unit,
+        compiled.index.interior(replay_unit),
     )

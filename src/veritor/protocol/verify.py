@@ -7,7 +7,7 @@ rejects if the recorded challenges differ.  No state persists between calls.
 
 from __future__ import annotations
 
-from veritor.core import CompiledArtifact, ResourceLimit, VerificationLimits
+from veritor.core import Compiled, ResourceLimit, VerificationLimits
 
 from .messages import Reject, VerificationCode, VerificationReport
 from .session import Expectation, VerifierSession
@@ -17,7 +17,7 @@ from .wire import MalformedTranscript, NoncanonicalTranscript, decode_transcript
 def verify_transcript(
     data: bytes,
     expectation: Expectation,
-    artifact: CompiledArtifact,
+    compiled: Compiled,
     limits: VerificationLimits | None = None,
 ) -> VerificationReport:
     checked = VerificationLimits() if limits is None else limits
@@ -30,7 +30,7 @@ def verify_transcript(
     except ResourceLimit as error:
         return VerificationReport(VerificationCode.RESOURCE_LIMIT, str(error))
 
-    session = VerifierSession(expectation, artifact, limits=checked)
+    session = VerifierSession(expectation, compiled, limits=checked)
     if transcript.header != session.header:
         return VerificationReport(
             VerificationCode.EXPECTATION_MISMATCH,

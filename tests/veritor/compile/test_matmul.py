@@ -1,25 +1,18 @@
 from __future__ import annotations
 
-from itertools import chain
-
 import pytest
 
 from veritor.compile import (
-    MATMUL_REPLAY_PARTITION_ALGORITHM_ID,
-    MATMUL_VERIFICATION_PARTITION_ALGORITHM_ID,
+    Compiler,
+    MatmulG,
     MatmulWorkload,
-    compile_matmul_workload,
+    TracerError,
     expected_matmul_outputs,
 )
-from veritor.core import (
-    BOUNDARY_OWNER,
-    CompiledArtifact,
-    iter_domain,
-    validate_replay_boundary,
-)
+from veritor.core import Compiled, make_word_gate_set
 
 
-def _workload(*, cell_bits: int = 8) -> MatmulWorkload:
+def _workload(*, width: int = 8) -> MatmulWorkload:
     return MatmulWorkload(
         (
             (1, 2),
@@ -33,134 +26,90 @@ def _workload(*, cell_bits: int = 8) -> MatmulWorkload:
             ),
             ((7, 8, 9),),
         ),
-        cell_bits=cell_bits,
+        width=width,
     )
+
+
+def compile_workload(workload: MatmulWorkload) -> Compiled:
+    gate_set = make_word_gate_set(workload.width)
+    description = MatmulG(workload.width)(workload, b"")
+    return Compiler(gate_set).compile(description, workload.public_inputs)
+
+
+def outputs_of(compiled: Compiled, inputs: tuple[int, ...]) -> tuple[int, ...]:
+    values = compiled.circuit.evaluate(inputs)
+    return tuple(values[address] for address in compiled.circuit.outputs)
 
 
 def test_shared_weight_matmul_executes_in_canonical_order() -> None:
     workload = _workload()
-    artifact = compile_matmul_workload(workload)
+    compiled = compile_workload(workload)
 
-    assert isinstance(artifact, CompiledArtifact)
-    assert artifact.executable
     assert workload.weight_shape == (3, 2)
     assert workload.activation_shapes == ((2, 3), (1, 3))
     assert workload.output_shapes == ((2, 2), (1, 2))
-    assert workload.public_inputs == (
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-    )
+    assert workload.public_inputs == (1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6, 7, 8, 9)
     assert expected_matmul_outputs(workload) == (22, 28, 49, 64, 76, 100)
-    assert artifact.circuit.evaluate(workload.public_inputs) == expected_matmul_outputs(
-        workload
-    )
-    assert artifact.identity.structure_digest == artifact.circuit.identity.digest
+    assert outputs_of(compiled, workload.public_inputs) == expected_matmul_outputs(workload)
 
 
-def test_partitions_are_matmuls_refined_by_inner_products() -> None:
+def test_marks_make_rows_replay_units_and_dots_verification_units() -> None:
     workload = _workload()
-    artifact = compile_matmul_workload(workload)
-    circuit, replay, verification = artifact.circuit, artifact.replay, artifact.verification
-    inner = workload.weight_shape[0]
-    columns = workload.weight_shape[1]
+    compiled = compile_workload(workload)
+    index, circuit = compiled.index, compiled.circuit
+    inner, columns = workload.weight_shape
+    rows = sum(rows for rows, _ in workload.activation_shapes)
 
-    assert replay.identity.algorithm_id == MATMUL_REPLAY_PARTITION_ALGORITHM_ID
-    assert (
-        verification.identity.algorithm_id == MATMUL_VERIFICATION_PARTITION_ALGORITHM_ID
-    )
-    assert replay.unit_count == len(workload.activations) == 2
-    assert verification.unit_count == sum(
-        rows * columns for rows, _ in workload.activation_shapes
-    )
-    assert tuple(unit.count for unit in replay.units) == (20, 10)
-    assert all(unit.count == 2 * inner - 1 for unit in verification.units)
-    assert tuple(int(unit.replay_unit) for unit in verification.units) == (
-        0,
-        0,
-        0,
-        0,
-        1,
-        1,
-    )
-
-    covered = tuple(
-        chain.from_iterable(iter_domain(unit.members) for unit in replay.units)
-    )
-    assert covered == tuple(iter_domain(circuit.computed_positions))
+    assert index.replay_units.count == rows == 3
+    assert index.verification_unit_count == rows * columns == 6
+    for r in range(rows):
+        unit = index.replay_units.unit(r)
+        assert unit.role == "replay"
+        assert unit.size == columns * (2 * inner - 1)
+        assert index.verification_units(r).count == columns
+        assert all(v.size == 2 * inner - 1 for v in index.verification_units(r))
+        assert all(v.replay_unit == r for v in index.verification_units(r))
+        assert len(circuit.Out(unit)) == columns
+    covered = [a for r in range(rows) for a in index.replay_units.unit(r).interval]
+    assert covered == list(range(circuit.input_count, circuit.n))
 
 
-def test_shared_weight_input_positions_fan_out_across_replay_units() -> None:
-    workload = MatmulWorkload(
-        ((3,), (5,)),
-        (
-            ((7, 11),),
-            ((13, 17),),
-        ),
-    )
-    artifact = compile_matmul_workload(workload)
-    circuit = artifact.circuit
-    weight_positions = {0, 1}
+def test_shared_weight_inputs_fan_out_across_replay_units() -> None:
+    workload = MatmulWorkload(((3,), (5,)), (((7, 11),), ((13, 17),)))
+    compiled = compile_workload(workload)
+    circuit, index = compiled.circuit, compiled.index
+    weights = {0, 1}
 
-    reads_by_replay = []
-    for unit in artifact.replay.units:
-        reads = {
-            int(predecessor)
-            for position in iter_domain(unit.members)
-            for predecessor in circuit.gate_at(position).predecessors
-            if int(predecessor) in weight_positions
-        }
-        reads_by_replay.append(reads)
+    reads_by_replay = [
+        set(circuit.In(index.replay_units.unit(r))) & weights
+        for r in range(index.replay_units.count)
+    ]
 
     assert workload.public_inputs[:2] == (3, 5)
-    assert reads_by_replay == [weight_positions, weight_positions]
+    assert reads_by_replay == [weights, weights]
 
 
-def test_replay_boundary_is_exactly_the_public_io_of_the_matmuls() -> None:
+def test_boundary_is_exactly_the_public_io_of_the_rows() -> None:
     workload = _workload()
-    artifact = compile_matmul_workload(workload)
-    circuit = artifact.circuit
-    input_positions = {int(port.position) for port in circuit.input_ports}
-    output_positions = {int(port.position) for port in circuit.output_ports}
+    compiled = compile_workload(workload)
+    circuit, index = compiled.circuit, compiled.index
+    boundary = index.boundary()
+    io = set(circuit.inputs) | set(circuit.outputs)
 
-    assert set(iter_domain(artifact.boundary)) == input_positions | output_positions
-    assert artifact.replay.unit_count == len(workload.activations)
-    for unit in artifact.replay.units:
-        interior = artifact.interior(unit.index)
-        assert interior.count == unit.count - len(
-            output_positions & set(iter_domain(unit.members))
-        )
-        assert all(artifact.value_owner(p) == unit.index for p in iter_domain(interior))
-    assert all(artifact.value_owner(p) == BOUNDARY_OWNER for p in input_positions)
-    assert all(artifact.value_owner(p) == BOUNDARY_OWNER for p in output_positions)
-    validate_replay_boundary(artifact)
+    assert set(boundary) == io
+    for r in range(index.replay_units.count):
+        unit = index.replay_units.unit(r)
+        interior = index.interior(r)
+        assert set(interior) == set(unit.interval) - io
+        assert all(index.replay_units.owner(a) == r for a in interior)
 
 
 def test_modular_overflow_is_applied_to_every_output() -> None:
-    workload = MatmulWorkload(
-        ((15,),),
-        (
-            ((15,),),
-            ((14,),),
-        ),
-        cell_bits=4,
-    )
-    artifact = compile_matmul_workload(workload)
+    workload = MatmulWorkload(((15,),), (((15,),), ((14,),)), width=4)
+    compiled = compile_workload(workload)
 
     assert expected_matmul_outputs(workload) == (1, 2)
-    assert artifact.circuit.evaluate(workload.public_inputs) == (1, 2)
+    assert outputs_of(compiled, workload.public_inputs) == (1, 2)
 
 
 @pytest.mark.parametrize(
@@ -170,7 +119,7 @@ def test_modular_overflow_is_applied_to_every_output() -> None:
         (((1,), (2, 3)), (((1, 2),),), "rectangular"),
         (((1,),), (), "nonempty sequence"),
         (((1,), (2,)), (((1,), (2,)),), "contraction width"),
-        (((256,),), (((1,),),), "8-bit word"),
+        (((256,),), (((1,),),), "8-bit value"),
     ),
 )
 def test_workload_rejects_malformed_shapes_and_values(
@@ -182,28 +131,43 @@ def test_workload_rejects_malformed_shapes_and_values(
         MatmulWorkload(weights, activations)
 
 
-def test_structure_identity_depends_on_shape_and_width_not_public_values() -> None:
+def test_constructor_rejects_foreign_inputs_and_advice() -> None:
+    with pytest.raises(TracerError, match="expects MatmulWorkload"):
+        MatmulG(8)(object(), b"")
+    with pytest.raises(TracerError, match="width differs"):
+        MatmulG(16)(_workload(), b"")
+    with pytest.raises(TracerError, match="advice"):
+        MatmulG(8)(_workload(), b"hint")
+
+
+def test_digest_depends_on_shape_and_width_not_public_values() -> None:
     first = _workload()
     second = MatmulWorkload(
         ((7, 8), (9, 10), (11, 12)),
-        (
-            ((2, 3, 4), (5, 6, 7)),
-            ((8, 9, 10),),
-        ),
+        (((2, 3, 4), (5, 6, 7)), ((8, 9, 10),)),
     )
-    wider = MatmulWorkload(
-        first.weights,
-        first.activations,
-        cell_bits=16,
-    )
+    wider = MatmulWorkload(first.weights, first.activations, width=16)
 
-    first_artifact = compile_matmul_workload(first)
-    second_artifact = compile_matmul_workload(second)
-    wider_artifact = compile_matmul_workload(wider)
+    assert compile_workload(first).digest == compile_workload(second).digest
+    assert compile_workload(first).digest != compile_workload(wider).digest
 
-    assert first_artifact.circuit.identity == second_artifact.circuit.identity
-    assert first_artifact.replay.identity == second_artifact.replay.identity
-    assert first_artifact.verification.identity == second_artifact.verification.identity
-    assert first_artifact.identity == second_artifact.identity
-    assert first_artifact.circuit.identity != wider_artifact.circuit.identity
-    assert first_artifact.identity != wider_artifact.identity
+
+def description(rows: int, k: int, columns: int) -> bytes:
+    weights = tuple((1,) * columns for _ in range(k))
+    return MatmulG(8)(MatmulWorkload(weights, (tuple((1,) * k for _ in range(rows)),)), b"")
+
+
+def test_description_size_does_not_grow_with_rows_or_columns() -> None:
+    small, large = description(16, 8, 16), description(1024, 8, 1024)
+
+    # Rows and columns are ``repeat`` counts: only their digits change.
+    assert len(large) - len(small) < 32
+
+
+def test_description_size_is_logarithmic_in_the_contraction_length() -> None:
+    sizes = [len(description(4, k, 4)) for k in (64, 256, 1024)]
+
+    # One more sum-tree level per doubling of ``k``; each level is one repeat step.
+    assert sizes[1] - sizes[0] <= sizes[0] // 4
+    assert sizes[2] - sizes[1] <= sizes[0] // 4
+    assert sizes[2] < 4096

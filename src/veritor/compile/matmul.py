@@ -1,32 +1,14 @@
-"""Executable shared-weight matrix multiplication over modular words."""
+"""Shared-weight matrix multiplication over modular values: workload and ``G``."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TypeAlias, cast
+from typing import TypeAlias
 
-from veritor.core import CompiledArtifact, JSONValue
+from veritor.core import JSONValue, make_word_gate_set
 
-from .call_dag import (
-    CallDagCircuit,
-    CompilationLimits,
-    OccurrencePath,
-    Producer,
-    ProducerDefinition,
-    ProducerError,
-    Wire,
-    construct,
-    make_word_kernel,
-)
-from .partitions import compile_partitions
-
-MATMUL_REPLAY_PARTITION_ALGORITHM_ID = (
-    "veritor.compile.matmul.replay-per-matrix-multiplication"
-)
-MATMUL_VERIFICATION_PARTITION_ALGORITHM_ID = (
-    "veritor.compile.matmul.verification-per-inner-product"
-)
+from .tracer import TracedDefinition, Tracer, TracerError, Wires
 
 WordMatrix: TypeAlias = tuple[tuple[int, ...], ...]  # noqa: UP040
 
@@ -35,26 +17,26 @@ def _canonical_matrix(
     value: Sequence[Sequence[int]],
     *,
     name: str,
-    cell_bits: int,
+    width: int,
 ) -> WordMatrix:
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence) or not value:
         raise ValueError(f"{name} must be a nonempty matrix")
     rows: list[tuple[int, ...]] = []
-    width: int | None = None
-    limit = 1 << cell_bits
+    columns: int | None = None
+    limit = 1 << width
     for row_index, row in enumerate(value):
         if isinstance(row, (str, bytes)) or not isinstance(row, Sequence) or not row:
             raise ValueError(f"{name} row {row_index} must be nonempty")
         checked = tuple(row)
-        if width is None:
-            width = len(checked)
-        elif len(checked) != width:
+        if columns is None:
+            columns = len(checked)
+        elif len(checked) != columns:
             raise ValueError(f"{name} must be rectangular")
         for column_index, item in enumerate(checked):
             if type(item) is not int or not 0 <= item < limit:
                 raise ValueError(
                     f"{name}[{row_index}][{column_index}] must be an unsigned "
-                    f"{cell_bits}-bit word"
+                    f"{width}-bit value"
                 )
         rows.append(checked)
     return tuple(rows)
@@ -66,35 +48,27 @@ class MatmulWorkload:
 
     weights: WordMatrix
     activations: tuple[WordMatrix, ...]
-    cell_bits: int
+    width: int
 
     def __init__(
         self,
         weights: Sequence[Sequence[int]],
         activations: Sequence[Sequence[Sequence[int]]],
         *,
-        cell_bits: int = 8,
+        width: int = 8,
     ) -> None:
-        if type(cell_bits) is not int or cell_bits <= 0:
-            raise ValueError("cell_bits must be a positive integer")
+        if type(width) is not int or width <= 0:
+            raise ValueError("width must be a positive integer")
         if (
             isinstance(activations, (str, bytes))
             or not isinstance(activations, Sequence)
             or not activations
         ):
             raise ValueError("activations must be a nonempty sequence of matrices")
-        checked_weights = _canonical_matrix(
-            weights,
-            name="weights",
-            cell_bits=cell_bits,
-        )
+        checked_weights = _canonical_matrix(weights, name="weights", width=width)
         contraction = len(checked_weights)
         checked_activations = tuple(
-            _canonical_matrix(
-                activation,
-                name=f"activations[{index}]",
-                cell_bits=cell_bits,
-            )
+            _canonical_matrix(activation, name=f"activations[{index}]", width=width)
             for index, activation in enumerate(activations)
         )
         for index, activation in enumerate(checked_activations):
@@ -105,7 +79,7 @@ class MatmulWorkload:
                 )
         object.__setattr__(self, "weights", checked_weights)
         object.__setattr__(self, "activations", checked_activations)
-        object.__setattr__(self, "cell_bits", cell_bits)
+        object.__setattr__(self, "width", width)
 
     @property
     def weight_shape(self) -> tuple[int, int]:
@@ -143,11 +117,11 @@ class MatmulWorkload:
             "activations": [
                 [list(row) for row in activation] for activation in self.activations
             ],
-            "cell_bits": self.cell_bits,
             "input_order": "weights-row-major-then-activations-row-major",
             "output_order": "activation-order-then-row-major",
-            "weights": [list(row) for row in self.weights],
             "weight_shape": list(self.weight_shape),
+            "weights": [list(row) for row in self.weights],
+            "width": self.width,
         }
 
 
@@ -156,212 +130,106 @@ def expected_matmul_outputs(workload: MatmulWorkload) -> tuple[int, ...]:
 
     if not isinstance(workload, MatmulWorkload):
         raise TypeError("workload must be MatmulWorkload")
-    mask = (1 << workload.cell_bits) - 1
+    mask = (1 << workload.width) - 1
     inner, columns = workload.weight_shape
-    outputs: list[int] = []
-    for activation in workload.activations:
-        for row in activation:
-            for column in range(columns):
-                accumulator = (row[0] * workload.weights[0][column]) & mask
-                for index in range(1, inner):
-                    product = (row[index] * workload.weights[index][column]) & mask
-                    accumulator = (accumulator + product) & mask
-                outputs.append(accumulator)
-    return tuple(outputs)
+    return tuple(
+        sum(row[index] * workload.weights[index][column] for index in range(inner)) & mask
+        for activation in workload.activations
+        for row in activation
+        for column in range(columns)
+    )
 
 
 class MatmulG:
-    """Memoized constructor for repeated matrix products with shared weights."""
+    """The constructor for repeated matrix products with shared weights.
 
-    def __init__(self, cell_bits: int = 8) -> None:
-        if type(cell_bits) is not int or cell_bits <= 0:
-            raise ValueError("cell_bits must be a positive integer")
-        self.cell_bits = cell_bits
-        self.producer = Producer(cell_bits)
+    Every row ``x_i W`` is a replay unit and every output dot product is a
+    verification unit.  Rows, columns and the products inside a dot are
+    ``repeat`` steps and the dot's sum is a tree of ``repeat`` steps, so the
+    description is ``O(log k)`` in the contraction length and independent of
+    the number of rows and columns.
+    """
 
-        @self.producer.gate(name="add")
-        def add(left: int, right: int) -> int:
-            return left + right
-
-        @self.producer.gate(name="mul")
-        def mul(left: int, right: int) -> int:
-            return left * right
-
+    def __init__(self, width: int = 8) -> None:
+        if type(width) is not int or width <= 0:
+            raise ValueError("width must be a positive integer")
+        self.width = width
+        self.tracer = Tracer(make_word_gate_set(width))
+        mul, add = self.tracer.gate("mul"), self.tracer.gate("add")
         self.add = add
-        self.mul = mul
-
-    def inner_product(self, length: int) -> ProducerDefinition:
-        if type(length) is not int or length <= 0:
-            raise ProducerError("inner-product length must be positive")
-
-        @self.producer.circuit(
-            key=("matmul-inner-product", length),
-            input_count=2 * length,
+        self.mul = self.tracer.definition(input_count=2, key="mul")(
+            lambda v: mul(v[0], v[1])
         )
-        def inner_product_definition(*inputs: Wire) -> Wire:
-            left = inputs[:length]
-            right = inputs[length:]
-            products = [
-                self.mul(left_item, right_item)
-                for left_item, right_item in zip(left, right, strict=True)
-            ]
-            accumulator = products[0]
-            for product in products[1:]:
-                accumulator = self.add(accumulator, product)
-            return accumulator
-
-        return inner_product_definition
-
-    def matrix_multiplication(
-        self,
-        rows: int,
-        inner: int,
-        columns: int,
-    ) -> ProducerDefinition:
-        if any(type(item) is not int or item <= 0 for item in (rows, inner, columns)):
-            raise ProducerError("matrix dimensions must be positive integers")
-
-        @self.producer.circuit(
-            key=("matrix-multiplication", rows, inner, columns),
-            input_count=rows * inner + inner * columns,
+        self.add_pair = self.tracer.definition(input_count=2, key="add")(
+            lambda v: add(v[0], v[1])
         )
-        def matmul_definition(*inputs: Wire) -> tuple[Wire, ...]:
-            activation = inputs[: rows * inner]
-            weights = inputs[rows * inner :]
-            dot = self.inner_product(inner)
-            outputs: list[Wire] = []
-            for row_index in range(rows):
-                left = activation[row_index * inner : (row_index + 1) * inner]
-                for column_index in range(columns):
-                    right = tuple(
-                        weights[inner_index * columns + column_index]
-                        for inner_index in range(inner)
-                    )
-                    outputs.append(cast(Wire, dot(*left, *right)))
-            return tuple(outputs)
 
-        return matmul_definition
+    def dot(self, k: int) -> TracedDefinition:
+        """``x . w`` for ``k``-vectors: ``k`` products, then a sum tree."""
+
+        if type(k) is not int or k <= 0:
+            raise TracerError("dot length must be positive")
+
+        @self.tracer.definition(input_count=2 * k, key=("dot", k), role="verification")
+        def dot(v: Wires) -> object:
+            x, w = v[:k], v[k:]
+            level = self.tracer.repeat(k, self.mul, x[0].by(1), w[0].by(1))
+            carried = []
+            while len(level) > 1:
+                if len(level) % 2:
+                    carried.append(level[-1])
+                level = self.tracer.repeat(len(level) // 2, self.add_pair, level[0:2].by(2))
+            result = level[0]
+            for carry in carried:
+                result = self.add(result, carry)
+            return result
+
+        return dot
+
+    def row(self, k: int, columns: int) -> TracedDefinition:
+        """``x W`` for one ``k``-row ``x`` and a ``k x columns`` matrix ``W``."""
+
+        @self.tracer.definition(
+            input_count=k + k * columns, key=("row", k, columns), role="replay"
+        )
+        def row(v: Wires) -> object:
+            x, w = v[:k], v[k:]
+            return self.tracer.repeat(columns, self.dot(k), x, w[0 : k * columns : columns].by(1))
+
+        return row
 
     def batch(
         self,
         activation_shapes: tuple[tuple[int, int], ...],
         weight_shape: tuple[int, int],
-    ) -> ProducerDefinition:
+    ) -> TracedDefinition:
         inner, columns = weight_shape
         weight_cells = inner * columns
-        input_count = weight_cells + sum(
-            rows * activation_inner for rows, activation_inner in activation_shapes
-        )
+        input_count = weight_cells + sum(rows * k for rows, k in activation_shapes)
 
-        @self.producer.circuit(
-            key=("shared-weight-matmul-batch", activation_shapes, weight_shape),
-            input_count=input_count,
+        @self.tracer.definition(
+            input_count=input_count, key=("batch", activation_shapes, weight_shape)
         )
-        def batch_definition(*inputs: Wire) -> tuple[Wire, ...]:
-            weights = inputs[:weight_cells]
-            outputs: list[Wire] = []
+        def batch(v: Wires) -> object:
+            w = v[:weight_cells]
+            outputs = []
             offset = weight_cells
-            for rows, activation_inner in activation_shapes:
-                activation_count = rows * activation_inner
-                activation = inputs[offset : offset + activation_count]
-                offset += activation_count
-                matmul = self.matrix_multiplication(
-                    rows,
-                    activation_inner,
-                    columns,
-                )
-                result = matmul(*activation, *weights)
-                if isinstance(result, Wire):
-                    outputs.append(result)
-                else:
-                    outputs.extend(result)
-            return tuple(outputs)
+            for rows, k in activation_shapes:
+                x = v[offset : offset + rows * k]
+                offset += rows * k
+                outputs.append(self.tracer.repeat(rows, self.row(k, columns), x[0:k].by(k), w))
+            return outputs
 
-        return batch_definition
+        return batch
 
     def __call__(self, x: object, a: bytes) -> bytes:
         if not isinstance(x, MatmulWorkload):
-            raise ProducerError("MatmulG expects MatmulWorkload")
-        if x.cell_bits != self.cell_bits:
-            raise ProducerError("workload cell_bits differs from MatmulG")
+            raise TracerError("MatmulG expects MatmulWorkload")
+        if x.width != self.width:
+            raise TracerError("workload width differs from MatmulG")
         if a != b"":
-            raise ProducerError("MatmulG does not accept constructor advice")
-        root = self.batch(x.activation_shapes, x.weight_shape)
-        return self.producer.serialize(root)
+            raise TracerError("MatmulG does not accept constructor advice")
+        return self.tracer.serialize(self.batch(x.activation_shapes, x.weight_shape))
 
 
-def matmul_replay_occurrence_paths(
-    workload: MatmulWorkload,
-) -> tuple[OccurrencePath, ...]:
-    """Select each top-level matrix multiplication as one replay unit."""
-
-    if not isinstance(workload, MatmulWorkload):
-        raise TypeError("workload must be MatmulWorkload")
-    return tuple((index,) for index in range(len(workload.activations)))
-
-
-def matmul_verification_occurrence_paths(
-    workload: MatmulWorkload,
-) -> tuple[OccurrencePath, ...]:
-    """Select each nested output inner product as one verification unit."""
-
-    if not isinstance(workload, MatmulWorkload):
-        raise TypeError("workload must be MatmulWorkload")
-    return tuple(
-        (activation_index, inner_product_index)
-        for activation_index, (rows, _inner) in enumerate(workload.activation_shapes)
-        for inner_product_index in range(rows * workload.weight_shape[1])
-    )
-
-
-def compile_matmul_workload(
-    workload: MatmulWorkload,
-    *,
-    limits: CompilationLimits | None = None,
-) -> CompiledArtifact:
-    """Compile the concrete matmul circuit and its two fixed partitions."""
-
-    if not isinstance(workload, MatmulWorkload):
-        raise TypeError("workload must be MatmulWorkload")
-    kernel = make_word_kernel(workload.cell_bits, limits=limits)
-    construction = construct(
-        kernel,
-        MatmulG(workload.cell_bits),
-        workload,
-        b"",
-        input_cells=workload.public_inputs,
-        advice_bound_bits=0,
-    )
-    partition_manifest: dict[str, JSONValue] = {
-        "activation_shapes": [list(shape) for shape in workload.activation_shapes],
-        "cell_bits": workload.cell_bits,
-        "weight_shape": list(workload.weight_shape),
-    }
-    return compile_partitions(
-        CallDagCircuit(kernel, construction.load.root),
-        matmul_replay_occurrence_paths(workload),
-        matmul_verification_occurrence_paths(workload),
-        replay_algorithm_id=MATMUL_REPLAY_PARTITION_ALGORITHM_ID,
-        verification_algorithm_id=MATMUL_VERIFICATION_PARTITION_ALGORITHM_ID,
-        replay_configuration={
-            **partition_manifest,
-            "granularity": "one-matmul-per-replay-unit",
-        },
-        verification_configuration={
-            **partition_manifest,
-            "granularity": "one-inner-product-per-verification-unit",
-        },
-    )
-
-
-__all__ = [
-    "MATMUL_REPLAY_PARTITION_ALGORITHM_ID",
-    "MATMUL_VERIFICATION_PARTITION_ALGORITHM_ID",
-    "MatmulG",
-    "MatmulWorkload",
-    "WordMatrix",
-    "compile_matmul_workload",
-    "expected_matmul_outputs",
-    "matmul_replay_occurrence_paths",
-    "matmul_verification_occurrence_paths",
-]
+__all__ = ["MatmulG", "MatmulWorkload", "WordMatrix", "expected_matmul_outputs"]

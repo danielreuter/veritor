@@ -4,12 +4,8 @@ from collections.abc import Callable
 
 import pytest
 
-from veritor.compile import (
-    MatmulWorkload,
-    compile_matmul_workload,
-    expected_matmul_outputs,
-)
-from veritor.core import CompiledArtifact, VerificationPolicy
+from veritor.compile import Compiler, MatmulG, MatmulWorkload, expected_matmul_outputs
+from veritor.core import Compiled, VerificationPolicy, make_word_gate_set
 from veritor.protocol import Expectation, make_expectation
 
 Q_SEED = b"Q" * 32
@@ -26,18 +22,21 @@ def workload() -> MatmulWorkload:
 
 
 @pytest.fixture(scope="session")
-def artifact(workload: MatmulWorkload) -> CompiledArtifact:
-    return compile_matmul_workload(workload)
+def compiled(workload: MatmulWorkload) -> Compiled:
+    gate_set = make_word_gate_set(workload.width)
+    return Compiler(gate_set).compile(
+        MatmulG(workload.width)(workload, b""), workload.public_inputs
+    )
 
 
 @pytest.fixture
-def honest_values(artifact: CompiledArtifact, workload: MatmulWorkload) -> dict[int, object]:
-    return dict(enumerate(artifact.circuit.evaluate_tape(workload.public_inputs)))
+def honest_values(compiled: Compiled, workload: MatmulWorkload) -> dict[int, object]:
+    return dict(enumerate(compiled.circuit.evaluate(workload.public_inputs)))
 
 
 @pytest.fixture
-def expect(artifact: CompiledArtifact, workload: MatmulWorkload) -> ExpectationFactory:
-    """Build an expectation for ``artifact`` with fixed seeds and honest I/O by default."""
+def expect(compiled: Compiled, workload: MatmulWorkload) -> ExpectationFactory:
+    """Build an expectation for ``compiled`` with fixed seeds and honest I/O by default."""
 
     def build(
         policy: VerificationPolicy = CHECK_EVERYTHING,
@@ -48,7 +47,7 @@ def expect(artifact: CompiledArtifact, workload: MatmulWorkload) -> ExpectationF
         s_seed: bytes = S_SEED,
     ) -> Expectation:
         return make_expectation(
-            artifact,
+            compiled,
             policy,
             workload.public_inputs,
             expected_matmul_outputs(workload) if claimed_outputs is None else claimed_outputs,

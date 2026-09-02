@@ -1,21 +1,16 @@
 from __future__ import annotations
 
-from circuit_cut_analysis.capacity import LogCardinality
-from veritor.core import Capability, CompiledArtifact
+from veritor.core import Compiled
 from veritor.plugins import (
     ArchitectureId,
-    CapacityClaimKind,
     MatmulCompileRequest,
-    ProtocolCircuitArtifact,
     compile_architecture,
     compile_matmul,
     matmul_expected_matrices,
-    matmul_expected_outputs,
-    matmul_public_inputs,
 )
 
 
-def _request(*, marker: int = 1, cell_bits: int = 8) -> MatmulCompileRequest:
+def _request(*, marker: int = 1, width: int = 8) -> MatmulCompileRequest:
     return MatmulCompileRequest(
         (
             (marker, 2),
@@ -28,21 +23,18 @@ def _request(*, marker: int = 1, cell_bits: int = 8) -> MatmulCompileRequest:
                 (9, 10),
             ),
         ),
-        cell_bits=cell_bits,
+        width=width,
     )
 
 
-def test_matmul_plugin_exposes_the_compiled_artifact() -> None:
+def test_matmul_plugin_compiles_to_a_compiled_circuit() -> None:
     request = _request()
-    artifact = compile_matmul(request)
+    compiled = compile_matmul(request)
 
-    assert isinstance(artifact, ProtocolCircuitArtifact)
-    assert artifact.architecture_id is ArchitectureId.MATMUL
-    assert isinstance(artifact.compiled, CompiledArtifact)
-    assert artifact.compiled_identity == artifact.compiled.identity
-    assert artifact.public_inputs == matmul_public_inputs(request)
-    assert artifact.expected_outputs == matmul_expected_outputs(request)
-    assert artifact.execute() == request.expected_outputs
+    assert isinstance(compiled, Compiled)
+    assert compiled.circuit.input_count == len(request.public_inputs)
+    values = compiled.circuit.evaluate(request.public_inputs)
+    assert tuple(values[o] for o in compiled.circuit.outputs) == request.expected_outputs
     assert matmul_expected_matrices(request) == (
         ((23, 34),),
         (
@@ -50,38 +42,24 @@ def test_matmul_plugin_exposes_the_compiled_artifact() -> None:
             (39, 58),
         ),
     )
-    for capability in (
-        Capability.STATIC_COMPILE,
-        Capability.STATIC_PARTITION,
-        Capability.STATIC_BOUND,
-        Capability.EXECUTE,
-        Capability.VERIFY,
-    ):
-        assert artifact.capabilities.supports(capability)
 
 
-def test_registry_compiles_matmul_and_binds_public_values() -> None:
+def test_matmul_marks_rows_as_replay_and_dots_as_verification() -> None:
+    request = _request()
+    index = compile_matmul(request).index
+
+    rows = sum(rows for rows, _ in request.output_shapes)
+    columns = request.output_shapes[0][1]
+    assert index.replay_units.count == rows
+    assert index.verification_unit_count == rows * columns
+    assert all(index.verification_units(r).count == columns for r in range(rows))
+
+
+def test_registry_compiles_matmul_and_binds_only_the_shape() -> None:
     first = compile_architecture(ArchitectureId.MATMUL, _request(marker=1))
     second = compile_architecture("matmul", _request(marker=2))
+    wider = compile_architecture("matmul", _request(width=16))
 
-    assert isinstance(first, ProtocolCircuitArtifact)
-    assert isinstance(second, ProtocolCircuitArtifact)
-    assert first.circuit.identity == second.circuit.identity
-    assert first.compiled_identity == second.compiled_identity
-    assert first.identity.request_digest != second.identity.request_digest
-    assert first.identity.digest != second.identity.digest
-
-
-def test_matmul_capacity_provider_is_exact() -> None:
-    artifact = compile_matmul(_request())
-    provider = artifact.bound_provider
-    output_positions = tuple(
-        int(port.position) for port in artifact.circuit.output_ports
-    )
-    result = provider.evaluate(output_positions)
-
-    assert provider.claim_kind is CapacityClaimKind.EXACT
-    assert provider.output_frontier > LogCardinality.zero()
-    assert result.claim_kind is CapacityClaimKind.EXACT
-    assert result.is_exact
-    assert result.cut_gate_ids
+    assert isinstance(first, Compiled)
+    assert first.digest == second.digest
+    assert first.digest != wider.digest

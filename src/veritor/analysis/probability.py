@@ -7,12 +7,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from fractions import Fraction
 
-from veritor.core.ids import Position, UnitIndex
-from veritor.core.partitions import (
-    ReplayPartition,
-    VerificationPartition,
-    validate_verification_refines_replay,
-)
+from veritor.core.index import Index
 from veritor.core.policy import VerificationPolicy
 
 
@@ -62,13 +57,19 @@ def _attack_kind(value: AttackSetKind | str) -> AttackSetKind:
             raise ValueError(f"unknown attack-set kind {value!r}") from error
 
 
+def verification_owner(index: Index, address: int) -> int:
+    """The global index of the verification unit containing ``address``."""
+
+    units = index.verification_units(index.replay_units.owner(address))
+    return units.first + units.owner(address)
+
+
 def normalize_error_units(
-    replay_partition: ReplayPartition,
-    verification_partition: VerificationPartition,
+    index: Index,
     error_set: ErrorSetInput,
     *,
     attack_kind: AttackSetKind | str = AttackSetKind.VERIFICATION_UNITS,
-) -> tuple[UnitIndex, ...]:
+) -> tuple[int, ...]:
     """Normalize verification-unit IDs or positions to sorted unit indices.
 
     Plain integer iterables name verification units by default.  Callers using
@@ -77,10 +78,8 @@ def normalize_error_units(
     heuristic.
     """
 
-    validate_verification_refines_replay(
-        replay_partition,
-        verification_partition,
-    )
+    if not isinstance(index, Index):
+        raise TypeError("index must be an Index")
     if isinstance(error_set, VerificationUnitErrorSet):
         values = error_set.units
         kind = AttackSetKind.VERIFICATION_UNITS
@@ -99,18 +98,16 @@ def normalize_error_units(
             raise ValueError("error-set members must be nonnegative integers")
 
     if kind is AttackSetKind.VERIFICATION_UNITS:
-        if any(value >= verification_partition.unit_count for value in values):
+        if any(value >= index.verification_unit_count for value in values):
             raise ValueError("error set names an unknown verification unit")
-        return tuple(UnitIndex(value) for value in sorted(values))
+        return tuple(sorted(values))
 
-    units: set[UnitIndex] = set()
+    units: set[int] = set()
     for value in values:
         try:
-            units.add(verification_partition.owner_of(Position(value)))
+            units.add(verification_owner(index, value))
         except KeyError as error:
-            raise ValueError(
-                f"error set names ineligible computed position {value}"
-            ) from error
+            raise ValueError(f"error set names an address outside every unit {value}") from error
     return tuple(sorted(units))
 
 
@@ -132,8 +129,7 @@ def survival_from_replay_error_counts(
 
 
 def survival_probability(
-    replay_partition: ReplayPartition,
-    verification_partition: VerificationPartition,
+    index: Index,
     policy: VerificationPolicy,
     error_set: ErrorSetInput,
     *,
@@ -149,15 +145,11 @@ def survival_probability(
 
     if not isinstance(policy, VerificationPolicy):
         raise TypeError("policy must be a VerificationPolicy")
-    units = normalize_error_units(
-        replay_partition,
-        verification_partition,
-        error_set,
-        attack_kind=attack_kind,
-    )
-    counts = [0] * replay_partition.unit_count
+    units = normalize_error_units(index, error_set, attack_kind=attack_kind)
+    counts = [0] * index.replay_units.count
     for unit_index in units:
-        owner = verification_partition.unit_at(unit_index).replay_unit
+        owner = index.verification_unit(unit_index).replay_unit
+        assert owner is not None
         counts[owner] += 1
     return survival_from_replay_error_counts(policy, counts)
 

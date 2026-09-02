@@ -182,15 +182,17 @@ def test_marginals_pairs_and_counts_match_independent_coins(
         assert within_noise(observed, trials * float(pmf(count, probability, k)), trials)
 
 
-def stub_artifact(replay_units: int, units_per_replay_unit: int) -> SimpleNamespace:
-    """Just enough of a ``CompiledArtifact`` for the derivations; nothing materialized."""
+def stub_compiled(replay_units: int, units_per_replay_unit: int) -> SimpleNamespace:
+    """Just enough of a ``Compiled`` for the derivations; nothing materialized."""
 
-    def units_in_replay_unit(unit: int) -> range:
-        return range(unit * units_per_replay_unit, (unit + 1) * units_per_replay_unit)
+    def verification_units(unit: int) -> SimpleNamespace:
+        return SimpleNamespace(first=unit * units_per_replay_unit, count=units_per_replay_unit)
 
     return SimpleNamespace(
-        replay=SimpleNamespace(unit_count=replay_units),
-        verification=SimpleNamespace(units_in_replay_unit=units_in_replay_unit),
+        index=SimpleNamespace(
+            replay_units=SimpleNamespace(count=replay_units),
+            verification_units=verification_units,
+        )
     )
 
 
@@ -210,16 +212,16 @@ def test_cost_follows_the_selection_not_the_candidates() -> None:
 def test_derivations_touch_only_selected_units_at_scale() -> None:
     limits = VerificationLimits(max_units=10**9)
     policy = VerificationPolicy(Fraction(1, 10**6), Fraction(1, 10**4), 0)
-    artifact = stub_artifact(10**9, 1000)  # type: ignore[assignment]
+    compiled = stub_compiled(10**9, 1000)  # type: ignore[assignment]
 
     start = time.perf_counter()
-    replay = derive_replay_selection(seed(2), PHASE, artifact, policy, limits)
+    replay = derive_replay_selection(seed(2), PHASE, compiled, policy, limits)
     assert time.perf_counter() - start < 0.5
     assert 700 <= len(replay) <= 1300
 
     selected_replay = tuple(range(0, 10**7, 1000))  # 10^4 replay units, 10^7 candidates
     start = time.perf_counter()
-    sample = derive_sample_selection(seed(3), PHASE, artifact, selected_replay, policy, limits)
+    sample = derive_sample_selection(seed(3), PHASE, compiled, selected_replay, policy, limits)
     assert time.perf_counter() - start < 0.5
     assert 700 <= len(sample) <= 1300
     assert list(sample) == sorted(set(sample))
@@ -228,8 +230,12 @@ def test_derivations_touch_only_selected_units_at_scale() -> None:
 
 def test_sample_selection_ranks_the_selected_replay_units_blocks() -> None:
     blocks = {0: (0, 1, 2), 1: (3,), 2: (4, 5, 6, 7, 8), 3: (9, 10)}
-    artifact = SimpleNamespace(
-        verification=SimpleNamespace(units_in_replay_unit=blocks.__getitem__)
+    compiled = SimpleNamespace(
+        index=SimpleNamespace(
+            verification_units=lambda unit: SimpleNamespace(
+                first=blocks[unit][0], count=len(blocks[unit])
+            )
+        )
     )
     selected_replay = (0, 2, 3)
     candidates = [unit for replay in selected_replay for unit in blocks[replay]]
@@ -237,13 +243,13 @@ def test_sample_selection_ranks_the_selected_replay_units_blocks() -> None:
 
     def sample(policy: VerificationPolicy, index: int = 0) -> tuple[int, ...]:
         return derive_sample_selection(
-            seed(index), PHASE, artifact, selected_replay, policy, LIMITS  # type: ignore[arg-type]
+            seed(index), PHASE, compiled, selected_replay, policy, LIMITS  # type: ignore[arg-type]
         )
 
     assert sample(everything) == tuple(candidates)
     assert sample(VerificationPolicy(1, 0, 0)) == ()
     assert derive_sample_selection(
-        seed(0), PHASE, artifact, (), everything, LIMITS  # type: ignore[arg-type]
+        seed(0), PHASE, compiled, (), everything, LIMITS  # type: ignore[arg-type]
     ) == ()
 
     trials = 3000
@@ -258,13 +264,13 @@ def test_sample_selection_ranks_the_selected_replay_units_blocks() -> None:
 
 
 def test_fractional_policy_runs_and_matches_independent_derivation(
-    artifact, honest_values, expect
+    compiled, honest_values, expect
 ) -> None:
     policy = VerificationPolicy(HALF, Fraction(2, 3), 0)
     nontrivial = False
     for index in range(8):
         expectation = expect(policy, q_seed=seed(2 * index), s_seed=seed(2 * index + 1))
-        run = run_protocol(artifact, expectation, honest_values)
+        run = run_protocol(compiled, expectation, honest_values)
 
         assert run.report.code is VerificationCode.ACCEPTED
         assert run.transcript is not None
@@ -274,17 +280,17 @@ def test_fractional_policy_runs_and_matches_independent_derivation(
             replay_phase(boundary, transcript.replay_challenge), transcript.interiors
         )
         replay = derive_replay_selection(
-            expectation.q_seed, boundary, artifact, policy, LIMITS
+            expectation.q_seed, boundary, compiled, policy, LIMITS
         )
         sample = derive_sample_selection(
-            expectation.s_seed, interior, artifact, replay, policy, LIMITS
+            expectation.s_seed, interior, compiled, replay, policy, LIMITS
         )
         assert run.report.sampled_replay_units == replay
         assert run.report.sampled_verification_units == sample
         assert all(
-            artifact.verification.unit_at(unit).replay_unit in replay for unit in sample
+            compiled.index.verification_unit(unit).replay_unit in replay for unit in sample
         )
         recorded = encode_transcript(transcript)
-        assert verify_transcript(recorded, expectation, artifact) == run.report
-        nontrivial |= 0 < len(replay) < artifact.replay.unit_count and 0 < len(sample)
+        assert verify_transcript(recorded, expectation, compiled) == run.report
+        nontrivial |= 0 < len(replay) < compiled.index.replay_units.count and 0 < len(sample)
     assert nontrivial

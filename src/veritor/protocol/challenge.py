@@ -26,7 +26,7 @@ from fractions import Fraction
 from itertools import accumulate
 
 from veritor.core import (
-    CompiledArtifact,
+    Compiled,
     ResourceLimit,
     VerificationLimits,
     VerificationPolicy,
@@ -249,13 +249,13 @@ def bernoulli_subset(
 def derive_replay_selection(
     seed: bytes,
     boundary_phase_digest: bytes,
-    artifact: CompiledArtifact,
+    compiled: Compiled,
     policy: VerificationPolicy,
     limits: VerificationLimits,
 ) -> tuple[int, ...]:
     """``J``: each replay unit independently with probability ``q``."""
 
-    count = artifact.replay.unit_count
+    count = compiled.index.replay_units.count
     limits.enforce("max_units", count)
     return bernoulli_subset(seed, _Q_STAGE, boundary_phase_digest, count, policy.q, limits)
 
@@ -263,7 +263,7 @@ def derive_replay_selection(
 def derive_sample_selection(
     seed: bytes,
     interior_phase_digest: bytes,
-    artifact: CompiledArtifact,
+    compiled: Compiled,
     selected_replay_units: tuple[int, ...],
     policy: VerificationPolicy,
     limits: VerificationLimits,
@@ -275,16 +275,15 @@ def derive_sample_selection(
     the ``O(|T|)`` sampled ranks are ever touched.
     """
 
-    verification = artifact.verification
-    blocks = [verification.units_in_replay_unit(unit) for unit in selected_replay_units]
-    ends = list(accumulate(len(block) for block in blocks))
+    blocks = [compiled.index.verification_units(unit) for unit in selected_replay_units]
+    ends = list(accumulate(block.count for block in blocks))
     count = ends[-1] if ends else 0
     limits.enforce("max_units", count)
     ranks = bernoulli_subset(seed, _S_STAGE, interior_phase_digest, count, policy.s, limits)
 
     def unit_at(rank: int) -> int:
         block = bisect_right(ends, rank)
-        start = ends[block] - len(blocks[block])
-        return int(blocks[block][rank - start])
+        start = ends[block] - blocks[block].count
+        return blocks[block].first + rank - start
 
     return tuple(sorted(unit_at(rank) for rank in ranks))

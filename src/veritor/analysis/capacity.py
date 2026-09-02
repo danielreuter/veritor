@@ -11,13 +11,9 @@ from circuit_cut_analysis.capacity_oracle import (
     ExplicitCircuitCapacityOracle as CutExplicitCircuitCapacityOracle,
 )
 from circuit_cut_analysis.circuit import CircuitDAG, Gate
-from veritor.core.circuit import (
-    StructuralCircuit,
-    validate_circuit_contract,
-)
+from veritor.core.circuit import Circuit
 from veritor.core.ids import Position
-from veritor.core.indexed import iter_domain
-from veritor.core.partitions import VerificationPartition
+from veritor.core.index import Index
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,32 +174,32 @@ class MappedCapacityOracle[SupportT, MappedT]:
 
 @dataclass(frozen=True, slots=True)
 class VerificationUnitCapacityOracle:
-    """Adapt a position oracle to verification-unit attack IDs."""
+    """Adapt an address oracle to verification-unit attack IDs."""
 
     delegate: CapacityOracle[Position]
-    verification_partition: VerificationPartition
+    index: Index
 
     def evaluate(
         self,
         attack_support: frozenset[int],
     ) -> CapacityEvidence[frozenset[int]]:
-        positions: set[Position] = set()
+        addresses: set[Position] = set()
         for unit_index in attack_support:
             if type(unit_index) is not int or not (
-                0 <= unit_index < self.verification_partition.unit_count
+                0 <= unit_index < self.index.verification_unit_count
             ):
                 raise ValueError("capacity attack names an unknown verification unit")
-            unit = self.verification_partition.unit_at(unit_index)
-            positions.update(iter_domain(unit.members))
-        external = coerce_capacity_evidence(
-            self.delegate.evaluate(frozenset(positions))
-        )
+            addresses.update(
+                Position(address)
+                for address in self.index.verification_unit(unit_index).interval
+            )
+        external = coerce_capacity_evidence(self.delegate.evaluate(frozenset(addresses)))
         return CapacityEvidence(
             lower_bound=external.lower_bound,
             upper_bound=external.upper_bound,
             requested_support=attack_support,
             evaluated_support=attack_support,
-            method=f"verification-unit-to-position:{external.method}",
+            method=f"verification-unit-to-address:{external.method}",
             certificate=external,
             notes=external.notes,
             assumptions=external.assumptions,
@@ -269,100 +265,69 @@ class ExplicitCircuitCapacityOracleAdapter:
 
 
 @dataclass(frozen=True, slots=True, init=False)
-class StructuralCircuitCapacityOracle:
-    """Build an exact explicit cut oracle from a finite core structural circuit.
+class CircuitCapacityOracle:
+    """Build an exact explicit cut oracle from a finite :class:`Circuit`.
 
-    This practical adapter requires every computed position to expose a finite
-    cardinality of at least two.  Fixed inputs receive a dummy positive width;
-    they cannot lie on a downstream path starting at an attacked computed
-    position, so that width does not affect these queries.
+    Scans every address (``O(n)``), so this is for small circuits.  Every
+    value has ``2**width`` possible values; inputs cannot lie on a downstream
+    path from an attacked gate, so their width does not affect the queries.
     """
 
-    circuit: StructuralCircuit
+    circuit: Circuit
     delegate: CutExplicitCircuitCapacityOracle
-    gate_ids_by_position: Mapping[int, str]
 
-    def __init__(self, circuit: StructuralCircuit) -> None:
-        validate_circuit_contract(circuit, exhaustive=True)
-        input_positions = {port.position for port in circuit.input_ports}
-        computed_positions = tuple(iter_domain(circuit.computed_positions))
-        all_positions = input_positions | set(computed_positions)
-        ids = {int(position): f"position/{int(position)}" for position in all_positions}
-        gates = [
-            Gate(ids[int(position)], GateCapacity.values(2), op="input")
-            for position in sorted(input_positions)
-        ]
-        for position in computed_positions:
-            structural_gate = circuit.gate_at(position)
-            cardinality = structural_gate.capacity_upper_bound
-            if cardinality is None:
-                raise ValueError(
-                    f"position {int(position)} has no finite capacity upper bound"
-                )
-            if cardinality < 2:
-                raise ValueError(
-                    "the explicit cut adapter cannot represent zero-capacity gates"
-                )
+    def __init__(self, circuit: Circuit) -> None:
+        gates = []
+        edges: set[tuple[str, str]] = set()
+        for address in range(circuit.n):
+            ref = circuit[address]
             gates.append(
-                Gate(
-                    ids[int(position)],
-                    GateCapacity.values(cardinality),
-                    op=str(structural_gate.operation),
-                )
+                Gate(_gate_id(address), GateCapacity.values(1 << ref.width), op=ref.op)
             )
-        edges = {
-            (ids[int(predecessor)], ids[int(position)])
-            for position in computed_positions
-            for predecessor in circuit.gate_at(position).predecessors
-        }
-        outputs = {
-            ids[int(port.position)]
-            for port in circuit.output_ports
-        }
+            edges.update((_gate_id(arg), _gate_id(address)) for arg in ref.args)
+        outputs = {_gate_id(address) for address in circuit.outputs}
         if not outputs:
-            raise ValueError("the structural circuit must designate an output")
-        explicit = CircuitDAG(gates, edges, outputs)
+            raise ValueError("the circuit must designate an output")
         object.__setattr__(self, "circuit", circuit)
         object.__setattr__(
             self,
             "delegate",
-            CutExplicitCircuitCapacityOracle(explicit),
+            CutExplicitCircuitCapacityOracle(CircuitDAG(gates, edges, outputs)),
         )
-        object.__setattr__(self, "gate_ids_by_position", ids)
 
     def evaluate(
         self,
         attack_support: frozenset[Position],
     ) -> CapacityEvidence[frozenset[Position]]:
         mapped: set[str] = set()
-        for position in attack_support:
-            if not self.circuit.computed_positions.contains(position):
-                raise ValueError(
-                    f"capacity attack names non-computed position {int(position)}"
-                )
-            mapped.add(self.gate_ids_by_position[int(position)])
-        external = coerce_capacity_evidence(
-            self.delegate.evaluate(frozenset(mapped))
-        )
+        for address in attack_support:
+            if not 0 <= address < self.circuit.n or self.circuit[address].is_input:
+                raise ValueError(f"capacity attack names non-gate address {int(address)}")
+            mapped.add(_gate_id(address))
+        external = coerce_capacity_evidence(self.delegate.evaluate(frozenset(mapped)))
         return CapacityEvidence(
             lower_bound=external.lower_bound,
             upper_bound=external.upper_bound,
             requested_support=attack_support,
             evaluated_support=attack_support,
-            method=f"core-structural-circuit:{external.method}",
+            method=f"circuit:{external.method}",
             certificate=external,
             notes=external.notes,
             assumptions=external.assumptions,
         )
 
 
+def _gate_id(address: int) -> str:
+    return f"address/{int(address)}"
+
+
 __all__ = [
     "CapacityEvaluation",
     "CapacityEvidence",
     "CapacityOracle",
+    "CircuitCapacityOracle",
     "ExplicitCircuitCapacityOracleAdapter",
     "MappedCapacityOracle",
-    "StructuralCircuitCapacityOracle",
     "VerificationUnitCapacityOracle",
     "coerce_capacity_evidence",
     "zero_capacity_evidence",

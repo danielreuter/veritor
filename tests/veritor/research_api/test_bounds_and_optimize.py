@@ -29,7 +29,7 @@ from veritor.analysis import (
     PolicyGridOptimizationResult,
     TerminationStatus,
 )
-from veritor.core import Capability, identity_digest
+from veritor.core import Capability, Compiled, identity_digest
 
 
 def _unsupported_gpt2_request() -> GPT2CompileRequest:
@@ -84,8 +84,9 @@ def _catalog_gpt2_request() -> GPT2CompileRequest:
     )
 
 
-def test_demo_bound_uses_literal_finite_partitions_exactly() -> None:
+def test_demo_bound_uses_the_literal_index_exactly() -> None:
     artifact = Compile(ArchitectureId.DEMO_G)
+    assert isinstance(artifact, Compiled)
     policy = VerificationPolicy(1, Fraction(1, 2), Fraction(1, 4))
 
     exhaustive = Bound(
@@ -104,15 +105,7 @@ def test_demo_bound_uses_literal_finite_partitions_exactly() -> None:
     assert not isinstance(branch, Unsupported)
     assert exhaustive.is_exact
     assert exhaustive.lower_bound == branch.lower_bound == branch.upper_bound
-    assert exhaustive.identities.structure_identity == artifact.circuit.identity.digest
-    assert (
-        exhaustive.identities.replay_partition_identity
-        == artifact.replay_partition.identity.digest
-    )
-    assert (
-        exhaustive.identities.verification_partition_identity
-        == artifact.verification_partition.identity.digest
-    )
+    assert exhaustive.identities.index_identity == artifact.index.digest
 
 
 def test_matmul_bound_and_optimize_use_literal_finite_tuple() -> None:

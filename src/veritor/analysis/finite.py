@@ -26,8 +26,7 @@ from veritor.analysis.result import (
     finite_bound_identities,
 )
 from veritor.core.errors import ResourceLimit
-from veritor.core.indexed import iter_domain
-from veritor.core.partitions import ReplayPartition, VerificationPartition
+from veritor.core.index import Index
 from veritor.core.policy import VerificationPolicy
 
 
@@ -53,8 +52,9 @@ def _support_kind(value: AttackSetKind | str) -> AttackSetKind:
 
 @dataclass(frozen=True, slots=True)
 class _FiniteContext:
-    replay: ReplayPartition
-    verification: VerificationPartition
+    """The finite game over an index: every verification unit is materialized."""
+
+    index: Index
     policy: VerificationPolicy
     oracle: CapacityOracle[Any]
     support_kind: AttackSetKind
@@ -64,35 +64,34 @@ class _FiniteContext:
     @classmethod
     def build(
         cls,
-        replay: ReplayPartition,
-        verification: VerificationPartition,
+        index: Index,
         policy: VerificationPolicy,
         oracle: CapacityOracle[Any],
         support_kind: AttackSetKind | str,
     ) -> _FiniteContext:
-        if not isinstance(replay, ReplayPartition):
-            raise TypeError("replay must be a ReplayPartition")
-        if not isinstance(verification, VerificationPartition):
-            raise TypeError("verification must be a VerificationPartition")
+        if not isinstance(index, Index):
+            raise TypeError("index must be an Index")
         if not isinstance(policy, VerificationPolicy):
             raise TypeError("policy must be a VerificationPolicy")
-        owners = tuple(int(unit.replay_unit) for unit in verification.units)
-        positions = tuple(
-            tuple(int(position) for position in iter_domain(unit.members))
-            for unit in verification.units
-        )
+        units = [
+            index.verification_unit(unit) for unit in range(index.verification_unit_count)
+        ]
+        owners = []
+        for unit in units:
+            owner = unit.replay_unit
+            assert owner is not None
+            owners.append(owner)
         return cls(
-            replay=replay,
-            verification=verification,
+            index=index,
             policy=policy,
             oracle=oracle,
             support_kind=_support_kind(support_kind),
-            owners=owners,
-            positions_by_unit=positions,
+            owners=tuple(owners),
+            positions_by_unit=tuple(tuple(unit.interval) for unit in units),
         )
 
     def replay_counts(self, error_units: tuple[int, ...]) -> tuple[int, ...]:
-        counts = [0] * self.replay.unit_count
+        counts = [0] * self.index.replay_units.count
         for unit_index in error_units:
             counts[self.owners[unit_index]] += 1
         return tuple(counts)
@@ -152,8 +151,7 @@ class _FiniteContext:
 
 
 def exhaustive_finite_bound(
-    replay_partition: ReplayPartition,
-    verification_partition: VerificationPartition,
+    index: Index,
     policy: VerificationPolicy,
     capacity_oracle: CapacityOracle[Any],
     *,
@@ -164,14 +162,8 @@ def exhaustive_finite_bound(
 ) -> FixedPolicyBoundResult:
     """Enumerate every finite error set and return its certified optimum bracket."""
 
-    context = _FiniteContext.build(
-        replay_partition,
-        verification_partition,
-        policy,
-        capacity_oracle,
-        support_kind,
-    )
-    unit_count = verification_partition.unit_count
+    context = _FiniteContext.build(index, policy, capacity_oracle, support_kind)
+    unit_count = index.verification_unit_count
     if type(max_verification_units) is not int or max_verification_units < 0:
         raise ValueError("max_verification_units must be nonnegative")
     if unit_count > max_verification_units:
@@ -231,11 +223,7 @@ def exhaustive_finite_bound(
         method="reference-exhaustive-finite",
         witness=lower_witness,
         upper_witness=upper_witness,
-        identities=finite_bound_identities(
-            replay_partition,
-            verification_partition,
-            policy,
-        ),
+        identities=finite_bound_identities(index, policy),
         assumptions=observed_assumptions,
         relaxation_chain=relaxation_chain,
         state_count=pattern_count,
@@ -258,8 +246,7 @@ class _SearchNode:
 
 
 def branch_and_bound_finite_bound(
-    replay_partition: ReplayPartition,
-    verification_partition: VerificationPartition,
+    index: Index,
     policy: VerificationPolicy,
     capacity_oracle: CapacityOracle[Any],
     *,
@@ -279,14 +266,8 @@ def branch_and_bound_finite_bound(
         raise ValueError("max_states must be a nonnegative integer")
     if type(max_capacity_queries) is not int or max_capacity_queries < 0:
         raise ValueError("max_capacity_queries must be a nonnegative integer")
-    context = _FiniteContext.build(
-        replay_partition,
-        verification_partition,
-        policy,
-        capacity_oracle,
-        support_kind,
-    )
-    unit_count = verification_partition.unit_count
+    context = _FiniteContext.build(index, policy, capacity_oracle, support_kind)
+    unit_count = index.verification_unit_count
     if unit_count and max_capacity_queries == 0:
         raise ValueError(
             "at least one capacity query is required for a certified root envelope"
@@ -312,7 +293,7 @@ def branch_and_bound_finite_bound(
         )
     else:
         root_evidence = empty_evidence
-    root_counts = (0,) * replay_partition.unit_count
+    root_counts = (0,) * index.replay_units.count
     stack = [
         _SearchNode(
             depth=0,
@@ -493,11 +474,7 @@ def branch_and_bound_finite_bound(
         method="exact-finite-branch-and-bound",
         witness=lower_witness,
         upper_witness=upper_witness,
-        identities=finite_bound_identities(
-            replay_partition,
-            verification_partition,
-            policy,
-        ),
+        identities=finite_bound_identities(index, policy),
         assumptions=observed_assumptions,
         state_count=state_count,
         capacity_query_count=query_count,

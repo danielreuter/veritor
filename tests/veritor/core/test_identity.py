@@ -1,14 +1,7 @@
-from dataclasses import FrozenInstanceError
-
 import pytest
 
 from veritor.core import (
-    ArtifactKind,
-    CompiledResultIdentity,
     InvalidArtifact,
-    PartitionIdentity,
-    PartitionKind,
-    StructureIdentity,
     canonical_json_bytes,
     identity_digest,
     tagged_sha256,
@@ -18,36 +11,6 @@ from veritor.core import (
 
 def digest(label: str):
     return identity_digest("test/digest", {"label": label})
-
-
-def structure(**changes):
-    fields = {
-        "schema_version": "1",
-        "artifact_kind": ArtifactKind.EXECUTABLE_CIRCUIT,
-        "compiler_id": "tests.compiler",
-        "compiler_version": "1.2.3",
-        "semantic_scope_id": "word-machine-v1",
-        "representation_digest": digest("representation"),
-        "value_registry_digest": digest("values"),
-        "operator_registry_digest": digest("operators"),
-    }
-    fields.update(changes)
-    return StructureIdentity(**fields)
-
-
-def partition(
-    structure_identity: StructureIdentity,
-    kind: PartitionKind,
-    suffix: str,
-) -> PartitionIdentity:
-    return PartitionIdentity(
-        partition_kind=kind,
-        structure_digest=structure_identity.digest,
-        algorithm_id=f"test.{suffix}",
-        algorithm_version="1",
-        configuration_digest=digest(f"{suffix}-configuration"),
-        representation_digest=digest(f"{suffix}-representation"),
-    )
 
 
 def test_canonical_json_is_sorted_compact_and_order_independent():
@@ -85,71 +48,10 @@ def test_tagged_sha256_is_deterministic_and_domain_separated():
     assert first == first.lower()
 
 
-def test_identity_manifest_hashes_every_semantic_field():
-    base = structure()
-
-    assert base == structure()
-    assert base.digest == structure().digest
-    assert base.digest != structure(compiler_version="2").digest
-    assert base.digest != structure(semantic_scope_id="other").digest
-    assert base.digest != structure(operator_registry_digest=digest("other")).digest
-    assert not hasattr(base, "__dict__")
-    with pytest.raises(FrozenInstanceError):
-        base.compiler_id = "mutated"
-
-
-def test_structure_identity_can_hash_a_representation_manifest_directly():
-    direct = StructureIdentity.from_manifest(
-        {"gates": [{"operation": "copy", "reads": [0]}]},
-        schema_version="1",
-        artifact_kind=ArtifactKind.STRUCTURAL_CIRCUIT,
-        compiler_id="tests.compiler",
-        compiler_version="1",
-        semantic_scope_id="structural-only",
-    )
-
-    assert direct.representation_digest == identity_digest(
-        "veritor/structure-representation/v1",
-        {"gates": [{"operation": "copy", "reads": [0]}]},
-    )
-
-
-def test_compiled_identity_binds_ordered_component_roles():
-    structure_identity = structure()
-    replay = partition(structure_identity, PartitionKind.REPLAY, "replay")
-    verification = partition(
-        structure_identity,
-        PartitionKind.VERIFICATION,
-        "verification",
-    )
-    boundary = digest("boundary")
-
-    def compiled(**changes):
-        fields = {
-            "schema_version": "1",
-            "structure_digest": structure_identity.digest,
-            "replay_partition_digest": replay.digest,
-            "verification_partition_digest": verification.digest,
-            "boundary_digest": boundary,
-        }
-        fields.update(changes)
-        return CompiledResultIdentity(**fields)
-
-    identity = compiled()
-
-    assert identity.structure_digest == structure_identity.digest
-    assert identity.replay_partition_digest == replay.digest
-    assert identity.verification_partition_digest == verification.digest
-    assert identity.boundary_digest == boundary
-    assert identity.manifest["boundary_digest"] == boundary
-    assert identity == compiled()
-    assert identity.digest != compiled(boundary_digest=digest("other-boundary")).digest
-    assert identity.digest != compiled(
-        replay_partition_digest=verification.digest,
-        verification_partition_digest=replay.digest,
-    ).digest
-    with pytest.raises(InvalidArtifact):
-        compiled(boundary_digest="not-a-digest")
+def test_identity_digest_hashes_the_canonical_manifest():
+    assert digest("a") == digest("a")
+    assert digest("a") != digest("b")
+    assert digest("a") != identity_digest("test/other", {"label": "a"})
 
 
 def test_digest_validation_rejects_noncanonical_sha256_text():

@@ -23,17 +23,16 @@ def test_additive_expected_cost_is_exact():
 
 
 def test_finite_grid_optimizer_reports_exact_on_grid_and_cost(
-    make_partitions,
+    make_index,
     exact_oracle_type,
 ):
-    replay, verification = make_partitions((1,), label="optimizer")
+    index = make_index((1,))
     oracle = exact_oracle_type((5,))
     grid = RationalPolicyGrid((0, 1), (0, 1), 0)
     cost = AdditiveExpectedCost(1, 2, 3)
 
     result = optimize_finite_policy_grid(
-        replay,
-        verification,
+        index,
         oracle,
         grid,
         cost,
@@ -77,19 +76,20 @@ def test_bracketed_or_relaxed_grid_is_labeled_heuristic():
     assert result.status is GridOptimizationStatus.HEURISTIC
     assert not result.exact_on_grid
     assert result.chosen
-    assert all(choice.bound.certified_upper_bound is not None for choice in result.chosen)
+    assert all(
+        choice.bound.certified_upper_bound is not None for choice in result.chosen
+    )
     assert all(not choice.bound.is_exact for choice in result.chosen)
 
 
 def test_grid_cost_constraint_can_exclude_every_policy(
-    make_partitions,
+    make_index,
     exact_oracle_type,
 ):
-    replay, verification = make_partitions((1,), label="optimizer-empty")
+    index = make_index((1,))
     grid = RationalPolicyGrid((0, 1), (0, 1), 0)
     result = optimize_finite_policy_grid(
-        replay,
-        verification,
+        index,
         exact_oracle_type((1,)),
         grid,
         AdditiveExpectedCost(5, 1, 1),

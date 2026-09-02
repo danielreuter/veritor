@@ -2,8 +2,9 @@
 
 The verifier owns both seeds and releases each challenge only after the
 message it depends on has been received and checked.  Every lookup the
-verifier performs is against the trusted :class:`CompiledArtifact`; the prover
-never tells the verifier where a value lives or which positions a unit has.
+verifier performs is against the trusted :class:`Compiled` ``(C, I)``; the
+prover never tells the verifier where a value lives or which addresses a unit
+has.
 """
 
 from __future__ import annotations
@@ -12,13 +13,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from secrets import token_bytes
 
-from veritor.core import (
-    CompiledArtifact,
-    ExecutableCircuit,
-    VerificationLimits,
-    VerificationPolicy,
-    iter_domain,
-)
+from veritor.core import Compiled, VerificationLimits, VerificationPolicy, iter_domain
 
 from .challenge import derive_replay_selection, derive_sample_selection
 from .merkle import CommitmentDomain, MerkleTree, validate_commitment, verify_opening
@@ -77,7 +72,7 @@ class Expectation:
 
 
 def make_expectation(
-    artifact: CompiledArtifact,
+    compiled: Compiled,
     policy: VerificationPolicy,
     public_inputs: Iterable[object],
     claimed_outputs: Iterable[object],
@@ -90,7 +85,7 @@ def make_expectation(
 
     return Expectation(
         session_id=token_bytes(16) if session_id is None else session_id,
-        compiled_digest=artifact.identity.digest,
+        compiled_digest=compiled.digest,
         policy=policy,
         public_inputs=tuple(public_inputs),
         claimed_outputs=tuple(claimed_outputs),
@@ -100,86 +95,75 @@ def make_expectation(
 
 
 class _Layout:
-    """Position-level lookups shared by both sessions; all ``O(log n)``."""
+    """Address-level lookups shared by both sessions; all ``O(depth)``."""
 
-    __slots__ = ("_input_types", "artifact", "circuit")
+    __slots__ = ("boundary", "circuit", "compiled", "index")
 
-    def __init__(self, artifact: CompiledArtifact) -> None:
-        if not isinstance(artifact, CompiledArtifact):
-            raise ProtocolError("sessions require a CompiledArtifact")
-        if not isinstance(artifact.circuit, ExecutableCircuit):
-            raise ProtocolError("the protocol requires an executable circuit")
-        self.artifact = artifact
-        self.circuit: ExecutableCircuit = artifact.circuit
-        self._input_types = {
-            int(port.position): str(port.value_type)
-            for port in self.circuit.input_ports
-        }
+    def __init__(self, compiled: Compiled) -> None:
+        if not isinstance(compiled, Compiled):
+            raise ProtocolError("sessions require a Compiled circuit")
+        self.compiled = compiled
+        self.circuit = compiled.circuit
+        self.index = compiled.index
+        self.boundary = compiled.index.boundary()
 
-    def schema(self, position: int) -> str:
-        value_type = self._input_types.get(position)
-        if value_type is None:
-            return str(self.circuit.executable_gate_at(position).output_type)
-        return value_type
+    def schema(self, address: int) -> str:
+        """The leaf schema of an address: its value width."""
 
-    def io_positions(self) -> tuple[int, ...]:
-        """Distinct public I/O positions in boundary rank order."""
+        return f"u{self.circuit[address].width}"
 
-        positions = {int(port.position) for port in self.circuit.input_ports}
-        positions.update(int(port.position) for port in self.circuit.output_ports)
-        return tuple(sorted(positions, key=self.artifact.boundary.rank))
+    def owner(self, address: int) -> int:
+        """``BOUNDARY_OWNER`` for boundary addresses, else the owning replay unit."""
+
+        if self.boundary.contains(address):
+            return BOUNDARY_OWNER
+        return self.index.replay_units.owner(address)
+
+    def io_addresses(self) -> tuple[int, ...]:
+        """Distinct public I/O addresses in boundary rank order."""
+
+        addresses = set(self.circuit.inputs)
+        addresses.update(self.circuit.outputs)
+        return tuple(sorted(addresses, key=self.boundary.rank))
 
     def required(self, unit: int) -> tuple[tuple[int, int], ...]:
-        """``(owner, position)`` for every value a verification unit reads or writes."""
+        """``(owner, address)`` for every value a verification unit reads or writes."""
 
-        replay_unit = int(self.artifact.verification.unit_at(unit).replay_unit)
-        positions: set[int] = set()
-        for member in iter_domain(self.artifact.verification.unit_at(unit).members):
-            positions.add(int(member))
-            positions.update(
-                int(item) for item in self.circuit.executable_gate_at(member).arguments
-            )
+        node = self.index.verification_unit(unit)
+        replay_unit = node.replay_unit
+        addresses = set(node.interval)
+        addresses.update(self.circuit.In(node))
         result: list[tuple[int, int]] = []
-        for position in sorted(positions):
-            owner = self.artifact.value_owner(position)
+        for address in sorted(addresses):
+            owner = self.owner(address)
             if owner not in (BOUNDARY_OWNER, replay_unit):
                 raise Reject(
                     VerificationCode.INVALID_COMPILED_RESULT,
-                    f"position {position} is read by unit {unit} but owned by "
-                    f"replay unit {owner} and is not a boundary position",
+                    f"address {address} is read by unit {unit} but owned by "
+                    f"replay unit {owner} and is not a boundary address",
                 )
-            result.append((owner, position))
+            result.append((owner, address))
         return tuple(result)
 
 
-def replay_unit(
-    artifact: CompiledArtifact, unit: int, boundary_values: Values
-) -> dict[int, object]:
-    """Honest replay: recompute ``Int(unit)`` from the boundary, in position order."""
+def replay_unit(compiled: Compiled, unit: int, boundary_values: Values) -> dict[int, object]:
+    """Honest replay: recompute ``Int(unit)`` from the boundary, in address order."""
 
-    circuit = artifact.circuit
-    if not isinstance(circuit, ExecutableCircuit):
-        raise ProtocolError("replay requires an executable circuit")
+    circuit = compiled.circuit
     known: dict[int, object] = {}
-    interior = artifact.interior(unit)
-    for position in iter_domain(artifact.replay.unit_at(unit).members):
-        if not interior.contains(position):
-            continue
-        gate = circuit.executable_gate_at(position)
+    for address in iter_domain(compiled.index.interior(unit)):
         arguments = []
-        for argument in gate.arguments:
+        for argument in circuit[address].args:
             if argument in known:
                 arguments.append(known[argument])
             else:
                 try:
-                    arguments.append(boundary_values[int(argument)])
+                    arguments.append(boundary_values[argument])
                 except KeyError as error:
                     raise ProtocolError(
                         f"replay of unit {unit} needs boundary value {argument}"
                     ) from error
-        known[int(position)] = circuit.evaluate_relation(
-            str(gate.relation_id), tuple(arguments)
-        )
+        known[address] = circuit.evaluate_gate(address, arguments)  # type: ignore[arg-type]
     return known
 
 
@@ -198,16 +182,16 @@ class ProverSession:
 
     def __init__(
         self,
-        artifact: CompiledArtifact,
+        compiled: Compiled,
         header: Header,
         values: Values,
         *,
         replay: Replay | None = None,
         limits: VerificationLimits | None = None,
     ) -> None:
-        self._layout = _Layout(artifact)
-        if header.compiled_digest != artifact.identity.digest:
-            raise ProtocolError("header names a different compiled artifact")
+        self._layout = _Layout(compiled)
+        if header.compiled_digest != compiled.digest:
+            raise ProtocolError("header names a different compiled circuit")
         self.header = header
         self._values = values
         self._replay = replay
@@ -226,28 +210,21 @@ class ProverSession:
     def _commit(self, domain: CommitmentDomain, values: Values) -> MerkleTree:
         layout = self._layout
         encoded: dict[int, bytes] = {}
-        schemas: dict[int, str] = {}
-        for position in iter_domain(domain.positions):
+        for address in iter_domain(domain.positions):
             try:
-                value = values[int(position)]
+                value = values[int(address)]
             except KeyError as error:
-                raise ProtocolError(
-                    f"prover has no value for position {position}"
-                ) from error
-            schema = layout.schema(position)
-            schemas[int(position)] = schema
-            encoded[int(position)] = layout.circuit.encode_value(schema, value)
-        tree = MerkleTree(domain, encoded, schemas.__getitem__)
+                raise ProtocolError(f"prover has no value for address {address}") from error
+            encoded[int(address)] = layout.circuit.encode(address, value)
+        tree = MerkleTree(domain, encoded, layout.schema)
         self._trees[domain.owner] = tree
         return tree
 
     def boundary(self) -> BoundaryMessage:
         self._expect("boundary")
-        tree = self._commit(
-            boundary_domain(self.header, self._layout.artifact), self._values
-        )
+        tree = self._commit(boundary_domain(self.header, self._layout.compiled), self._values)
         message = BoundaryMessage(
-            tree.commitment, tuple(tree.open(p) for p in self._layout.io_positions())
+            tree.commitment, tuple(tree.open(p) for p in self._layout.io_addresses())
         )
         self._boundary_phase = boundary_phase(self.header, message)
         self._phase = "interiors"
@@ -257,17 +234,17 @@ class ProverSession:
     def interiors(self, challenge: ReplayChallenge) -> InteriorMessage:
         self._expect("interiors")
         self._replay_phase = replay_phase(self._boundary_phase, challenge)
-        artifact = self._layout.artifact
+        compiled = self._layout.compiled
         commitments: list[Commitment] = []
         for unit in challenge.selected:
-            if unit >= artifact.replay.unit_count:
+            if unit >= compiled.index.replay_units.count:
                 raise ProtocolError(f"challenge names unknown replay unit {unit}")
             interior_values = (
-                replay_unit(artifact, unit, self._values)
+                replay_unit(compiled, unit, self._values)
                 if self._replay is None
                 else self._replay(unit, self._values)
             )
-            domain = interior_domain(self.header, self._replay_phase, artifact, unit)
+            domain = interior_domain(self.header, self._replay_phase, compiled, unit)
             commitments.append(self._commit(domain, interior_values).commitment)
         message = InteriorMessage(tuple(commitments))
         self._interior_phase = interior_phase(self._replay_phase, message)
@@ -281,13 +258,13 @@ class ProverSession:
         batches: list[tuple[Opening, ...]] = []
         for unit in challenge.selected:
             openings: list[Opening] = []
-            for owner, position in self._layout.required(unit):
+            for owner, address in self._layout.required(unit):
                 tree = self._trees.get(owner)
                 if tree is None:
                     raise ProtocolError(
                         f"sampled unit {unit} needs uncommitted replay unit {owner}"
                     )
-                openings.append(tree.open(position))
+                openings.append(tree.open(address))
             batches.append(tuple(openings))
         message = EvidenceMessage(tuple(batches))
         self._phase = "done"
@@ -307,36 +284,34 @@ class VerifierSession:
     def __init__(
         self,
         expectation: Expectation,
-        artifact: CompiledArtifact,
+        compiled: Compiled,
         *,
         limits: VerificationLimits | None = None,
     ) -> None:
-        self._layout = _Layout(artifact)
-        if expectation.compiled_digest != artifact.identity.digest:
-            raise ProtocolError("expectation names a different compiled artifact")
+        self._layout = _Layout(compiled)
+        if expectation.compiled_digest != compiled.digest:
+            raise ProtocolError("expectation names a different compiled circuit")
         self._expectation = expectation
         self._limits = VerificationLimits() if limits is None else limits
         circuit = self._layout.circuit
         try:
             inputs = tuple(
-                circuit.encode_value(str(port.value_type), value)
-                for port, value in zip(
-                    circuit.input_ports, expectation.public_inputs, strict=True
+                circuit.encode(address, value)
+                for address, value in zip(
+                    circuit.inputs, expectation.public_inputs, strict=True
                 )
             )
             outputs = tuple(
-                circuit.encode_value(str(port.value_type), value)
-                for port, value in zip(
-                    circuit.output_ports, expectation.claimed_outputs, strict=True
+                circuit.encode(address, value)
+                for address, value in zip(
+                    circuit.outputs, expectation.claimed_outputs, strict=True
                 )
             )
         except Exception as error:
-            raise ProtocolError(
-                "expectation values do not encode canonically"
-            ) from error
+            raise ProtocolError("expectation values do not encode canonically") from error
         self.header = Header(
             expectation.session_id,
-            artifact.identity.digest,
+            compiled.digest,
             expectation.policy,
             inputs,
             outputs,
@@ -361,9 +336,7 @@ class VerifierSession:
         self._phase = "rejected"
         return Reject(code, detail)
 
-    def _accept_commitment(
-        self, domain: CommitmentDomain, commitment: Commitment
-    ) -> None:
+    def _accept_commitment(self, domain: CommitmentDomain, commitment: Commitment) -> None:
         self._limits.enforce("max_positions", domain.count)
         if not validate_commitment(domain, commitment):
             raise self._reject(
@@ -388,42 +361,39 @@ class VerifierSession:
         ):
             raise self._reject(
                 VerificationCode.INVALID_OPENING,
-                f"opening of position {opening.position} failed under owner {owner}",
+                f"opening of address {opening.position} failed under owner {owner}",
             )
         return opening.value
 
     def receive_boundary(self, message: BoundaryMessage) -> ReplayChallenge:
         self._expect("boundary")
-        artifact = self._layout.artifact
-        self._accept_commitment(
-            boundary_domain(self.header, artifact), message.commitment
-        )
-        expected = self._layout.io_positions()
+        compiled = self._layout.compiled
+        self._accept_commitment(boundary_domain(self.header, compiled), message.commitment)
+        expected = self._layout.io_addresses()
         if tuple(item.position for item in message.io_openings) != expected:
             raise self._reject(
                 VerificationCode.COVERAGE_MISMATCH,
-                "public I/O openings must cover exactly the I/O positions in boundary order",
+                "public I/O openings must cover exactly the I/O addresses in boundary order",
             )
         opened = {
-            item.position: self._open(BOUNDARY_OWNER, item)
-            for item in message.io_openings
+            item.position: self._open(BOUNDARY_OWNER, item) for item in message.io_openings
         }
         circuit = self._layout.circuit
-        for ports, values, label in (
-            (circuit.input_ports, self.header.public_inputs, "input"),
-            (circuit.output_ports, self.header.claimed_outputs, "output"),
+        for addresses, values, label in (
+            (circuit.inputs, self.header.public_inputs, "input"),
+            (circuit.outputs, self.header.claimed_outputs, "output"),
         ):
-            for port, value in zip(ports, values, strict=True):
-                if opened[int(port.position)] != value:
+            for address, value in zip(addresses, values, strict=True):
+                if opened[address] != value:
                     raise self._reject(
                         VerificationCode.PUBLIC_IO_MISMATCH,
-                        f"{label} {port.name!r} at position {port.position} differs",
+                        f"{label} at address {address} differs",
                     )
         self._boundary_phase = boundary_phase(self.header, message)
         selected = derive_replay_selection(
             self._expectation.q_seed,
             self._boundary_phase,
-            artifact,
+            compiled,
             self.header.policy,
             self._limits,
         )
@@ -436,7 +406,7 @@ class VerifierSession:
 
     def receive_interiors(self, message: InteriorMessage) -> SampleChallenge:
         self._expect("interiors")
-        artifact = self._layout.artifact
+        compiled = self._layout.compiled
         selected = self.selected_replay_units
         if len(message.commitments) != len(selected):
             raise self._reject(
@@ -446,14 +416,14 @@ class VerifierSession:
             )
         for unit, commitment in zip(selected, message.commitments, strict=True):
             self._accept_commitment(
-                interior_domain(self.header, self._replay_phase, artifact, unit),
+                interior_domain(self.header, self._replay_phase, compiled, unit),
                 commitment,
             )
         self._interior_phase = interior_phase(self._replay_phase, message)
         sampled = derive_sample_selection(
             self._expectation.s_seed,
             self._interior_phase,
-            artifact,
+            compiled,
             selected,
             self.header.policy,
             self._limits,
@@ -483,39 +453,35 @@ class VerifierSession:
             if tuple(item.position for item in batch) != tuple(p for _, p in required):
                 raise self._reject(
                     VerificationCode.COVERAGE_MISMATCH,
-                    f"evidence for unit {unit} must open exactly its required positions",
+                    f"evidence for unit {unit} must open exactly its required addresses",
                 )
-            values: dict[int, object] = {}
-            for (owner, position), opening in zip(required, batch, strict=True):
+            values: dict[int, int] = {}
+            for (owner, address), opening in zip(required, batch, strict=True):
                 payload = self._open(owner, opening)
                 try:
-                    values[position] = circuit.decode_value(
-                        layout.schema(position), payload
-                    )
+                    values[address] = circuit.decode(address, payload)
                 except Exception as error:
                     raise self._reject(
                         VerificationCode.INVALID_VALUE,
-                        f"value at position {position} is not canonical: {error}",
+                        f"value at address {address} is not canonical: {error}",
                     ) from error
-            for member in iter_domain(
-                layout.artifact.verification.unit_at(unit).members
-            ):
-                gate = circuit.executable_gate_at(member)
+            for member in layout.index.verification_unit(unit).interval:
+                gate = circuit[member]
+                if gate.is_input:
+                    continue
                 try:
-                    satisfied = circuit.check_relation(
-                        str(gate.relation_id),
-                        tuple(values[int(item)] for item in gate.arguments),
-                        values[int(member)],
+                    satisfied = circuit.check_gate(
+                        member, tuple(values[item] for item in gate.args), values[member]
                     )
                 except Exception as error:
                     raise self._reject(
                         VerificationCode.TRUSTED_SERVICE_FAILURE,
-                        f"relation {gate.relation_id} raised at position {member}: {error}",
+                        f"gate {gate.op} raised at address {member}: {error}",
                     ) from error
                 if not satisfied:
                     raise self._reject(
                         VerificationCode.RELATION_REJECTED,
-                        f"gate at position {member} violates {gate.relation_id}",
+                        f"gate at address {member} violates {gate.op}",
                     )
         self._phase = "done"
         self.transcript_parts.append(message)
@@ -539,7 +505,7 @@ class ProtocolRun:
 
 
 def run_protocol(
-    artifact: CompiledArtifact,
+    compiled: Compiled,
     expectation: Expectation,
     values: Values,
     *,
@@ -548,15 +514,11 @@ def run_protocol(
 ) -> ProtocolRun:
     """Run prover and verifier against each other in one process."""
 
-    verifier = VerifierSession(expectation, artifact, limits=limits)
-    prover = ProverSession(
-        artifact, verifier.header, values, replay=replay, limits=limits
-    )
+    verifier = VerifierSession(expectation, compiled, limits=limits)
+    prover = ProverSession(compiled, verifier.header, values, replay=replay, limits=limits)
     try:
         replay_challenge = verifier.receive_boundary(prover.boundary())
-        sample_challenge = verifier.receive_interiors(
-            prover.interiors(replay_challenge)
-        )
+        sample_challenge = verifier.receive_interiors(prover.interiors(replay_challenge))
         report = verifier.receive_evidence(prover.evidence(sample_challenge))
     except Reject as rejection:
         return ProtocolRun(

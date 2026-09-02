@@ -2,7 +2,7 @@
 
 ``Verify`` in the paper is :func:`run_protocol` (interactive) or
 :func:`verify_transcript` (pure, over a recorded transcript).  Both consume a
-trusted :class:`~veritor.core.CompiledArtifact` and a verifier-owned
+trusted :class:`~veritor.core.Compiled` ``(C, I)`` and a verifier-owned
 :class:`Expectation`; everything else arrives from the prover as messages.
 """
 

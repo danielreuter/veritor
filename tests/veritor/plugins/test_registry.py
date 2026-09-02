@@ -4,14 +4,13 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from veritor.core import ArtifactKind, Capability, SupportState
+from veritor.core import ArtifactKind, Capability, Compiled, SupportState
 from veritor.plugins import (
     AggregateBoundArtifact,
     ArchitectureId,
     ArchitecturePlugin,
     GreedyTextExecutionShape,
     IndexedStructureArtifact,
-    ProtocolCircuitArtifact,
     architecture_registry,
     compile_architecture,
     get_architecture_plugin,
@@ -60,8 +59,26 @@ def test_fixed_greedy_shape_contract() -> None:
         GreedyTextExecutionShape(final_generated_forward=True)
 
 
-@pytest.mark.parametrize("architecture_id", list_architectures())
-def test_registry_compiles_have_deterministic_identity(
+EXECUTABLE = (ArchitectureId.DEMO_G, ArchitectureId.MATMUL)
+
+
+@pytest.mark.parametrize("architecture_id", EXECUTABLE)
+def test_executable_compiles_are_deterministic(architecture_id: ArchitectureId) -> None:
+    plugin = get_architecture_plugin(architecture_id)
+    first = compile_architecture(architecture_id, plugin.default_request())
+    second = compile_architecture(architecture_id.value, plugin.default_request())
+    assert isinstance(first, Compiled)
+    assert first.digest == second.digest
+    assert first.index.digest == second.index.digest
+    with pytest.raises(FrozenInstanceError):
+        first.digest = "x"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    "architecture_id",
+    [item for item in list_architectures() if item not in EXECUTABLE],
+)
+def test_described_compiles_have_deterministic_identity(
     architecture_id: ArchitectureId,
 ) -> None:
     plugin = get_architecture_plugin(architecture_id)
@@ -80,14 +97,8 @@ def test_registry_compiles_have_deterministic_identity(
 
 
 def test_compile_results_are_discriminated() -> None:
-    assert isinstance(
-        compile_architecture(ArchitectureId.DEMO_G),
-        ProtocolCircuitArtifact,
-    )
-    assert isinstance(
-        compile_architecture(ArchitectureId.MATMUL),
-        ProtocolCircuitArtifact,
-    )
+    assert isinstance(compile_architecture(ArchitectureId.DEMO_G), Compiled)
+    assert isinstance(compile_architecture(ArchitectureId.MATMUL), Compiled)
     assert isinstance(
         compile_architecture(ArchitectureId.GPT2),
         IndexedStructureArtifact,
@@ -106,10 +117,9 @@ def test_capability_matrix_is_honest() -> None:
     artifacts = {
         architecture_id: compile_architecture(architecture_id)
         for architecture_id in list_architectures()
+        if architecture_id not in EXECUTABLE
     }
     expected_kinds = {
-        ArchitectureId.DEMO_G: ArtifactKind.EXECUTABLE_CIRCUIT,
-        ArchitectureId.MATMUL: ArtifactKind.EXECUTABLE_CIRCUIT,
         ArchitectureId.GPT2: ArtifactKind.STRUCTURAL_CIRCUIT,
         ArchitectureId.KIMI_K3: ArtifactKind.CAPACITY_PROFILE,
         ArchitectureId.DEEPSEEK_V4_PRO: ArtifactKind.CAPACITY_PROFILE,
@@ -122,16 +132,6 @@ def test_capability_matrix_is_honest() -> None:
             artifact.capabilities.status_for(Capability.HIDDEN_STRUCTURE).state
             is SupportState.UNSUPPORTED
         )
-
-    for architecture_id in (ArchitectureId.DEMO_G, ArchitectureId.MATMUL):
-        executable = artifacts[architecture_id]
-        for capability in (
-            Capability.STATIC_PARTITION,
-            Capability.STATIC_BOUND,
-            Capability.EXECUTE,
-            Capability.VERIFY,
-        ):
-            assert executable.capabilities.supports(capability)
 
     gpt2 = artifacts[ArchitectureId.GPT2]
     assert not gpt2.capabilities.supports(Capability.STATIC_PARTITION)

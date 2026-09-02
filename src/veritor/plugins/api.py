@@ -1,10 +1,10 @@
 """Stable contracts shared by architecture plug-ins.
 
-The three artifact classes in this module are intentionally disjoint:
+A plug-in compiles to one of three disjoint results:
 
-* :class:`ProtocolCircuitArtifact` is a genuine executable ``(C, R, V)``;
-* :class:`IndexedStructureArtifact` is exact structural metadata only; and
-* :class:`AggregateBoundArtifact` is a counted capacity model with no circuit.
+* :class:`~veritor.core.Compiled` -- a genuine executable ``(C, I)``;
+* :class:`IndexedStructureArtifact` -- exact structural metadata only; and
+* :class:`AggregateBoundArtifact` -- a counted capacity model with no circuit.
 
 Keeping those representations separate prevents aggregate accounting from
 accidentally acquiring protocol-circuit semantics.
@@ -35,21 +35,17 @@ from circuit_cut_analysis.weighted_sampling import (
     WeightedGateClassPartition,
     capacity_upper_bound_for_counts,
 )
-from veritor.compile import CallDagCircuit
 from veritor.core import (
     ArtifactKind,
     Capability,
     CapabilityReport,
     ClaimStatus,
-    CompiledArtifact,
-    CompiledResultIdentity,
+    Compiled,
     Digest,
     EvidenceStatus,
     IndexedDomain,
     JSONValue,
-    ReplayPartition,
     Unsupported,
-    VerificationPartition,
     identity_digest,
 )
 
@@ -358,22 +354,6 @@ class GPT2CapacityProviderSurface(Protocol):
     ) -> CapacityBoundEvidence: ...
 
 
-@runtime_checkable
-class ExecutableCapacityProviderSurface(Protocol):
-    """Exact finite-DAG bound surface exposed by executable artifacts."""
-
-    @property
-    def claim_kind(self) -> CapacityClaimKind: ...
-
-    @property
-    def output_frontier(self) -> LogCardinality: ...
-
-    def evaluate(self, attack: Sequence[int]) -> CapacityBoundEvidence: ...
-
-
-DemoGCapacityProviderSurface = ExecutableCapacityProviderSurface
-
-
 def _unsupported(
     *,
     capability: Capability,
@@ -389,78 +369,6 @@ def _unsupported(
         detail=detail,
         artifact_kind=artifact_kind,
     )
-
-
-@dataclass(frozen=True, slots=True)
-class ProtocolCircuitArtifact:
-    """Genuine executable protocol compile holding a :class:`CompiledArtifact`."""
-
-    architecture_id: ArchitectureId
-    plugin_id: str
-    plugin_version: str
-    identity: ArchitectureArtifactIdentity
-    capabilities: CapabilityReport
-    compiled: CompiledArtifact
-    public_inputs: tuple[int, ...]
-    expected_outputs: tuple[int, ...]
-    bound_provider: ExecutableCapacityProviderSurface
-    assumptions: tuple[AssumptionRecord, ...]
-    evidence: tuple[EvidenceRecord, ...]
-    runtime_validated: bool = False
-    artifact_kind: ArtifactKind = field(
-        init=False,
-        default=ArtifactKind.EXECUTABLE_CIRCUIT,
-    )
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.compiled, CompiledArtifact):
-            raise TypeError("compiled must be a CompiledArtifact")
-        if not isinstance(self.compiled.circuit, CallDagCircuit):
-            raise TypeError("executable plug-in artifacts require a CallDagCircuit")
-
-    @property
-    def kind(self) -> ArtifactKind:
-        return self.artifact_kind
-
-    @property
-    def compiled_identity(self) -> CompiledResultIdentity:
-        return self.compiled.identity
-
-    @property
-    def circuit(self) -> CallDagCircuit:
-        return self.compiled.circuit  # type: ignore[return-value]
-
-    @property
-    def replay_partition(self) -> ReplayPartition:
-        return self.compiled.replay
-
-    @property
-    def verification_partition(self) -> VerificationPartition:
-        return self.compiled.verification
-
-    @property
-    def assumption_texts(self) -> tuple[str, ...]:
-        return tuple(record.statement for record in self.assumptions)
-
-    def replay(self) -> tuple[ReplayPartition, VerificationPartition]:
-        return self.replay_partition, self.verification_partition
-
-    def execution_access(self) -> CallDagCircuit:
-        return self.circuit
-
-    def execute(self, inputs: Sequence[int] | None = None) -> tuple[int, ...]:
-        selected = self.public_inputs if inputs is None else tuple(inputs)
-        return self.circuit.evaluate(selected)
-
-    def verification_access(self) -> CompiledArtifact:
-        """Return the trusted compiled artifact consumed by the verifier."""
-
-        return self.compiled
-
-    def verify(self) -> CompiledArtifact:
-        """Compatibility spelling for capability access, not orchestration."""
-
-        return self.verification_access()
 
 
 @dataclass(frozen=True, slots=True)
@@ -683,10 +591,7 @@ class AggregateBoundArtifact:
         return self.verification_access()
 
 
-type CompileResult = (
-    ProtocolCircuitArtifact | IndexedStructureArtifact | AggregateBoundArtifact
-)
-ArchitectureCompileResult = CompileResult
+type CompileResult = Compiled | IndexedStructureArtifact | AggregateBoundArtifact
 
 
 @runtime_checkable

@@ -16,7 +16,7 @@ from veritor.analysis.finite import (
 )
 from veritor.analysis.result import FixedPolicyBoundResult
 from veritor.core.identity import Digest, identity_digest
-from veritor.core.partitions import ReplayPartition, VerificationPartition
+from veritor.core.index import Index
 from veritor.core.policy import (
     ProbabilityInput,
     VerificationPolicy,
@@ -319,8 +319,7 @@ def optimize_policy_grid(
 
 
 def optimize_finite_policy_grid(
-    replay_partition: ReplayPartition,
-    verification_partition: VerificationPartition,
+    index: Index,
     capacity_oracle: CapacityOracle[Any],
     grid: RationalPolicyGrid,
     cost_model: AdditiveExpectedCost,
@@ -337,8 +336,7 @@ def optimize_finite_policy_grid(
 
         def evaluate(policy: VerificationPolicy) -> FixedPolicyBoundResult:
             return branch_and_bound_finite_bound(
-                replay_partition,
-                verification_partition,
+                index,
                 policy,
                 capacity_oracle,
                 **options,
@@ -348,8 +346,7 @@ def optimize_finite_policy_grid(
 
         def evaluate(policy: VerificationPolicy) -> FixedPolicyBoundResult:
             return exhaustive_finite_bound(
-                replay_partition,
-                verification_partition,
+                index,
                 policy,
                 capacity_oracle,
                 **options,

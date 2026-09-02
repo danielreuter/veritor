@@ -1,14 +1,14 @@
 """Paper-level research facade for compilation, verification, and bounds.
 
-The facade keeps the repository's three artifact kinds distinct:
+The facade keeps the repository's three compile results distinct:
 
-* DemoG and matmul compile to an executable protocol circuit;
+* DemoG and matmul compile to :class:`~veritor.core.Compiled`, the executable
+  ``(C, I)`` the protocol verifies;
 * GPT-2 compiles to indexed structural metadata; and
 * Kimi-K3, DeepSeek-V4-Pro, and Inkling compile to aggregate bound models.
 
-Only the first kind carries a :class:`~veritor.core.CompiledArtifact` that
-the protocol can verify.  Static capacity analysis remains available for all
-artifacts when their certified preconditions hold.
+Static capacity analysis remains available for all three when their certified
+preconditions hold.
 """
 
 from __future__ import annotations
@@ -23,13 +23,13 @@ from circuit_cut_analysis.models.gpt2_gate_classes import GPT2ClassGranularity
 from veritor.analysis import (
     DEFAULT_COUNTED_SOLVER_LIMITS,
     AdditiveExpectedCost,
+    CircuitCapacityOracle,
     CountedCapacitySchema,
     CountedReplayLayout,
     CountedSolverLimits,
     FixedPolicyBoundResult,
     PolicyGridOptimizationResult,
     RationalPolicyGrid,
-    StructuralCircuitCapacityOracle,
     VerificationUnitCapacityOracle,
     branch_and_bound_finite_bound,
     counted_fixed_policy_bound,
@@ -39,7 +39,7 @@ from veritor.analysis import (
 )
 from veritor.core import (
     Capability,
-    CompiledArtifact,
+    Compiled,
     ProbabilityInput,
     Unsupported,
     VerificationLimits,
@@ -58,7 +58,6 @@ from veritor.plugins import (
     InklingCompileRequest,
     KimiK3CompileRequest,
     MatmulCompileRequest,
-    ProtocolCircuitArtifact,
     TraceBinding,
     compile_architecture,
 )
@@ -75,7 +74,7 @@ from veritor.protocol import (
 
 
 class FiniteBoundSolver(StrEnum):
-    """Finite backends available for an executable literal ``(C, R, V)``."""
+    """Finite backends available for an executable literal ``(C, I)``."""
 
     AUTO = "auto"
     EXHAUSTIVE = "exhaustive"
@@ -266,8 +265,12 @@ def _ordered_unique(*groups: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(ordered)
 
 
+type _Described = IndexedStructureArtifact | AggregateBoundArtifact
+"""Compile results that carry a capability report instead of a circuit."""
+
+
 def _unsupported(
-    artifact: CompileResult,
+    artifact: _Described,
     capability: Capability,
     *,
     reason_code: str,
@@ -283,7 +286,7 @@ def _unsupported(
 
 
 def _unsupported_from_capability(
-    artifact: CompileResult,
+    artifact: _Described,
     capability: Capability,
 ) -> Unsupported:
     try:
@@ -315,49 +318,43 @@ def Compile(
 def Verify(
     transcript_bytes: bytes,
     expectation: Expectation,
-    artifact: CompiledArtifact,
+    compiled: Compiled,
     *,
     limits: VerificationLimits | None = None,
 ) -> VerificationReport:
-    """Purely verify canonical transcript bytes against a trusted artifact.
+    """Purely verify canonical transcript bytes against a trusted ``(C, I)``.
 
     ``expectation`` carries both 32-byte verifier seeds; no transcript field
     is ever treated as their source of truth.
     """
 
-    return verify_transcript(transcript_bytes, expectation, artifact, limits)
+    return verify_transcript(transcript_bytes, expectation, compiled, limits)
 
 
 def _finite_bound(
-    artifact: ProtocolCircuitArtifact,
+    compiled: Compiled,
     policy: VerificationPolicy,
     options: BoundOptions,
 ) -> FixedPolicyBoundResult:
-    position_oracle = StructuralCircuitCapacityOracle(artifact.circuit)
-    unit_oracle = VerificationUnitCapacityOracle(
-        position_oracle,
-        artifact.verification_partition,
-    )
+    address_oracle = CircuitCapacityOracle(compiled.circuit)
+    unit_oracle = VerificationUnitCapacityOracle(address_oracle, compiled.index)
     solver = options.solver
     if solver is FiniteBoundSolver.AUTO:
         solver = (
             FiniteBoundSolver.EXHAUSTIVE
-            if artifact.verification_partition.unit_count
-            <= options.max_verification_units
+            if compiled.index.verification_unit_count <= options.max_verification_units
             else FiniteBoundSolver.BRANCH_AND_BOUND
         )
     if solver is FiniteBoundSolver.EXHAUSTIVE:
         return exhaustive_finite_bound(
-            artifact.replay_partition,
-            artifact.verification_partition,
+            compiled.index,
             policy,
             unit_oracle,
             max_verification_units=options.max_verification_units,
             assumptions=options.assumptions,
         )
     return branch_and_bound_finite_bound(
-        artifact.replay_partition,
-        artifact.verification_partition,
+        compiled.index,
         policy,
         unit_oracle,
         max_states=options.max_states,
@@ -408,25 +405,18 @@ def Bound(
 ) -> BoundResult:
     """Return a guarantee-carrying fixed-policy capacity bound.
 
-    Executable artifacts use their literal replay and verification partitions.
-    GPT-2 and aggregate profiles use certified counted schemas.  Without a
-    concrete counted replay layout, that path reports the adversarial
-    mega-unit upper relaxation rather than an exact protocol-layout result.
+    A :class:`Compiled` circuit uses its literal index ``I``.  GPT-2 and
+    aggregate profiles use certified counted schemas.  Without a concrete
+    counted replay layout, that path reports the adversarial mega-unit upper
+    relaxation rather than an exact protocol-layout result.
     """
 
-    if not isinstance(
-        artifact,
-        (
-            ProtocolCircuitArtifact,
-            IndexedStructureArtifact,
-            AggregateBoundArtifact,
-        ),
-    ):
+    if not isinstance(artifact, (Compiled, IndexedStructureArtifact, AggregateBoundArtifact)):
         raise TypeError("artifact must be a Compile result")
     if not isinstance(policy, VerificationPolicy):
         raise TypeError("policy must be VerificationPolicy")
     selected = _coerce_bound_options(options, overrides)
-    if isinstance(artifact, ProtocolCircuitArtifact):
+    if isinstance(artifact, Compiled):
         return _finite_bound(artifact, policy, selected)
     schema = _counted_schema(artifact, selected)
     if isinstance(schema, Unsupported):
@@ -480,47 +470,37 @@ def Optimize(
         return error.outcome
 
 
-def _executable(
-    artifact: CompileResult,
-) -> ProtocolCircuitArtifact | Unsupported:
-    if not isinstance(
-        artifact,
-        (
-            ProtocolCircuitArtifact,
-            IndexedStructureArtifact,
-            AggregateBoundArtifact,
-        ),
-    ):
+def _executable(artifact: CompileResult) -> Compiled | Unsupported:
+    if not isinstance(artifact, (Compiled, IndexedStructureArtifact, AggregateBoundArtifact)):
         raise TypeError("artifact must be a Compile result")
-    if not isinstance(artifact, ProtocolCircuitArtifact):
+    if not isinstance(artifact, Compiled):
         return _unsupported_from_capability(artifact, Capability.VERIFY)
     return artifact
 
 
 def make_verification_expectation(
     artifact: CompileResult,
-    policy: VerificationPolicy = DEFAULT_CONFORMANCE_POLICY,
+    policy: VerificationPolicy,
+    public_inputs: Sequence[object],
+    claimed_outputs: Sequence[object],
     *,
-    public_inputs: Sequence[object] | None = None,
-    claimed_outputs: Sequence[object] | None = None,
     session_id: bytes | None = None,
     q_seed: bytes | None = None,
     s_seed: bytes | None = None,
 ) -> Expectation | Unsupported:
     """Build a verifier-local expectation for an executable compile result.
 
-    Public inputs and claimed outputs default to the values bound into the
-    artifact; seeds are drawn from the CSPRNG unless given.
+    Seeds are drawn from the CSPRNG unless given.
     """
 
     executable = _executable(artifact)
     if isinstance(executable, Unsupported):
         return executable
     return make_expectation(
-        executable.compiled,
+        executable,
         policy,
-        executable.public_inputs if public_inputs is None else public_inputs,
-        executable.expected_outputs if claimed_outputs is None else claimed_outputs,
+        public_inputs,
+        claimed_outputs,
         session_id=session_id,
         q_seed=q_seed,
         s_seed=s_seed,
@@ -537,9 +517,9 @@ class ExecutableConformanceTranscript:
 
 def build_executable_conformance_transcript(
     artifact: CompileResult,
+    public_inputs: Sequence[int],
     policy: VerificationPolicy = DEFAULT_CONFORMANCE_POLICY,
     *,
-    public_inputs: Sequence[int] | None = None,
     session_id: bytes | None = None,
     q_seed: bytes | None = None,
     s_seed: bytes | None = None,
@@ -547,31 +527,28 @@ def build_executable_conformance_transcript(
 ) -> ExecutableConformanceTranscript | Unsupported:
     """Run an honest prover against the verifier in one process.
 
-    The trusted tape is evaluated, the claimed outputs are read from it, and
-    both protocol parties run locally via :func:`run_protocol`.  This cannot
-    demonstrate that either seed was withheld until the message it depends on
-    was fixed; it is a conformance fixture for :func:`Verify`.
+    The circuit is evaluated on ``public_inputs``, the claimed outputs are
+    read from that evaluation, and both protocol parties run locally via
+    :func:`run_protocol`.  This cannot demonstrate that either seed was
+    withheld until the message it depends on was fixed; it is a conformance
+    fixture for :func:`Verify`.
     """
 
-    executable = _executable(artifact)
-    if isinstance(executable, Unsupported):
-        return executable
-    compiled = executable.compiled
-    inputs = (
-        executable.public_inputs if public_inputs is None else tuple(public_inputs)
-    )
-    values = dict(enumerate(compiled.circuit.evaluate_tape(inputs)))
-    outputs = tuple(values[int(port.position)] for port in compiled.circuit.output_ports)
+    compiled = _executable(artifact)
+    if isinstance(compiled, Unsupported):
+        return compiled
+    values = compiled.circuit.evaluate(public_inputs)
+    outputs = tuple(values[address] for address in compiled.circuit.outputs)
     expectation = make_expectation(
         compiled,
         policy,
-        inputs,
+        public_inputs,
         outputs,
         session_id=session_id,
         q_seed=q_seed,
         s_seed=s_seed,
     )
-    run = run_protocol(compiled, expectation, values, limits=limits)
+    run = run_protocol(compiled, expectation, dict(enumerate(values)), limits=limits)
     if run.transcript is None:
         raise RuntimeError(
             f"honest conformance run was rejected: {run.report.code.value}: "
@@ -593,7 +570,7 @@ __all__ = [
     "BoundResult",
     "Compile",
     "CompileResult",
-    "CompiledArtifact",
+    "Compiled",
     "DeepSeekV4ProCompileRequest",
     "DemoGCompileRequest",
     "ExecutableConformanceTranscript",
@@ -610,7 +587,6 @@ __all__ = [
     "OptimizationResult",
     "Optimize",
     "PolicyGridOptimizationResult",
-    "ProtocolCircuitArtifact",
     "ProtocolRun",
     "RationalPolicyGrid",
     "TraceBinding",

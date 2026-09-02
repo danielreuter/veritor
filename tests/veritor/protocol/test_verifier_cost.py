@@ -8,21 +8,23 @@ from collections.abc import Callable
 import pytest
 
 from veritor.compile import (
-    CallDagCircuit,
-    Kernel,
+    Compiler,
+    MatmulG,
     MatmulWorkload,
-    PartitionPolicy,
-    Producer,
-    compile_call_dag,
-    compile_matmul_workload,
+    Tracer,
     expected_matmul_outputs,
-    make_word_kernel,
 )
-from veritor.core import CompiledArtifact, VerificationPolicy
+from veritor.core import (
+    Compiled,
+    DescriptionCircuit,
+    VerificationPolicy,
+    make_word_gate_set,
+)
 from veritor.protocol import ProverSession, VerifierSession, make_expectation
 
 POLICY = VerificationPolicy(1, 1, 0)
 SEEDS = {"q_seed": b"Q" * 32, "s_seed": b"S" * 32, "session_id": b"cost"}
+GATE_SET = make_word_gate_set(8)
 
 
 def matmul_workload(n: int, rows: int = 4) -> MatmulWorkload:
@@ -31,39 +33,31 @@ def matmul_workload(n: int, rows: int = 4) -> MatmulWorkload:
     return MatmulWorkload(weights, (activation,))
 
 
-def chain_artifact(blocks: int, width: int = 16) -> CompiledArtifact:
+def compile_matmul(workload: MatmulWorkload) -> Compiled:
+    return Compiler(GATE_SET).compile(MatmulG(8)(workload, b""), workload.public_inputs)
+
+
+def chain_compiled(blocks: int, width: int = 16) -> Compiled:
     """One input, one output, ``blocks * width`` gates in one replay unit."""
 
-    producer = Producer(8)
+    tracer = Tracer(GATE_SET)
+    add = tracer.gate("add")
 
-    @producer.gate(name="add")
-    def add(left: int, right: int) -> int:
-        return left + right
-
-    @producer.circuit(key="block", input_count=1)
-    def block(value):
-        accumulator = value
+    @tracer.definition(input_count=1, key="block", role="verification")
+    def block(v):
+        accumulator = v[0]
         for _ in range(width):
-            accumulator = add(accumulator, value)
+            accumulator = add(accumulator, v[0])
         return accumulator
 
-    @producer.circuit(key=("root", blocks), input_count=1)
-    def root(value):
-        accumulator = value
+    @tracer.definition(input_count=1, key=("root", blocks), role="replay")
+    def root(v):
+        accumulator = v[0]
         for _ in range(blocks):
             accumulator = block(accumulator)
         return accumulator
 
-    return compile_call_dag(
-        make_word_kernel(8),
-        lambda _x, _a: producer.serialize(root),
-        None,
-        b"",
-        input_cells=(3,),
-        advice_bound_bits=0,
-        replay_policy=PartitionPolicy.WHOLE_ROOT,
-        verification_policy=PartitionPolicy.POSITIVE_TOP_LEVEL_OCCURRENCES,
-    )
+    return Compiler(GATE_SET).compile(tracer.serialize(root), (3,))
 
 
 def fastest(action: Callable[[], object], repetitions: int = 20) -> float:
@@ -78,55 +72,47 @@ def fastest(action: Callable[[], object], repetitions: int = 20) -> float:
 @pytest.mark.parametrize("n", [16, 128])
 def test_verifier_setup_and_boundary_phase_never_touch_interior_gates(monkeypatch, n) -> None:
     workload = matmul_workload(n)
-    artifact = compile_matmul_workload(workload)
+    compiled = compile_matmul(workload)
+    circuit = compiled.circuit
     outputs = expected_matmul_outputs(workload)
-    expectation = make_expectation(artifact, POLICY, workload.public_inputs, outputs, **SEEDS)
+    expectation = make_expectation(compiled, POLICY, workload.public_inputs, outputs, **SEEDS)
     boundary_values: dict[int, object] = dict(enumerate(workload.public_inputs))
-    boundary_values.update(
-        (int(port.position), value)
-        for port, value in zip(artifact.circuit.output_ports, outputs, strict=True)
-    )
-    header = VerifierSession(expectation, artifact).header
-    boundary = ProverSession(artifact, header, boundary_values).boundary()
+    boundary_values.update(zip(circuit.outputs, outputs, strict=True))
+    header = VerifierSession(expectation, compiled).header
+    boundary = ProverSession(compiled, header, boundary_values).boundary()
 
-    lookups = {"gates": 0}
-    original_gate_at = CallDagCircuit.gate_at
-    original_executable_gate_at = CallDagCircuit.executable_gate_at
+    io = set(circuit.inputs) | set(circuit.outputs)
+    looked_up: list[int] = []
+    original_getitem = DescriptionCircuit.__getitem__
 
-    def counting_gate_at(self, position):
-        lookups["gates"] += 1
-        return original_gate_at(self, position)
+    def counting_getitem(self, address):
+        looked_up.append(address)
+        return original_getitem(self, address)
 
-    def counting_executable_gate_at(self, position):
-        lookups["gates"] += 1
-        return original_executable_gate_at(self, position)
+    def refuse_evaluate(*_args, **_kwargs):
+        raise AssertionError("the verifier must never evaluate the circuit")
 
-    def refuse_flatten(*_args, **_kwargs):
-        raise AssertionError("the verifier must never flatten the circuit")
+    monkeypatch.setattr(DescriptionCircuit, "__getitem__", counting_getitem)
+    monkeypatch.setattr(DescriptionCircuit, "evaluate", refuse_evaluate)
 
-    monkeypatch.setattr(CallDagCircuit, "gate_at", counting_gate_at)
-    monkeypatch.setattr(CallDagCircuit, "executable_gate_at", counting_executable_gate_at)
-    monkeypatch.setattr(Kernel, "flatten", refuse_flatten)
-
-    verifier = VerifierSession(expectation, artifact)
-    assert lookups["gates"] == 0
-
+    verifier = VerifierSession(expectation, compiled)
     verifier.receive_boundary(boundary)
-    assert lookups["gates"] <= len(artifact.circuit.output_ports)
-    assert artifact.circuit.gate_count > 8 * len(artifact.circuit.output_ports)
+
+    assert set(looked_up) <= io
+    assert len(looked_up) <= 2 * len(io)
+    assert circuit.n - len(io) > 4 * len(io)
 
 
 def test_verifier_construction_time_is_flat_in_gate_count() -> None:
-    small = chain_artifact(128)
-    large = chain_artifact(8192)
-    assert large.circuit.gate_count == 64 * small.circuit.gate_count
+    small = chain_compiled(128)
+    large = chain_compiled(8192)
+    assert large.circuit.n - 1 == 64 * (small.circuit.n - 1)
     assert small.circuit.input_count == large.circuit.input_count == 1
 
-    def construction(artifact: CompiledArtifact) -> Callable[[], object]:
-        expectation = make_expectation(
-            artifact, POLICY, (3,), artifact.circuit.evaluate((3,)), **SEEDS
-        )
-        return lambda: VerifierSession(expectation, artifact)
+    def construction(compiled: Compiled) -> Callable[[], object]:
+        outputs = tuple(compiled.circuit.evaluate((3,))[o] for o in compiled.circuit.outputs)
+        expectation = make_expectation(compiled, POLICY, (3,), outputs, **SEEDS)
+        return lambda: VerifierSession(expectation, compiled)
 
     small_time = fastest(construction(small))
     large_time = fastest(construction(large))

@@ -9,7 +9,7 @@ from fractions import Fraction
 from circuit_cut_analysis.capacity import LogCardinality
 from veritor.analysis.capacity import CapacityEvidence
 from veritor.core.identity import Digest, identity_digest, validate_digest
-from veritor.core.partitions import ReplayPartition, VerificationPartition
+from veritor.core.index import Index
 from veritor.core.policy import VerificationPolicy
 
 
@@ -45,9 +45,7 @@ class BoundIdentities:
 
     policy_identity: Digest
     tuple_identity: Digest
-    structure_identity: Digest | None = None
-    replay_partition_identity: Digest | None = None
-    verification_partition_identity: Digest | None = None
+    index_identity: Digest | None = None
     capacity_schema_identity: Digest | None = None
     replay_layout_identity: Digest | None = None
 
@@ -55,9 +53,7 @@ class BoundIdentities:
         for name in (
             "policy_identity",
             "tuple_identity",
-            "structure_identity",
-            "replay_partition_identity",
-            "verification_partition_identity",
+            "index_identity",
             "capacity_schema_identity",
             "replay_layout_identity",
         ):
@@ -214,30 +210,17 @@ class FixedPolicyBoundResult:
         return self.termination_status
 
 
-def finite_bound_identities(
-    replay_partition: ReplayPartition,
-    verification_partition: VerificationPartition,
-    policy: VerificationPolicy,
-) -> BoundIdentities:
-    """Bind a finite result to the literal ``(structure, R, V)`` tuple."""
+def finite_bound_identities(index: Index, policy: VerificationPolicy) -> BoundIdentities:
+    """Bind a finite result to the literal index ``I`` it was computed over."""
 
     tuple_identity = identity_digest(
-        "veritor/analysis/finite-bound-tuple/v1",
-        {
-            "structure_digest": replay_partition.structure_identity.digest,
-            "replay_partition_digest": replay_partition.identity.digest,
-            "verification_partition_digest": verification_partition.identity.digest,
-        },
+        "veritor/analysis/finite-bound-tuple/v2", {"index_digest": index.digest}
     )
     return BoundIdentities(
         policy_identity=policy.digest,
         tuple_identity=tuple_identity,
-        structure_identity=replay_partition.structure_identity.digest,
-        replay_partition_identity=replay_partition.identity.digest,
-        verification_partition_identity=verification_partition.identity.digest,
+        index_identity=index.digest,
     )
-
-
 def counted_bound_identities(
     policy: VerificationPolicy,
     capacity_schema_identity: Digest,

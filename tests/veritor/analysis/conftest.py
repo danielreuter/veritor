@@ -7,67 +7,45 @@ import pytest
 
 from circuit_cut_analysis.capacity import LogCardinality
 from veritor.analysis import CapacityEvidence
-from veritor.core import (
-    ArtifactKind,
-    RangeIndexedDomain,
-    ReplayPartition,
-    ReplayUnit,
-    StructureIdentity,
-    VerificationPartition,
-    VerificationUnit,
-    identity_digest,
-)
+from veritor.compile import Compiler, Tracer
+from veritor.core import Compiled, make_word_gate_set
+
+GATE_SET = make_word_gate_set(8)
 
 
-def build_partitions(
-    replay_sizes: Iterable[int],
-    *,
-    label: str = "analysis-test",
-) -> tuple[ReplayPartition, VerificationPartition]:
+def build_compiled(replay_sizes: Iterable[int]) -> Compiled:
+    """A circuit whose replay unit ``r`` holds ``replay_sizes[r]`` one-gate verification units.
+
+    Every verification unit doubles one of its own inputs, so the units are
+    independent and the circuit's outputs are exactly the unit outputs.
+    """
+
     sizes = tuple(replay_sizes)
     total = sum(sizes)
-    structure = StructureIdentity(
-        schema_version="1",
-        artifact_kind=ArtifactKind.STRUCTURAL_CIRCUIT,
-        compiler_id="tests.analysis",
-        compiler_version="1",
-        semantic_scope_id="finite-bound-test",
-        representation_digest=identity_digest(
-            "tests/analysis/structure",
-            {"label": label, "replay_sizes": list(sizes)},
-        ),
-    )
-    eligible = RangeIndexedDomain(10, 10 + total)
-    replay_units: list[ReplayUnit] = []
-    verification_units: list[VerificationUnit] = []
-    position = 10
-    verification_index = 0
-    for replay_index, size in enumerate(sizes):
-        replay_units.append(
-            ReplayUnit(
-                replay_index,
-                range(position, position + size),
-                replay_cost=size + 1,
-            )
-        )
-        for offset in range(size):
-            verification_units.append(
-                VerificationUnit(
-                    verification_index,
-                    replay_index,
-                    (position + offset,),
-                )
-            )
-            verification_index += 1
-        position += size
-    replay = ReplayPartition(structure, eligible, replay_units)
-    verification = VerificationPartition(
-        structure,
-        replay,
-        eligible,
-        verification_units,
-    )
-    return replay, verification
+    tracer = Tracer(GATE_SET)
+    add = tracer.gate("add")
+
+    @tracer.definition(input_count=1, key="double", role="verification")
+    def double(v):
+        return add(v[0], v[0])
+
+    def replay(size: int):
+        @tracer.definition(input_count=size, key=("replay", size), role="replay")
+        def unit(v):
+            return tracer.repeat(size, double, v[0].by(1))
+
+        return unit
+
+    @tracer.definition(input_count=total, key="root")
+    def root(v):
+        outputs = []
+        offset = 0
+        for size in sizes:
+            outputs.append(replay(size)(v[offset : offset + size]))
+            offset += size
+        return outputs
+
+    return Compiler(GATE_SET).compile(tracer.serialize(root), [1] * total)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,8 +71,13 @@ class AdditiveExactOracle:
 
 
 @pytest.fixture
-def make_partitions():
-    return build_partitions
+def make_compiled():
+    return build_compiled
+
+
+@pytest.fixture
+def make_index():
+    return lambda replay_sizes: build_compiled(replay_sizes).index
 
 
 @pytest.fixture
