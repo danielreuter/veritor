@@ -8,6 +8,25 @@ from .errors import InvalidArtifact, ResourceLimit
 
 
 @dataclass(frozen=True, slots=True)
+class CompilationLimits:
+    """Resource limits for parsing, validating and indexing a description."""
+
+    max_description_bytes: int = 10_000_000
+    max_definitions: int = 100_000
+    max_steps_per_definition: int = 1_000_000
+    max_addresses: int = (1 << 63) - 1
+    max_cost: int = (1 << 63) - 1
+    max_depth: int = 256
+    max_verification_unit_proof_cost: int = (1 << 63) - 1
+
+    def __post_init__(self) -> None:
+        for descriptor in fields(self):
+            value = getattr(self, descriptor.name)
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{descriptor.name} must be a nonnegative integer")
+
+
+@dataclass(frozen=True, slots=True)
 class VerificationLimits:
     """Conservative default limits for parsing and pure transcript verification."""
 

@@ -89,7 +89,7 @@ from .indexed import (
     iter_domain,
     position_domain,
 )
-from .limits import VerificationLimits
+from .limits import CompilationLimits, VerificationLimits
 from .partitions import (
     ReplayPartition,
     ReplayUnit,
@@ -120,6 +120,7 @@ __all__ = [
     "CapabilityReport",
     "CapabilityStatus",
     "ClaimStatus",
+    "CompilationLimits",
     "CompiledArtifact",
     "CompiledResultIdentity",
     "CoreContractError",
