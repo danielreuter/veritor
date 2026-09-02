@@ -179,6 +179,12 @@ class _Layout:
             return BOUNDARY_OWNER
         return self.index.replay_units.owner(address)
 
+    def position(self, owner: int, address: int) -> int:
+        """Where ``address`` lives in its owner's domain: its rank under ``kappa_W``,
+        the address itself under the boundary or an interior."""
+
+        return self.circuit.weight_rank(address) if owner == WEIGHT_OWNER else address
+
     def required(self, unit: int) -> tuple[tuple[int, int], ...]:
         """``(owner, address)`` for every value a verification unit reads or writes."""
 
@@ -234,7 +240,8 @@ class ProverSession:
     """The prover's side.  Call ``boundary``, ``interiors``, ``evidence`` in order.
 
     When the header binds weights, ``weight_tree`` is the model's tree from
-    :func:`commit_weights`; it is opened where sampled and never rebuilt.
+    :func:`commit_weights`; a sampled weight gate is opened at its rank in
+    that tree, which is never rebuilt.
     """
 
     def __init__(
@@ -263,7 +270,7 @@ class ProverSession:
         else:
             if weight_tree is None:
                 raise ProtocolError("the header binds weights; the prover needs their tree")
-            expected = weight_domain(compiled)
+            expected = weight_domain(compiled.circuit.gate_set, compiled.index.weight_count)
             if (
                 weight_tree.domain.domain_id != expected.domain_id
                 or weight_tree.commitment != header.weights.commitment
@@ -335,7 +342,7 @@ class ProverSession:
                 tree = self._trees.get(owner)
                 if tree is None:
                     raise ProtocolError(f"sampled unit {unit} needs uncommitted owner {owner}")
-                openings.append(tree.open(address))
+                openings.append(tree.open(self._layout.position(owner, address)))
             batches.append(tuple(openings))
         message = EvidenceMessage(tuple(batches))
         self._phase = "done"
@@ -416,7 +423,10 @@ class VerifierSession:
         )
         self._commitments: dict[int, tuple[CommitmentDomain, Commitment]] = {}
         if weights is not None:
-            self._commitments[WEIGHT_OWNER] = (weight_domain(compiled), weights.commitment)
+            self._commitments[WEIGHT_OWNER] = (
+                weight_domain(circuit.gate_set, weight_count),
+                weights.commitment,
+            )
         self._phase = "boundary"
         self._boundary_phase = b""
         self._replay_phase = b""
@@ -489,7 +499,14 @@ class VerifierSession:
             )
         self._commitments[domain.owner] = (domain, commitment)
 
-    def _open(self, owner: int, opening: Opening) -> bytes:
+    def _open(self, owner: int, opening: Opening, address: int) -> bytes:
+        """Authenticate the opening of ``address`` under its owner's commitment.
+
+        ``opening.position`` is the address's position in that domain (its
+        rank under ``kappa_W``), already checked against the layout; the gate
+        at ``address`` fixes the leaf schema.
+        """
+
         try:
             domain, commitment = self._commitments[owner]
         except KeyError:
@@ -500,12 +517,12 @@ class VerifierSession:
             domain,
             commitment,
             opening,
-            leaf_schema(self._layout.circuit, opening.position),
+            leaf_schema(self._layout.circuit, address),
             self._limits,
         ):
             raise self._reject(
                 VerificationCode.INVALID_OPENING,
-                f"opening of address {opening.position} failed under owner {owner}",
+                f"opening of address {address} failed under owner {owner}",
             )
         return opening.value
 
@@ -523,7 +540,7 @@ class VerifierSession:
                     "in boundary order",
                 )
             opened = {
-                item.position: self._open(BOUNDARY_OWNER, item)
+                item.position: self._open(BOUNDARY_OWNER, item, item.position)
                 for item in message.io_openings
             }
             for addresses, values, label in (
@@ -608,22 +625,23 @@ class VerifierSession:
         """Open every value a sampled unit touches and check each of its gates.
 
         An input gate must hold the header's public input of its rank; a
-        weight gate is checked by its opening under ``kappa_W`` alone; every
-        other gate by its relation.
+        weight gate is checked by its opening under ``kappa_W`` alone, at its
+        rank; every other gate by its relation.
         """
 
         layout = self._layout
         circuit = layout.circuit
         required = layout.required(unit)
-        if tuple(item.position for item in batch) != tuple(p for _, p in required):
+        positions = tuple(layout.position(owner, address) for owner, address in required)
+        if tuple(item.position for item in batch) != positions:
             raise self._reject(
                 VerificationCode.COVERAGE_MISMATCH,
-                f"evidence for unit {unit} must open exactly its required addresses",
+                f"evidence for unit {unit} must open exactly its required positions",
             )
         payloads: dict[int, bytes] = {}
         values: dict[int, int] = {}
         for (owner, address), opening in zip(required, batch, strict=True):
-            payload = payloads[address] = self._open(owner, opening)
+            payload = payloads[address] = self._open(owner, opening, address)
             try:
                 values[address] = circuit.decode(address, payload)
             except Exception as error:
@@ -694,7 +712,7 @@ def run_protocol(
             weight_values = [values[address] for address in compiled.circuit.weights]
         except KeyError as error:
             raise ProtocolError(f"prover has no value for weight gate {error.args[0]}") from None
-        _, weight_tree = commit_weights(compiled, weight_values)
+        _, weight_tree = commit_weights(compiled.circuit.gate_set, weight_values)
     prover = ProverSession(
         compiled,
         verifier.header,

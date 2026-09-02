@@ -10,9 +10,10 @@ The protocol has five messages after the public header::
 
 The header binds the client's proposal ``theta`` and the verifier's ``eta``,
 so the whole hash chain does.  It may also bind :class:`Weights`: a per-model
-commitment ``kappa_W`` over the circuit's ``weight`` gates ``W`` that the
-verifier holds, so a run never carries the weights themselves.  A
-:class:`Transcript` is the header plus these five messages in order.
+commitment ``kappa_W`` to the model's weight vector, which the circuit's
+``weight`` gates read by rank and the verifier holds, so a run never carries
+the weights themselves.  A :class:`Transcript` is the header plus these five
+messages in order.
 """
 
 from __future__ import annotations
@@ -155,12 +156,13 @@ class Opening:
 
 @dataclass(frozen=True, slots=True)
 class Weights:
-    """The root ``kappa_W`` over the circuit's ``count`` weight gates.
+    """The root ``kappa_W`` over a model's weight vector of ``count`` values.
 
-    The domain is the index's weight gates in address order, so the message
-    carries no addresses.  Committed once per model, not per run: the
-    verifier holds this and binds it into the header, and weight values are
-    opened only where sampled.
+    Leaf ``k`` is the ``k``-th weight, read by the ``k``-th ``weight`` gate in
+    address order of whichever circuit is verified, so the root is committed
+    once per model and is the same for every description compiled from it.
+    The verifier holds this and binds it into the header, and weight values
+    are opened only where sampled, at their ranks.
     """
 
     count: int

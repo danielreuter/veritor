@@ -38,10 +38,10 @@ def compiled(workload: MatmulWorkload) -> Compiled:
 
 
 @pytest.fixture(scope="session")
-def model_weights(compiled: Compiled, workload: MatmulWorkload) -> tuple[Weights, MerkleTree]:
-    """The model's ``kappa_W`` over the circuit's weight gates, committed once."""
+def model_weights(workload: MatmulWorkload) -> tuple[Weights, MerkleTree]:
+    """The model's ``kappa_W`` over its weight vector, committed once."""
 
-    return commit_weights(compiled, workload.weight_values)
+    return commit_weights(make_word_gate_set(workload.width), workload.weight_values)
 
 
 @pytest.fixture

@@ -87,7 +87,7 @@ def test_verifier_setup_and_boundary_phase_never_touch_interior_gates(monkeypatc
         zip(circuit.inputs, workload.public_inputs, strict=True)
     )
     boundary_values.update(zip(circuit.outputs, outputs, strict=True))
-    weights, tree = commit_weights(compiled, workload.weight_values)
+    weights, tree = commit_weights(GATE_SET, workload.weight_values)
     io = set(circuit.inputs) | set(circuit.outputs)
     expectation = make_expectation(
         compiled, POLICY, workload.public_inputs, outputs, weights=weights, **SEEDS

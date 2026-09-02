@@ -90,6 +90,9 @@ class Circuit(Protocol):
     """The paper's ``C``: addresses, gates, interfaces and gate semantics."""
 
     @property
+    def gate_set(self) -> GateSet: ...
+
+    @property
     def n(self) -> int: ...
 
     @property

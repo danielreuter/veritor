@@ -10,13 +10,14 @@ import pytest
 
 from veritor.compile import Compiler
 from veritor.constructors import MatmulCompileRequest, MatmulG, TracedDefinition
-from veritor.core import VerificationPolicy, make_word_gate_set
+from veritor.core import Gate, GateSet, VerificationPolicy, make_word_gate_set
 from veritor.protocol import (
     BOUNDARY_OWNER,
     WEIGHT_OWNER,
     Expectation,
     Opening,
     ProtocolError,
+    ProtocolRun,
     ProverSession,
     VerificationCode,
     VerifierSession,
@@ -65,7 +66,23 @@ class Model:
         self.values = dict(
             enumerate(self.circuit.evaluate(workload.public_inputs, workload.weight_values))
         )
-        self.weights, self.tree = commit_weights(self.compiled, workload.weight_values)
+        self.weights, self.tree = commit_weights(GATE_SET, workload.weight_values)
+
+    def weight_openings(self, run: ProtocolRun) -> list[tuple[int, int, int, Opening]]:
+        """``(unit, index, address, opening)`` for every ``kappa_W`` opening in the evidence."""
+
+        assert run.transcript is not None
+        layout = VerifierSession(self.expectation(), self.compiled)._layout
+        return [
+            (unit, index, address, item)
+            for unit, batch in zip(
+                run.report.sampled_verification_units, run.transcript.evidence.units, strict=True
+            )
+            for index, ((owner, address), item) in enumerate(
+                zip(layout.required(unit), batch, strict=True)
+            )
+            if owner == WEIGHT_OWNER
+        ]
 
     def expectation(self, **overrides) -> Expectation:
         arguments = {
@@ -137,21 +154,49 @@ def test_honest_run_under_a_weight_root_accepts_and_round_trips(model: Model) ->
     assert without_tree.report.accepted
 
 
-def test_sampled_evidence_opens_weights_under_kappa_w(model: Model) -> None:
+def test_sampled_evidence_opens_weights_under_kappa_w_at_their_ranks(model: Model) -> None:
     run = run_protocol(model.compiled, model.expectation(), model.values, weight_tree=model.tree)
-    assert run.transcript is not None
-    weight_openings = [
-        item
-        for batch in run.transcript.evidence.units
-        for item in batch
-        if item.position in model.weight_addresses
-    ]
+    weight_openings = model.weight_openings(run)
 
     # every weight cell opens itself and every dot opens the column it reads
     assert len(weight_openings) == 16 + 2 * 4 * 4
-    assert {len(item.path) for item in weight_openings} == {
+    assert {len(item.path) for *_, item in weight_openings} == {
         merkle.merkle_depth(model.weights.count)
     }
+    # a weight opening names the weight's rank, the position in kappa_W, not its address
+    assert all(item.position == model.circuit.weight_rank(a) for _, _, a, item in weight_openings)
+    assert {a for _, _, a, _ in weight_openings} == model.weight_addresses
+    assert {item.position for *_, item in weight_openings} == set(range(16))
+    assert all(
+        item.value == bytes((model.request.weight_values[item.position],))
+        for *_, item in weight_openings
+    )
+
+
+def test_one_weight_root_serves_every_batch_shape_of_the_model() -> None:
+    """``kappa_W`` is per model: requests of different shapes compile different circuits
+    from the same weights and all open them under the one root committed for the model."""
+
+    two_rows, one_row = cached_model(4, 2), cached_model(4, 1)
+    assert two_rows.compiled.digest != one_row.compiled.digest
+    assert two_rows.request.weight_values == one_row.request.weight_values
+    assert two_rows.weights == one_row.weights == Weights(16, two_rows.weights.root)
+    assert two_rows.tree.domain == one_row.tree.domain
+
+    for model in (two_rows, one_row):
+        run = run_protocol(
+            model.compiled,
+            model.expectation(weights=two_rows.weights),
+            model.values,
+            weight_tree=two_rows.tree,
+        )
+        assert run.report.accepted and run.transcript is not None
+        assert run.transcript.header.weights == two_rows.weights
+        assert len(model.weight_openings(run)) == 16 + model.request.output_shapes[0][0] * 16
+
+    # the root is the model's under this gate set: other words, other root
+    wider, _ = commit_weights(make_word_gate_set(16), two_rows.request.weight_values)
+    assert wider.count == 16 and wider.root != two_rows.weights.root
 
 
 def test_a_tampered_weight_is_caught_at_a_sampled_gate(model: Model) -> None:
@@ -169,7 +214,7 @@ def test_a_prover_cannot_substitute_its_own_weight_root(model: Model) -> None:
     expectation, values = model.tampered(rank=5)
     verifier = VerifierSession(expectation, model.compiled)
     own_weights = [values[address] for address in model.circuit.weights]
-    _, own_tree = commit_weights(model.compiled, own_weights)
+    _, own_tree = commit_weights(GATE_SET, own_weights)
 
     with pytest.raises(ProtocolError, match="does not match"):
         ProverSession(model.compiled, verifier.header, values, weight_tree=own_tree)
@@ -184,14 +229,8 @@ def test_a_forged_weight_opening_fails_under_kappa_w(model: Model) -> None:
     run = run_protocol(model.compiled, expectation, model.values, weight_tree=model.tree)
     assert run.transcript is not None
     units = list(run.transcript.evidence.units)
-    unit, position = next(
-        (u, i)
-        for u, batch in enumerate(units)
-        for i, item in enumerate(batch)
-        if item.position in model.weight_addresses
-    )
+    unit, position, address, item = model.weight_openings(run)[0]
     batch = list(units[unit])
-    item = batch[position]
     batch[position] = Opening(item.position, bytes((item.value[0] ^ 1,)) + item.value[1:], item.path)
     units[unit] = tuple(batch)
     tampered = replace(run.transcript, evidence=replace(run.transcript.evidence, units=tuple(units)))
@@ -199,7 +238,14 @@ def test_a_forged_weight_opening_fails_under_kappa_w(model: Model) -> None:
     report = verify_transcript(encode_transcript(tampered), expectation, model.compiled)
 
     assert report.code is VerificationCode.INVALID_OPENING
-    assert f"owner {WEIGHT_OWNER}" in report.detail
+    assert f"address {address}" in report.detail and f"owner {WEIGHT_OWNER}" in report.detail
+
+    # ... and so does an opening moved to another rank
+    batch[position] = Opening((item.position + 1) % 16, item.value, item.path)
+    units[unit] = tuple(batch)
+    moved = replace(run.transcript, evidence=replace(run.transcript.evidence, units=tuple(units)))
+    report = verify_transcript(encode_transcript(moved), expectation, model.compiled)
+    assert report.code is VerificationCode.COVERAGE_MISMATCH
 
 
 def test_kappa_w_must_bind_exactly_the_circuits_weight_gates(model: Model) -> None:
@@ -216,32 +262,55 @@ def test_kappa_w_must_bind_exactly_the_circuits_weight_gates(model: Model) -> No
 
     with pytest.raises(ProtocolError, match="nonnegative"):
         Weights(-1, model.weights.root)
-    with pytest.raises(ProtocolError, match="expected 16 weight values"):
-        commit_weights(model.compiled, model.request.weight_values[:-1])
-    # kappa_W is bound to the compiled circuit's weight domain: the same weights committed
-    # for another batch shape are another root
-    other = cached_model(4, 1)
-    _, other_tree = commit_weights(other.compiled, model.request.weight_values)
+    # a weight vector of the wrong length commits fine (the model is committed before any
+    # request) and is rejected by every circuit whose weight gates it does not count
+    short, short_tree = commit_weights(GATE_SET, model.request.weight_values[:-1])
+    assert short.count == 15
+    rejected = run_protocol(
+        model.compiled, model.expectation(weights=short), model.values, weight_tree=short_tree
+    )
+    assert rejected.report.code is VerificationCode.INVALID_COMPILED_RESULT
+    assert "binds 15 weights" in rejected.report.detail
     header = VerifierSession(model.expectation(), model.compiled).header
     with pytest.raises(ProtocolError, match="does not match"):
-        ProverSession(model.compiled, header, model.values, weight_tree=other_tree)
+        ProverSession(model.compiled, header, model.values, weight_tree=short_tree)
 
 
-def test_the_weight_domain_is_the_weight_gates_and_the_boundary_excludes_them(model: Model) -> None:
+def test_the_weight_domain_is_the_rank_space_and_the_boundary_excludes_the_weight_gates(
+    model: Model,
+) -> None:
     index = model.compiled.index
-    domain = weight_domain(model.compiled)
+    domain = weight_domain(GATE_SET, index.weight_count)
     boundary = index.boundary()
     weights = list(model.circuit.weights)
 
     assert domain.owner == WEIGHT_OWNER and domain.count == 16
-    assert list(domain.positions) == weights == list(index.weights())
+    assert list(domain.positions) == list(range(16))  # ranks, not addresses
+    assert domain == model.tree.domain == weight_domain(GATE_SET, 16)
+    assert domain.domain_id != weight_domain(GATE_SET, 17).domain_id
+    assert domain.domain_id != weight_domain(make_word_gate_set(16), 16).domain_id
     assert all(not boundary.contains(address) for address in weights)
     assert list(boundary)[: index.input_count] == list(model.circuit.inputs)
-    assert all(index.weights().rank(address) == rank for rank, address in enumerate(weights))
+    assert list(index.weights()) == weights
+    assert all(
+        index.weights().rank(address) == model.circuit.weight_rank(address) == rank
+        for rank, address in enumerate(weights)
+    )
     with pytest.raises(KeyError):
         index.weights().rank(model.circuit.inputs[0])
     with pytest.raises(IndexError):
-        index.weights().unrank(16)
+        domain.positions.unrank(16)
+    with pytest.raises(ProtocolError, match="nonnegative"):
+        weight_domain(GATE_SET, -1)
+    with pytest.raises(ProtocolError, match="GateSet"):
+        weight_domain(model.compiled, 16)  # type: ignore[arg-type]
+    weightless = GateSet(
+        (Gate("add", 2, 8, replay_cost=1, proof_cost=1, evaluate=lambda a: (a[0] + a[1]) % 256),),
+        name="weightless",
+        version="1",
+    )
+    with pytest.raises(ProtocolError, match="one width"):
+        commit_weights(weightless, (1, 2, 3))
 
 
 def test_ownership_rule_weights_then_boundary_then_interior(model: Model) -> None:

@@ -51,7 +51,7 @@ def test_honest_conformance_transcript_verifies_purely(name: str) -> None:
     assert run.expectation.compiled_digest == compiled.digest
     # the weights, if any, are bound to the header as kappa_W and never carried in the run
     if weights:
-        assert run.expectation.weights == commit_weights(compiled, weights)[0]
+        assert run.expectation.weights == commit_weights(compiled.circuit.gate_set, weights)[0]
         assert run.expectation.weights.count == len(weights)
     else:
         assert run.expectation.weights is None
@@ -107,7 +107,7 @@ def test_verify_rejects_transcript_against_the_wrong_expectation() -> None:
 def test_interactive_run_and_pure_verification_agree() -> None:
     request = MatmulCompileRequest()
     compiled = compile_matmul(request)
-    weights, tree = commit_weights(compiled, request.weight_values)
+    weights, tree = commit_weights(compiled.circuit.gate_set, request.weight_values)
     expectation = make_verification_expectation(
         compiled,
         CHECK_EVERYTHING,

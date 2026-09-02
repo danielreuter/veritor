@@ -89,8 +89,9 @@ request = MatmulCompileRequest(
 )
 
 # What the verifier runs: Compile on the bytes G produced.
+gate_set = make_word_gate_set(request.width)
 description = MatmulG(request.width)(request.workload, b"")
-compiled = Compile(description, request.public_inputs, make_word_gate_set(request.width))
+compiled = Compile(description, request.public_inputs, gate_set)
 
 assert compiled.digest == compile_matmul(request).digest  # the same thing, in one call
 assert compiled.index.replay_units.count == 2 + 3        # activations, weights, three rows
@@ -149,13 +150,19 @@ challenge before the values it constrains are fixed.
 3. Verification units inside selected replay units are selected at rate `s`.
    The prover opens every value each selected unit reads or writes; the
    verifier recomputes the gate relations, checks each input gate against
-   `x` and each weight gate by its opening under `κ_W`.
+   `x` and each weight gate by its opening under `κ_W` at its rank.
 
 Selection is `Binomial(N, q)` followed by Floyd's uniform subset, so the
 verifier's work is `O(K log N)` in the number `K` of selected units, never in
-`N`. Model weights are the circuit's `weight` gates, committed once per model
-under their own root `κ_W` over `I.weights()` and opened where sampled; a run
-never carries them, and they are never boundary or interior positions.
+`N`. Model weights are the circuit's `weight` gates. They are committed once
+per model under their own root `κ_W`, whose leaves are the model's weight
+vector by rank: leaf `k` is the `k`-th weight, read by the `k`-th `weight`
+gate in address order of whichever circuit a request compiles to. The domain
+is bound to the gate set, not to a description, so one root serves every
+request's circuit (continual batching compiles a different circuit per
+request from the same model); a sampled weight gate is opened at its rank, a
+run never carries the weights, and they are never boundary or interior
+positions.
 
 ~~~python
 from veritor import (
@@ -171,7 +178,7 @@ from veritor.protocol import commit_weights, encode_transcript
 compiled = compile_matmul(request)
 values = dict(enumerate(compiled.circuit.evaluate(request.public_inputs, request.weight_values)))
 outputs = tuple(values[a] for a in compiled.circuit.outputs)
-weights, weight_tree = commit_weights(compiled, request.weight_values)  # kappa_W, once per model
+weights, weight_tree = commit_weights(gate_set, request.weight_values)  # kappa_W, once per model
 
 expectation = make_verification_expectation(       # the verifier's side of one run
     compiled,

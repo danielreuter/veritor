@@ -199,7 +199,9 @@ def build_executable_conformance_transcript(
     values = compiled.circuit.evaluate(public_inputs, weights)
     outputs = tuple(values[address] for address in compiled.circuit.outputs)
     bound_weights, weight_tree = (
-        commit_weights(compiled, weights) if compiled.index.weight_count else (None, None)
+        commit_weights(compiled.circuit.gate_set, weights)
+        if compiled.index.weight_count
+        else (None, None)
     )
     expectation = make_expectation(
         compiled,
