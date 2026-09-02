@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import pytest
 
-from veritor.compile import Compiler
+from veritor.compile import Compilation
 from veritor.constructors import MatmulG, MatmulWorkload, expected_matmul_outputs
 from veritor.core import Compiled, VerificationPolicy, make_word_gate_set
 from veritor.protocol import (
@@ -15,6 +15,7 @@ from veritor.protocol import (
     commit_weights,
     make_expectation,
 )
+from veritor.research import Compile
 
 Q_SEED = b"Q" * 32
 S_SEED = b"S" * 32
@@ -30,11 +31,15 @@ def workload() -> MatmulWorkload:
 
 
 @pytest.fixture(scope="session")
-def compiled(workload: MatmulWorkload) -> Compiled:
-    gate_set = make_word_gate_set(workload.width)
-    return Compiler(gate_set).compile(
-        MatmulG(workload.width)(workload, b""), workload.public_inputs
-    )
+def compilation(workload: MatmulWorkload) -> Compilation:
+    """``Compile(MatmulG, workload, b"")``: what the verifier records for the request."""
+
+    return Compile(MatmulG(workload.width), workload, b"", make_word_gate_set(workload.width))
+
+
+@pytest.fixture(scope="session")
+def compiled(compilation: Compilation) -> Compiled:
+    return compilation.compiled
 
 
 @pytest.fixture(scope="session")
@@ -53,15 +58,16 @@ def honest_values(compiled: Compiled, workload: MatmulWorkload) -> dict[int, obj
 
 @pytest.fixture
 def expect(
-    compiled: Compiled, workload: MatmulWorkload, model_weights: tuple[Weights, MerkleTree]
+    compilation: Compilation,
+    workload: MatmulWorkload,
+    model_weights: tuple[Weights, MerkleTree],
 ) -> ExpectationFactory:
-    """Build an expectation for ``compiled`` with fixed seeds and honest I/O by default."""
+    """Build an expectation for the compilation with fixed seeds and honest outputs by default."""
 
     def build(
         policy: VerificationPolicy = CHECK_EVERYTHING,
         *,
         parameters: VerifierParameters | None = None,
-        public_inputs: tuple[int, ...] | None = None,
         claimed_outputs: tuple[int, ...] | None = None,
         weights: Weights | None = model_weights[0],
         session_id: bytes = SESSION_ID,
@@ -69,9 +75,8 @@ def expect(
         s_seed: bytes = S_SEED,
     ) -> Expectation:
         return make_expectation(
-            compiled,
+            compilation,
             policy,
-            workload.public_inputs if public_inputs is None else public_inputs,
             expected_matmul_outputs(workload) if claimed_outputs is None else claimed_outputs,
             parameters=parameters,
             weights=weights,

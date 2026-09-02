@@ -41,25 +41,40 @@ at the same point in the interaction.
   boundary and the interiors cost by the number of runs, never by the
   addresses they span; `Out` excludes a unit's *pinned* (source) gates, which
   are boundary or `κ_W` positions already.
-- **Compiled** `(C, I, digest)`: what `Compile` returns and everything else
-  consumes. The digest binds the description, its marks and the gate set.
+- **Constructor** `G` (`veritor.compile.Constructor`): the client's code, an
+  object with a versioned `digest` and `G(x, a) -> (description, inputs)`:
+  the description bytes for the request's public inputs `x` and advice `a`,
+  and `x` as the values of the `in` gates by rank.
+- **Compiled** `(C, I, digest)`: the circuit with its index. The digest binds
+  the description, its marks and the gate set.
+- **Compilation**: what `Compile(G, x, a)` returns and the verifier keeps:
+  `compiled`, `constructor` (`G.digest`), `inputs` and `advice`, charged at
+  `advice_bits = 8|a|`.
 - **Policy** `θ = (q, s)`: the client's proposed sampling rates, as exact
   rationals. `η`, the acceptance threshold, belongs to the verifier
-  (`VerifierParameters`), together with `U_max` and `W_max`.
+  (`VerifierParameters`), together with `U_max`, `A = max_advice_bits` and
+  `W_max`.
 
 ## Trust boundary
 
 The verifier and the channel are trusted; nothing else is. Constructors, the
-tracer, the choice of marks, the proposed `θ`, cost labels and `Optimize` are
-the client's. `Compile` re-validates every byte of a description; the index
-checks that the marks tile and refine; `Verify` checks the proposal against
-`U_max` (by `Bound`) and `W_max` before accepting a commitment. A client who chooses its units badly
-pays in cost or in a larger `U`, never in soundness.
+tracer, the choice of marks, the advice, the proposed `θ`, cost labels and
+`Optimize` are the client's. `Compile(G, x, a)` runs `G` and re-validates
+every byte of the description it produces; the index checks that the marks
+tile and refine; the header binds `G`'s digest and `a`; `Verify` checks the
+advice against `A`, the proposal against `U_max` (by `Bound`) and the work
+against `W_max` before accepting a commitment, so every accepted request has
+capacity at most `U_max + A`. In this prototype `G` is ordinary Python the
+verifier executes, identified by a versioned digest like the gate set; a
+deployment would run it sandboxed and metered, or have the client prove
+`Compile(G, x, a) = (C, I)`. A client who chooses its units badly pays in cost
+or in a larger `U`, never in soundness.
 
 ~~~text
 src/veritor/
   core/          GateSet, Circuit, Index, Compiled, VerificationPolicy   (trusted)
-  compile/       Compiler: description bytes -> Compiled                  (trusted)
+  compile/       Compiler: description bytes -> Compiled; Constructor,    (trusted)
+                 Compilation: the record of one Compile(G, x, a)
   protocol/      the two-stage protocol, Merkle commitments, wire format  (trusted)
   analysis/      Bound, Cost, Optimize as folds over the kinds of I
   constructors/  Tracer, DemoG, MatmulG                                   (untrusted)
@@ -77,6 +92,11 @@ description. `MatmulG` traces `Y_i = X_i W mod 2^B` with the activations and
 the weights each a replay unit of source gates (every gate its own
 verification unit), one replay unit per row `x_i W` and one verification unit
 per output dot product; `DemoG` traces batches of multiply-accumulate chains.
+`Compile(G, x, a)` is the verifier's: it runs `G` on the request's public
+inputs and the client's advice, compiles the bytes `G` produced and records
+what it ran on. The advice is admitted up to `max_advice_bits` and charged at
+`8|a|` bits on top of `Bound`; a `G` that raises is a `CompileError`, a
+rejection, never a crash.
 
 ~~~python
 from veritor import Compile, MatmulCompileRequest, compile_matmul, make_word_gate_set
@@ -88,12 +108,15 @@ request = MatmulCompileRequest(
     width=8,
 )
 
-# What the verifier runs: Compile on the bytes G produced.
+# What the verifier runs: G on (x, a), then the compiler on the bytes G produced.
 gate_set = make_word_gate_set(request.width)
-description = MatmulG(request.width)(request.workload, b"")
-compiled = Compile(description, request.public_inputs, gate_set)
+compilation = Compile(MatmulG(request.width), request.workload, b"", gate_set)
+compiled = compilation.compiled
 
-assert compiled.digest == compile_matmul(request).digest  # the same thing, in one call
+assert compilation.constructor == MatmulG(request.width).digest
+assert compilation.inputs == request.public_inputs      # x as the `in` gates consume it
+assert compilation.advice_bits == 0                     # MatmulG takes no advice
+assert compiled.digest == compile_matmul(request).compiled.digest  # the same, in one call
 assert compiled.index.replay_units.count == 2 + 3        # activations, weights, three rows
 assert compiled.index.verification_unit_count == 9 + 6 + 6  # in gates, weight gates, dots
 assert (compiled.index.input_count, compiled.index.weight_count) == (9, 6)
@@ -175,17 +198,17 @@ from veritor import (
 )
 from veritor.protocol import commit_weights, encode_transcript
 
-compiled = compile_matmul(request)
-values = dict(enumerate(compiled.circuit.evaluate(request.public_inputs, request.weight_values)))
+compilation = compile_matmul(request)              # Compile(MatmulG, workload, b"")
+compiled = compilation.compiled
+values = dict(enumerate(compiled.circuit.evaluate(compilation.inputs, request.weight_values)))
 outputs = tuple(values[a] for a in compiled.circuit.outputs)
 weights, weight_tree = commit_weights(gate_set, request.weight_values)  # kappa_W, once per model
 
 expectation = make_verification_expectation(       # the verifier's side of one run
-    compiled,
+    compilation,                                   # (C, I), G's digest, x by rank and a
     VerificationPolicy(q=1, s=1),                  # the client's proposal, theta
-    request.public_inputs,                         # the values of the `in` gates, by rank
     outputs,
-    parameters=VerifierParameters(eta=0),          # eta, U_max, W_max are the verifier's
+    parameters=VerifierParameters(eta=0),          # eta, U_max, A, W_max are the verifier's
     weights=weights,
 )
 run = run_protocol(compiled, expectation, values, weight_tree=weight_tree)
@@ -196,8 +219,9 @@ assert Verify(encode_transcript(run.transcript), expectation, compiled) == run.r
 `ProverSession` and `VerifierSession` are the two state machines behind
 `run_protocol`; `Verify` (`verify_transcript`) re-derives both challenges from
 the verifier's seeds and checks a recorded transcript purely. The header binds
-`θ` and the verifier's `η`, so a transcript recorded under another `η` is
-rejected.
+`(C, I)`, `G`'s digest, the advice `a`, `θ` and the verifier's `η`, so a
+transcript recorded under another `G`, `a` or `η` is rejected; advice longer
+than `max_advice_bits` is rejected at admission, before any commitment.
 
 ## Bound, Cost, Optimize
 
@@ -213,15 +237,22 @@ transformer index bounds in milliseconds.
 
 ~~~python
 from fractions import Fraction
-from veritor import Bound, Cost, CostParameters, Optimize, PolicyGrid, VerificationPolicy
+from veritor import Bound, Capacity, Cost, CostParameters, Optimize, PolicyGrid, VerificationPolicy
 
 theta = VerificationPolicy(Fraction(1, 2), Fraction(1, 2))
 eta = Fraction(1, 100)                                  # the verifier's threshold
 print(Bound(compiled, theta, eta).bits)                 # U in bits
+print(Capacity(compilation, theta, eta))                # U + 8|a|: what the paper charges
 print(Cost(compiled, theta, CostParameters(hash_cost=1, proof_overhead=0)).total)
 
 best = Optimize(compiled, eta, PolicyGrid.uniform(8), max_bits=20)
 ~~~
+
+`Capacity(Compile(G, x, a), θ, η)` is `Bound(C, I, θ) + 8|a|`: beyond the
+degrees of freedom `Bound` leaves uncharged in the circuit, the only freedom
+the client has is the advice, everything else being a deterministic function
+of `(G, x, a)`. With `U_max` and `A` enforced at admission, every accepted
+request has capacity at most `U_max + A`.
 
 `Cost` is the exact per-request expectation
 `h|∂| + q Σ_r (replay(R_r) + h|Int(r)|) + q s Σ_v (proof(V_v) + c_0)`, with

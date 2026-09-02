@@ -24,7 +24,7 @@ ETA = Fraction(1, 4)
 
 
 def test_demo_bound_folds_over_the_compiled_index() -> None:
-    compiled = compile_demo_g()
+    compiled = compile_demo_g().compiled
 
     result = Bound(compiled, POLICY, ETA)
 
@@ -37,7 +37,7 @@ def test_demo_bound_folds_over_the_compiled_index() -> None:
 
 
 def test_matmul_bound_is_zero_under_full_checking_and_capped_under_none() -> None:
-    compiled = compile_matmul(MatmulCompileRequest(((3,),), (((5,),),)))
+    compiled = compile_matmul(MatmulCompileRequest(((3,),), (((5,),),))).compiled
 
     exact = Bound(compiled, VerificationPolicy(1, 1), 0)
     nothing = Bound(compiled, VerificationPolicy(0, 1), Fraction(1, 2))
@@ -47,7 +47,7 @@ def test_matmul_bound_is_zero_under_full_checking_and_capped_under_none() -> Non
 
 
 def test_bound_options_control_the_grid() -> None:
-    compiled = compile_matmul()
+    compiled = compile_matmul().compiled
     coarse = Bound(compiled, POLICY, ETA, BoundOptions(max_buckets=4))
     fine = Bound(compiled, POLICY, ETA, BoundOptions(resolution=64))
 
@@ -57,7 +57,7 @@ def test_bound_options_control_the_grid() -> None:
 
 
 def test_cost_and_optimize_share_the_compiled_index() -> None:
-    compiled = compile_matmul()
+    compiled = compile_matmul().compiled
     parameters = CostParameters(2, 1)
 
     expected = Cost(compiled, POLICY, parameters)

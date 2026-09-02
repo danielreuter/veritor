@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from secrets import token_bytes
 
 from veritor.analysis import bound
+from veritor.compile import Compilation
 from veritor.core import (
     Compiled,
     ResourceLimit,
@@ -62,18 +63,21 @@ type Replay = Callable[[int, Values], Values]
 class Expectation:
     """What the verifier expects and the randomness it owns.
 
-    ``policy`` is the client's ``theta = (q, s)``; ``parameters`` hold the
-    verifier's own ``eta``, ``U_max`` and ``W_max``.  ``public_inputs`` are
-    the values of the circuit's ``in`` gates by rank (address order) and
-    ``claimed_outputs`` the outputs; the verifier encodes them with the
-    circuit's canonical codec.  ``weights`` is the model's ``kappa_W`` over
-    the circuit's ``weight`` gates, required exactly when it has any.  Both
-    seeds are mandatory so a verifier can never accidentally let the prover
-    choose them.
+    ``compiled_digest``, ``constructor`` and ``advice`` name the
+    ``Compile(G, x, a)`` the run is about; ``policy`` is the client's ``theta
+    = (q, s)``; ``parameters`` hold the verifier's own ``eta``, ``U_max``,
+    ``A`` and ``W_max``.  ``public_inputs`` are the values of the circuit's
+    ``in`` gates by rank (address order) and ``claimed_outputs`` the outputs;
+    the verifier encodes them with the circuit's canonical codec.
+    ``weights`` is the model's ``kappa_W``, required exactly when the circuit
+    has weight gates.  Both seeds are mandatory so a verifier can never
+    accidentally let the prover choose them.
     """
 
     session_id: bytes
     compiled_digest: str
+    constructor: str
+    advice: bytes
     policy: VerificationPolicy
     parameters: VerifierParameters
     public_inputs: tuple[object, ...]
@@ -87,6 +91,8 @@ class Expectation:
             value = getattr(self, name)
             if type(value) is not bytes or len(value) != 32:
                 raise ProtocolError(f"expected {name.replace('_', ' ')} of 32 bytes")
+        if type(self.advice) is not bytes:
+            raise ProtocolError("advice must be bytes")
         if not isinstance(self.parameters, VerifierParameters):
             raise ProtocolError("parameters must be VerifierParameters")
         if not isinstance(self.policy, VerificationPolicy):
@@ -96,9 +102,8 @@ class Expectation:
 
 
 def make_expectation(
-    compiled: Compiled,
+    compilation: Compilation,
     proposal: VerificationPolicy,
-    public_inputs: Iterable[object],
     claimed_outputs: Iterable[object],
     *,
     parameters: VerifierParameters | None = None,
@@ -107,18 +112,25 @@ def make_expectation(
     q_seed: bytes | None = None,
     s_seed: bytes | None = None,
 ) -> Expectation:
-    """Admit the client's proposed ``theta`` under the verifier's parameters.
+    """The verifier's expectation for one ``Compile(G, x, a)`` and the claimed ``y*``.
 
-    Fresh seeds are drawn unless given.
+    ``compilation`` supplies ``(C, I)``, ``G``'s digest, the public inputs as
+    the circuit consumes them and the advice; the client's proposed ``theta``
+    is admitted under the verifier's parameters.  Fresh seeds are drawn
+    unless given.
     """
 
+    if not isinstance(compilation, Compilation):
+        raise ProtocolError("make_expectation requires a Compilation from Compile")
     checked = VerifierParameters() if parameters is None else parameters
     return Expectation(
         session_id=token_bytes(16) if session_id is None else session_id,
-        compiled_digest=compiled.digest,
+        compiled_digest=compilation.compiled.digest,
+        constructor=compilation.constructor,
+        advice=compilation.advice,
         policy=checked.policy(proposal),
         parameters=checked,
-        public_inputs=tuple(public_inputs),
+        public_inputs=tuple(compilation.inputs),
         claimed_outputs=tuple(claimed_outputs),
         q_seed=token_bytes(32) if q_seed is None else q_seed,
         s_seed=token_bytes(32) if s_seed is None else s_seed,
@@ -360,9 +372,10 @@ class VerifierSession:
     """The verifier's side.  Feed messages in order; each returns the next challenge.
 
     Construction admits the run: the proposal's rates, the per-unit sizes and
-    the expected work are checked against the limits and ``W_max``, and
-    ``Bound(C, I, theta)`` against ``U_max``, before any commitment is
-    accepted; every verdict, including a resource limit, is a :class:`Reject`.
+    the expected work are checked against the limits and ``W_max``, the
+    advice against ``A`` and ``Bound(C, I, theta)`` against ``U_max``, before
+    any commitment is accepted; every verdict, including a resource limit, is
+    a :class:`Reject`.
     """
 
     def __init__(
@@ -415,6 +428,8 @@ class VerifierSession:
         self.header = Header(
             expectation.session_id,
             compiled.digest,
+            expectation.constructor,
+            expectation.advice,
             expectation.policy,
             expectation.parameters.eta,
             inputs,
@@ -437,14 +452,23 @@ class VerifierSession:
         """Price the run before any commitment; folds over the kinds, nothing per copy.
 
         The limits and ``W_max`` are checked from counts alone in
-        ``O(#kinds)``; when the verifier fixes ``U_max``, ``Bound(C, I,
-        theta)`` at its ``eta`` is folded over the same kinds (milliseconds,
-        independent of the number of copies) and must not exceed it.
+        ``O(#kinds)`` and the advice against ``A`` by its length; when the
+        verifier fixes ``U_max``, ``Bound(C, I, theta)`` at its ``eta`` is
+        folded over the same kinds (milliseconds, independent of the number
+        of copies) and must not exceed it.  Together the two caps bound the
+        request's capacity by ``U_max + A``.
         """
 
         index = self._layout.index
         policy = self._expectation.policy
         parameters = self._expectation.parameters
+        advice_bits = 8 * len(self._expectation.advice)
+        if advice_bits > parameters.max_advice_bits:
+            raise self._reject(
+                VerificationCode.POLICY_REJECTED,
+                f"the advice is {advice_bits} bits, exceeding max_advice_bits "
+                f"{parameters.max_advice_bits}",
+            )
         with self._rejecting_limits():
             self._limits.enforce(
                 "max_probability_denominator_bits",

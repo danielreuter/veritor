@@ -228,7 +228,7 @@ def test_a_unit_of_source_gates_has_no_capacity(make_compiled):
 
 
 def test_bound_on_the_matmul_counts_the_dots_and_not_the_source_units():
-    compiled = compile_matmul()  # activations and weights units, 3 rows of 2 dots
+    compiled = compile_matmul().compiled  # activations and weights units, 3 rows of 2 dots
     index = compiled.index
     rows = {row.kind: row for row in index.kinds()}
     activations, weights = index.replay_units.unit(0), index.replay_units.unit(1)

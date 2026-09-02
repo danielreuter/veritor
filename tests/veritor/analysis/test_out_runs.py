@@ -29,5 +29,5 @@ def test_random_circuits_match_enumeration(make_random_compiled, check_interface
 
 @pytest.mark.parametrize("compile", [compile_demo_g, compile_matmul], ids=["demo-g", "matmul"])
 def test_constructors_match_enumeration(check_interfaces, compile):
-    compiled = compile()
+    compiled = compile().compiled
     check_interfaces(compiled.index, compiled.circuit)

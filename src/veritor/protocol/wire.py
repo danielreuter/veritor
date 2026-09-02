@@ -50,8 +50,10 @@ def encode_transcript(transcript: Transcript) -> bytes:
     document: dict[str, JSONValue] = {
         "version": PROTOCOL_VERSION,
         "header": {
+            "advice": header.advice.hex(),
             "claimed_outputs": [item.hex() for item in header.claimed_outputs],
             "compiled_digest": header.compiled_digest,
+            "constructor": header.constructor,
             "eta": _pair(header.eta),
             "policy": {
                 "q": _pair(header.policy.q),
@@ -189,8 +191,10 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
     header_fields = _object(
         top["header"],
         {
+            "advice",
             "claimed_outputs",
             "compiled_digest",
+            "constructor",
             "eta",
             "policy",
             "public_inputs",
@@ -200,9 +204,9 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
         "header",
     )
     policy_fields = _object(header_fields["policy"], {"q", "s"}, "header.policy")
-    compiled_digest = header_fields["compiled_digest"]
-    if type(compiled_digest) is not str:
-        raise MalformedTranscript("header.compiled_digest must be a string")
+    for name in ("compiled_digest", "constructor"):
+        if type(header_fields[name]) is not str:
+            raise MalformedTranscript(f"header.{name} must be a string")
     try:
         policy = VerificationPolicy(
             _fraction(policy_fields["q"], "header.policy.q", checked),
@@ -210,7 +214,9 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
         )
         header = Header(
             _hex(header_fields["session_id"], "header.session_id"),
-            compiled_digest,  # type: ignore[arg-type]
+            header_fields["compiled_digest"],  # type: ignore[arg-type]
+            header_fields["constructor"],  # type: ignore[arg-type]
+            _hex(header_fields["advice"], "header.advice"),
             policy,
             _fraction(header_fields["eta"], "header.eta", checked),
             _list(header_fields["public_inputs"], _hex, "header.public_inputs"),

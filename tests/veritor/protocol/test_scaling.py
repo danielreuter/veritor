@@ -16,7 +16,7 @@ from fractions import Fraction
 
 import pytest
 
-from veritor.compile import Compiler
+from veritor.compile import Compilation, Compiler, constructor_digest
 from veritor.constructors import Tracer
 from veritor.core import (
     Compiled,
@@ -37,6 +37,7 @@ GATE_SET = make_word_gate_set(8)
 SEEDS = {"q_seed": b"q" * 32, "s_seed": b"s" * 32, "session_id": b"scaling"}
 INPUT = (3,)
 EXPECTED_SELECTED = 16
+HANDMADE = constructor_digest("handmade", "tests", {})
 
 
 def tiled_description(units: int, *, tile_role: str, cell_role: str | None, root_role: str | None):
@@ -76,6 +77,12 @@ def tiled_compiled(units: int) -> Compiled:
     return Compiler(GATE_SET).compile(description, INPUT)
 
 
+def tiled_compilation(units: int) -> Compilation:
+    """The tiling as the verifier records it: a hand-built description, no advice."""
+
+    return Compilation(tiled_compiled(units), HANDMADE, INPUT, b"")
+
+
 class TileValues(Mapping[int, object]):
     """The full assignment, lazily: every tile reads the same input as tile 0."""
 
@@ -107,13 +114,12 @@ class Scenario:
 
     def __init__(self, units: int) -> None:
         self.units = units
-        self.compiled = tiled_compiled(units)
+        compilation = tiled_compilation(units)
+        self.compiled = compilation.compiled
         self.values = TileValues(self.compiled)
         outputs = tuple(self.values[o] for o in self.compiled.circuit.outputs)
         policy = VerificationPolicy(Fraction(EXPECTED_SELECTED, units), 1)
-        self.expectation: Expectation = make_expectation(
-            self.compiled, policy, INPUT, outputs, **SEEDS
-        )
+        self.expectation: Expectation = make_expectation(compilation, policy, outputs, **SEEDS)
         verifier = VerifierSession(self.expectation, self.compiled)
         prover = ProverSession(self.compiled, verifier.header, self.values)
         self.boundary = prover.boundary()

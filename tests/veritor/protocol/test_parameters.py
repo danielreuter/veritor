@@ -9,7 +9,7 @@ from fractions import Fraction
 import pytest
 
 from veritor.analysis import bound
-from veritor.compile import Compiler
+from veritor.compile import Compilation, Compiler, constructor_digest
 from veritor.constructors import Tracer
 from veritor.core import (
     Compiled,
@@ -39,10 +39,12 @@ GATE_SET = make_word_gate_set(8)
 EIGHTH = Fraction(1, 8)
 CHECK_EVERYTHING = VerificationPolicy(1, 1)
 SEEDS = {"session_id": b"parameters", "q_seed": b"Q" * 32, "s_seed": b"S" * 32}
+HANDMADE = constructor_digest("handmade", "tests", {})
+"""The constructor digest recorded for descriptions the tests build by hand."""
 
 
-def one_unit_compiled(gates: int) -> Compiled:
-    """One replay unit holding one verification unit of ``gates`` adds."""
+def one_unit_compiled(gates: int) -> Compilation:
+    """One replay unit holding one verification unit of ``gates`` adds, on the input 3."""
 
     tracer = Tracer(GATE_SET)
     add = tracer.gate("add")
@@ -58,13 +60,15 @@ def one_unit_compiled(gates: int) -> Compiled:
     def root(_v):
         return block(tracer.inputs(1))
 
-    return Compiler(GATE_SET).compile(tracer.serialize(root), (3,))
+    compiled = Compiler(GATE_SET).compile(tracer.serialize(root), (3,))
+    return Compilation(compiled, HANDMADE, (3,), b"")
 
 
-def expectation_for(compiled: Compiled, **overrides) -> Expectation:
-    values = compiled.circuit.evaluate((3,))
-    outputs = tuple(values[o] for o in compiled.circuit.outputs)
-    return make_expectation(compiled, CHECK_EVERYTHING, (3,), outputs, **{**SEEDS, **overrides})
+def expectation_for(compilation: Compilation, **overrides) -> Expectation:
+    circuit = compilation.compiled.circuit
+    values = circuit.evaluate(compilation.inputs)
+    outputs = tuple(values[o] for o in circuit.outputs)
+    return make_expectation(compilation, CHECK_EVERYTHING, outputs, **{**SEEDS, **overrides})
 
 
 # -- eta is the verifier's ------------------------------------------------------
@@ -99,6 +103,8 @@ def test_the_proposal_is_theta_alone_and_the_header_binds_the_verifiers_eta(
         Expectation(
             admitted.session_id,
             admitted.compiled_digest,
+            admitted.constructor,
+            admitted.advice,
             (1, 1),  # type: ignore[arg-type]
             admitted.parameters,
             admitted.public_inputs,
@@ -177,8 +183,9 @@ def test_a_transcript_with_a_huge_denominator_is_a_clean_resource_limit(
 
 
 def test_oversized_units_are_rejected_at_session_start() -> None:
-    compiled = one_unit_compiled(200)
-    expectation = expectation_for(compiled)
+    compilation = one_unit_compiled(200)
+    compiled = compilation.compiled
+    expectation = expectation_for(compilation)
     limits = VerificationLimits(max_positions_per_unit=200)
 
     with pytest.raises(Reject) as rejection:
@@ -198,8 +205,9 @@ def test_oversized_units_are_rejected_at_session_start() -> None:
 
 
 def test_a_limit_hit_during_the_run_is_a_reject_not_an_exception() -> None:
-    compiled = one_unit_compiled(200)
-    expectation = expectation_for(compiled)
+    compilation = one_unit_compiled(200)
+    compiled = compilation.compiled
+    expectation = expectation_for(compilation)
     values = dict(enumerate(compiled.circuit.evaluate((3,))))
     limits = VerificationLimits(max_openings=100)
 

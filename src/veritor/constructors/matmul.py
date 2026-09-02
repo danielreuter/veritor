@@ -6,8 +6,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from veritor.compile import Compiler
-from veritor.core import CompilationLimits, Compiled, JSONValue, make_word_gate_set
+from veritor.compile import Compilation, constructor_digest
+from veritor.core import CompilationLimits, JSONValue, make_word_gate_set
+from veritor.research import Compile
 
 from .tracer import TracedDefinition, Tracer, TracerError, Wire, Wires
 
@@ -169,12 +170,17 @@ class MatmulG:
     flat in the number of rows.  (A row holding its ``k`` activations first
     would put the batch's outputs on a two-dimensional grid of
     ``min(rows, columns)`` runs.)
+
+    ``MatmulG`` takes no advice: the workload's shapes fix the circuit.
     """
+
+    VERSION = "1"
 
     def __init__(self, width: int = 8) -> None:
         if type(width) is not int or width <= 0:
             raise ValueError("width must be a positive integer")
         self.width = width
+        self.digest = constructor_digest(type(self).__name__, self.VERSION, {"width": width})
         self.tracer = Tracer(make_word_gate_set(width))
         mul, add = self.tracer.gate("mul"), self.tracer.gate("add")
         self.add = add
@@ -258,14 +264,17 @@ class MatmulG:
 
         return batch
 
-    def __call__(self, x: object, a: bytes) -> bytes:
+    def __call__(self, x: object, a: bytes) -> tuple[bytes, tuple[int, ...]]:
+        """The description for ``x``'s shapes and the activations as the ``in`` gates' values."""
+
         if not isinstance(x, MatmulWorkload):
             raise TracerError("MatmulG expects MatmulWorkload")
         if x.width != self.width:
             raise TracerError("workload width differs from MatmulG")
         if a != b"":
             raise TracerError("MatmulG does not accept constructor advice")
-        return self.tracer.serialize(self.batch(x.activation_shapes, x.weight_shape))
+        description = self.tracer.serialize(self.batch(x.activation_shapes, x.weight_shape))
+        return description, x.public_inputs
 
 
 _DEFAULT_WEIGHTS = (
@@ -352,16 +361,20 @@ def matmul_expected_matrices(request: MatmulCompileRequest) -> tuple[WordMatrix,
     return tuple(matrices)
 
 
-def compile_matmul(request: MatmulCompileRequest | None = None) -> Compiled:
-    """Run ``MatmulG`` on the workload and compile its description."""
+def compile_matmul(request: MatmulCompileRequest | None = None) -> Compilation:
+    """``Compile(MatmulG, workload, b"")``: what the verifier records for the request."""
 
     selected = MatmulCompileRequest() if request is None else request
     if not isinstance(selected, MatmulCompileRequest):
         raise TypeError("compile_matmul requires a MatmulCompileRequest")
     workload = selected.workload
-    description = MatmulG(workload.width)(workload, b"")
-    compiler = Compiler(make_word_gate_set(workload.width), selected.limits)
-    return compiler.compile(description, workload.public_inputs)
+    return Compile(
+        MatmulG(workload.width),
+        workload,
+        b"",
+        make_word_gate_set(workload.width),
+        limits=selected.limits,
+    )
 
 
 __all__ = [

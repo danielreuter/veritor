@@ -25,11 +25,9 @@ class Compiler:
     and builds the lazy circuit and index.  Only the input *count* is checked
     here, against the number of ``in`` gates (values are checked when they
     are encoded); weight values are not a compile input, they enter through
-    the protocol's ``Weights``.  ``advice`` is the prover's untrusted hint,
-    admitted only within ``advice_bound_bits``.
-
-    Parametric descriptions (integer parameters bound from the input shape or
-    the advice) are a later phase; they would be bound here, before parsing.
+    the protocol's ``Weights``.  Neither is the advice: shaping a description
+    by the input or the advice is the constructor's job, done before the
+    bytes reach the compiler (:func:`veritor.research.Compile` runs it).
     """
 
     __slots__ = ("gate_set", "limits")
@@ -42,21 +40,7 @@ class Compiler:
         self.gate_set = gate_set
         self.limits = CompilationLimits() if limits is None else limits
 
-    def compile(
-        self,
-        description: bytes,
-        inputs: Sequence[int],
-        advice: bytes | None = None,
-        *,
-        advice_bound_bits: int = 0,
-    ) -> Compiled:
-        if advice is not None:
-            if type(advice) is not bytes:
-                raise CompileError("advice must be bytes")
-            if type(advice_bound_bits) is not int or advice_bound_bits < 0:
-                raise CompileError("advice bound must be a nonnegative bit count")
-            if len(advice) * 8 > advice_bound_bits:
-                raise CompileError("advice exceeds the public bit bound")
+    def compile(self, description: bytes, inputs: Sequence[int]) -> Compiled:
         parsed = parse_description(description, self.gate_set, self.limits)
         root = parsed.root
         try:

@@ -10,6 +10,7 @@ from veritor.constructors import (
     expected_matmul_outputs,
 )
 from veritor.core import Compiled, make_word_gate_set
+from veritor.research import Compile
 
 
 def _workload(*, width: int = 8) -> MatmulWorkload:
@@ -32,8 +33,11 @@ def _workload(*, width: int = 8) -> MatmulWorkload:
 
 def compile_workload(workload: MatmulWorkload) -> Compiled:
     gate_set = make_word_gate_set(workload.width)
-    description = MatmulG(workload.width)(workload, b"")
-    return Compiler(gate_set).compile(description, workload.public_inputs)
+    description, inputs = MatmulG(workload.width)(workload, b"")
+    assert inputs == workload.public_inputs  # the activations, as G lays out the `in` gates
+    compiled = Compiler(gate_set).compile(description, inputs)
+    assert Compile(MatmulG(workload.width), workload, b"", gate_set).compiled.digest == compiled.digest
+    return compiled
 
 
 def outputs_of(compiled: Compiled, workload: MatmulWorkload) -> tuple[int, ...]:
@@ -160,6 +164,17 @@ def test_constructor_rejects_foreign_inputs_and_advice() -> None:
         MatmulG(8)(_workload(), b"hint")
 
 
+def test_constructor_digest_names_the_class_version_and_width() -> None:
+    assert MatmulG(8).digest == MatmulG(8).digest
+    assert MatmulG(8).digest != MatmulG(16).digest
+    assert len(MatmulG(8).digest) == 64 and MatmulG(8).digest == MatmulG(8).digest.lower()
+
+    class OtherG(MatmulG):
+        pass
+
+    assert OtherG(8).digest != MatmulG(8).digest
+
+
 def test_digest_depends_on_shape_and_width_not_public_values() -> None:
     first = _workload()
     second = MatmulWorkload(
@@ -174,7 +189,7 @@ def test_digest_depends_on_shape_and_width_not_public_values() -> None:
 
 def description(rows: int, k: int, columns: int) -> bytes:
     weights = tuple((1,) * columns for _ in range(k))
-    return MatmulG(8)(MatmulWorkload(weights, (tuple((1,) * k for _ in range(rows)),)), b"")
+    return MatmulG(8)(MatmulWorkload(weights, (tuple((1,) * k for _ in range(rows)),)), b"")[0]
 
 
 def test_description_size_does_not_grow_with_rows_or_columns() -> None:

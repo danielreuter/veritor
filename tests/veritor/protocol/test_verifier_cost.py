@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 import pytest
 
-from veritor.compile import Compiler
+from veritor.compile import Compilation, Compiler, constructor_digest
 from veritor.constructors import (
     MatmulG,
     MatmulWorkload,
@@ -26,10 +26,12 @@ from veritor.protocol import (
     commit_weights,
     make_expectation,
 )
+from veritor.research import Compile
 
 POLICY = VerificationPolicy(1, 1)
 SEEDS = {"q_seed": b"Q" * 32, "s_seed": b"S" * 32, "session_id": b"cost"}
 GATE_SET = make_word_gate_set(8)
+HANDMADE = constructor_digest("handmade", "tests", {})
 
 
 def matmul_workload(n: int, rows: int = 4) -> MatmulWorkload:
@@ -38,11 +40,11 @@ def matmul_workload(n: int, rows: int = 4) -> MatmulWorkload:
     return MatmulWorkload(weights, (activation,))
 
 
-def compile_matmul(workload: MatmulWorkload) -> Compiled:
-    return Compiler(GATE_SET).compile(MatmulG(8)(workload, b""), workload.public_inputs)
+def compile_matmul(workload: MatmulWorkload) -> Compilation:
+    return Compile(MatmulG(8), workload, b"", GATE_SET)
 
 
-def chain_compiled(blocks: int, width: int = 16) -> Compiled:
+def chain_compiled(blocks: int, width: int = 16) -> Compilation:
     """One input, one output, ``blocks * width`` gates in one replay unit.
 
     The blocks are one ``repeat`` step, so the description (what the verifier
@@ -64,7 +66,8 @@ def chain_compiled(blocks: int, width: int = 16) -> Compiled:
         x = tracer.inputs(1)
         return tracer.repeat(blocks, block, x)[-1]
 
-    return Compiler(GATE_SET).compile(tracer.serialize(root), (3,))
+    compiled = Compiler(GATE_SET).compile(tracer.serialize(root), (3,))
+    return Compilation(compiled, HANDMADE, (3,), b"")
 
 
 def fastest(action: Callable[[], object], repetitions: int = 20) -> float:
@@ -79,7 +82,8 @@ def fastest(action: Callable[[], object], repetitions: int = 20) -> float:
 @pytest.mark.parametrize("n", [16, 128])
 def test_verifier_setup_and_boundary_phase_never_touch_interior_gates(monkeypatch, n) -> None:
     workload = matmul_workload(n)
-    compiled = compile_matmul(workload)
+    compilation = compile_matmul(workload)
+    compiled = compilation.compiled
     circuit = compiled.circuit
     outputs = expected_matmul_outputs(workload)
     # the prover needs only the boundary to commit it: the input gates and the outputs
@@ -89,9 +93,7 @@ def test_verifier_setup_and_boundary_phase_never_touch_interior_gates(monkeypatc
     boundary_values.update(zip(circuit.outputs, outputs, strict=True))
     weights, tree = commit_weights(GATE_SET, workload.weight_values)
     io = set(circuit.inputs) | set(circuit.outputs)
-    expectation = make_expectation(
-        compiled, POLICY, workload.public_inputs, outputs, weights=weights, **SEEDS
-    )
+    expectation = make_expectation(compilation, POLICY, outputs, weights=weights, **SEEDS)
     header = VerifierSession(expectation, compiled).header
     boundary = ProverSession(compiled, header, boundary_values, weight_tree=tree).boundary()
 
@@ -121,12 +123,13 @@ def test_verifier_setup_and_boundary_phase_never_touch_interior_gates(monkeypatc
 def test_verifier_construction_time_is_flat_in_gate_count() -> None:
     small = chain_compiled(128)
     large = chain_compiled(8192)
-    assert large.circuit.n - 1 == 64 * (small.circuit.n - 1)
-    assert small.circuit.input_count == large.circuit.input_count == 1
+    assert large.compiled.circuit.n - 1 == 64 * (small.compiled.circuit.n - 1)
+    assert small.compiled.circuit.input_count == large.compiled.circuit.input_count == 1
 
-    def construction(compiled: Compiled) -> Callable[[], object]:
+    def construction(compilation: Compilation) -> Callable[[], object]:
+        compiled: Compiled = compilation.compiled
         outputs = tuple(compiled.circuit.evaluate((3,))[o] for o in compiled.circuit.outputs)
-        expectation = make_expectation(compiled, POLICY, (3,), outputs, **SEEDS)
+        expectation = make_expectation(compilation, POLICY, outputs, **SEEDS)
         return lambda: VerifierSession(expectation, compiled)
 
     small_time = fastest(construction(small))

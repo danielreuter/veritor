@@ -47,7 +47,11 @@ def test_cost_fold_matches_the_unit_by_unit_sum(make_compiled, sizes, policy):
 def test_cost_fold_matches_on_nested_indices(make_paper_example):
     policy = VerificationPolicy(Fraction(2, 3), Fraction(1, 5))
     parameters = CostParameters(2, 1)
-    for compiled in (make_paper_example(2, False), make_paper_example(2, True), compile_matmul()):
+    for compiled in (
+        make_paper_example(2, False),
+        make_paper_example(2, True),
+        compile_matmul().compiled,
+    ):
         assert isinstance(compiled, Compiled)
         assert cost(compiled, policy, parameters) == explicit_cost(compiled, policy, parameters)
 
@@ -66,7 +70,7 @@ def test_cost_terms_and_defaults(make_compiled):
 
 
 def test_the_weight_commitment_is_priced_per_epoch_not_per_request():
-    compiled = compile_matmul()  # 3 rows of 3 activations, a 3x2 weight matrix, 3x2 outputs
+    compiled = compile_matmul().compiled  # 3 rows of 3 activations, a 3x2 weight matrix
     index = compiled.index
     full = cost(compiled, VerificationPolicy(1, 1), CostParameters(2, 0))
 

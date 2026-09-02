@@ -8,8 +8,12 @@ from dataclasses import replace
 
 import pytest
 
-from veritor.compile import Compiler
-from veritor.constructors import MatmulCompileRequest, MatmulG, TracedDefinition
+from veritor.constructors import (
+    MatmulCompileRequest,
+    MatmulG,
+    MatmulWorkload,
+    TracedDefinition,
+)
 from veritor.core import Gate, GateSet, VerificationPolicy, make_word_gate_set
 from veritor.protocol import (
     BOUNDARY_OWNER,
@@ -31,6 +35,7 @@ from veritor.protocol import (
     verify_transcript,
 )
 from veritor.protocol.domains import weight_domain
+from veritor.research import Compile
 
 CHECK_EVERYTHING = VerificationPolicy(1, 1)
 SEEDS = {"session_id": b"weights", "q_seed": b"Q" * 32, "s_seed": b"S" * 32}
@@ -51,6 +56,11 @@ class PublicWeightsG(MatmulG):
             input_count=0, key=("public-weights", count), role="replay"
         )(lambda _v: self.tracer.inputs(count))
 
+    def __call__(self, x: object, a: bytes) -> tuple[bytes, tuple[int, ...]]:
+        description, _ = super().__call__(x, a)
+        assert isinstance(x, MatmulWorkload)
+        return description, (*x.public_inputs, *x.weight_values)
+
 
 class Model:
     """A compiled matmul with its weights committed once."""
@@ -58,9 +68,8 @@ class Model:
     def __init__(self, n: int = 4, rows: int = 2) -> None:
         self.request = matmul_request(n, rows)
         workload = self.request.workload
-        self.compiled = Compiler(GATE_SET).compile(
-            MatmulG(8)(workload, b""), workload.public_inputs
-        )
+        self.compilation = Compile(MatmulG(8), workload, b"", GATE_SET)
+        self.compiled = self.compilation.compiled
         self.circuit = self.compiled.circuit
         self.weight_addresses = frozenset(self.circuit.weights)
         self.values = dict(
@@ -92,11 +101,7 @@ class Model:
             **overrides,
         }
         return make_expectation(
-            self.compiled,
-            CHECK_EVERYTHING,
-            self.request.public_inputs,
-            arguments.pop("claimed_outputs"),
-            **arguments,
+            self.compilation, CHECK_EVERYTHING, arguments.pop("claimed_outputs"), **arguments
         )
 
     def tampered(self, rank: int) -> tuple[Expectation, dict[int, object]]:
@@ -345,12 +350,13 @@ class BoundaryPhase:
             expectation = model.expectation()
             values, tree = model.values, model.tree
         else:
-            public_inputs = (*workload.public_inputs, *workload.weight_values)
-            compiled = Compiler(GATE_SET).compile(PublicWeightsG(8)(workload, b""), public_inputs)
+            compilation = Compile(PublicWeightsG(8), workload, b"", GATE_SET)
+            compiled = compilation.compiled
             assert compiled.index.weight_count == 0
-            values = dict(enumerate(compiled.circuit.evaluate(public_inputs)))
+            assert len(compilation.inputs) == len(workload.public_inputs) + n * n
+            values = dict(enumerate(compiled.circuit.evaluate(compilation.inputs)))
             expectation = make_expectation(
-                compiled, CHECK_EVERYTHING, public_inputs, model.request.expected_outputs, **SEEDS
+                compilation, CHECK_EVERYTHING, model.request.expected_outputs, **SEEDS
             )
             tree = None
         header = VerifierSession(expectation, compiled).header
