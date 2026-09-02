@@ -5,6 +5,7 @@ canonical description bytes; :class:`veritor.compile.Compiler` re-validates
 every byte before anything downstream sees a circuit.
 """
 
+from .cluster import ClusterG
 from .demo_g import (
     BatchInput,
     DemoG,
@@ -14,6 +15,14 @@ from .demo_g import (
     expected_dot_outputs,
     make_demo_request,
 )
+from .lm import (
+    LayerParameters,
+    LMShape,
+    Parameters,
+    ToyLM,
+    random_parameters,
+    reference_generate,
+)
 from .matmul import (
     MatmulCompileRequest,
     MatmulG,
@@ -22,6 +31,14 @@ from .matmul import (
     compile_matmul,
     expected_matmul_outputs,
     matmul_expected_matrices,
+)
+from .schedule import (
+    Join,
+    Occupant,
+    Request,
+    Schedule,
+    ScheduleError,
+    schedule_fcfs,
 )
 from .tracer import (
     TracedDefinition,
@@ -34,12 +51,22 @@ from .tracer import (
 
 __all__ = [
     "BatchInput",
+    "ClusterG",
     "DemoG",
     "DemoGCompileRequest",
     "DotRequest",
+    "Join",
+    "LMShape",
+    "LayerParameters",
     "MatmulCompileRequest",
     "MatmulG",
     "MatmulWorkload",
+    "Occupant",
+    "Parameters",
+    "Request",
+    "Schedule",
+    "ScheduleError",
+    "ToyLM",
     "TracedDefinition",
     "Tracer",
     "TracerError",
@@ -53,4 +80,7 @@ __all__ = [
     "expected_matmul_outputs",
     "make_demo_request",
     "matmul_expected_matrices",
+    "random_parameters",
+    "reference_generate",
+    "schedule_fcfs",
 ]
