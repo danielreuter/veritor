@@ -306,6 +306,32 @@ class Definition:
 
         return tuple(_merge(_declared_pieces(self, 0, self.output_count, 1)))
 
+    def resolve_outputs(self, limit: int) -> tuple[tuple[bool, Run], ...] | None:
+        """Resolve the declared interface, giving up after ``limit`` pieces.
+
+        Pieces are counted before merging, so the work is bounded by
+        ``limit`` whatever the description says (a strided range over a
+        child's slots can name one piece per residue class).  On success the
+        result is cached as ``resolved_outputs``; otherwise nothing is cached
+        and ``None`` is returned.
+        """
+
+        produced = 0
+
+        def counted() -> Iterator[_Piece]:
+            nonlocal produced
+            for piece in _declared_pieces(self, 0, self.output_count, 1):
+                produced += 1
+                if produced > limit:
+                    return
+                yield piece
+
+        pieces = tuple(_merge(counted()))
+        if produced > limit:
+            return None
+        self.__dict__["resolved_outputs"] = pieces
+        return pieces
+
     @cached_property
     def out_runs(self) -> tuple[Run, ...]:
         """``Out`` of a copy: runs of the gate offsets it owns, ordered by start.
@@ -449,32 +475,35 @@ def _split(
 
 def _grid(
     start: int, rows: int, row_stride: int, columns: int, column_stride: int
-) -> list[tuple[int, int, int]]:
+) -> Iterator[tuple[int, int, int]]:
     """Progressions covering ``start + r * row_stride + c * column_stride``.
 
     One progression when a dimension is trivial or the rows tile (each row
     continues the previous one), otherwise the smaller of the two families of
-    parallel lines.
+    parallel lines, produced lazily so a bounded consumer stops the work.
     """
 
     if rows == 1:
-        return [(start, columns, column_stride if columns > 1 else 0)]
-    if columns == 1:
-        return [(start, rows, row_stride)]
-    if row_stride == columns * column_stride:
-        return [(start, rows * columns, column_stride)]
-    if columns <= rows:
-        return [(start + c * column_stride, rows, row_stride) for c in range(columns)]
-    return [(start + r * row_stride, columns, column_stride) for r in range(rows)]
+        yield start, columns, column_stride if columns > 1 else 0
+    elif columns == 1:
+        yield start, rows, row_stride
+    elif row_stride == columns * column_stride:
+        yield start, rows * columns, column_stride
+    elif columns <= rows:
+        for c in range(columns):
+            yield start + c * column_stride, rows, row_stride
+    else:
+        for r in range(rows):
+            yield start + r * row_stride, columns, column_stride
 
 
-def _merge(pieces: Iterable[_Piece]) -> list[_Piece]:
+def _merge(pieces: Iterable[_Piece]) -> Iterator[_Piece]:
     """Join adjacent pieces of one kind and width that continue one progression."""
 
-    merged: list[_Piece] = []
+    held: _Piece | None = None
     for is_gate, run in pieces:
-        if merged:
-            last_gate, last = merged[-1]
+        if held is not None:
+            last_gate, last = held
             gap = run.start - last.last
             if (
                 last_gate == is_gate
@@ -483,10 +512,12 @@ def _merge(pieces: Iterable[_Piece]) -> list[_Piece]:
                 and (last.count == 1 or last.stride == gap)
                 and (run.count == 1 or run.stride == gap)
             ):
-                merged[-1] = (is_gate, Run(last.start, last.count + run.count, gap, run.width))
+                held = (is_gate, Run(last.start, last.count + run.count, gap, run.width))
                 continue
-        merged.append((is_gate, run))
-    return merged
+            yield held
+        held = (is_gate, run)
+    if held is not None:
+        yield held
 
 
 def _pieces(
@@ -544,9 +575,21 @@ def _call_pieces(
 
     child = step.child
     outputs = child.output_count
+    resolved = child.resolved_outputs
+    if len(resolved) == 1 and resolved[0][0]:
+        # One gate run whose pitch tiles the copy (a single output, or a run
+        # spanning the copy): the gate offset is affine in the slot, so any
+        # stride over any number of copies is one run.
+        run = resolved[0][1]
+        pitch = child.size if outputs == 1 else run.stride
+        if pitch * outputs == child.size:
+            start = base + run.start + pitch * slot
+            yield True, Run(start, count, pitch * stride if count > 1 else 0, run.width)
+            return
+    copy, ordinal = divmod(slot, outputs)
+    last_copy = (slot + (count - 1) * stride) // outputs
     if stride == 1:
-        copy, ordinal = divmod(slot, outputs)
-        last_copy, last_ordinal = divmod(slot + count - 1, outputs)
+        last_ordinal = (slot + count - 1) % outputs
         if copy == last_copy:
             pieces = _output_pieces(child, ordinal, count, 1)
             yield from _lift(definition, step, base, pieces, copy, 1, 0)
@@ -561,6 +604,18 @@ def _call_pieces(
         return
     divisor = gcd(stride, outputs)
     period = outputs // divisor
+    if stride > 0 and last_copy - copy + 1 <= min(period, count):
+        # Fewer copies visited than residue classes: within each copy the
+        # slots are a strided sub-progression of the child's own interface.
+        k = 0
+        for visited in range(copy, last_copy + 1):
+            end = ((visited + 1) * outputs - 1 - slot) // stride
+            if end >= k:
+                first = slot + k * stride - visited * outputs
+                pieces = _output_pieces(child, first, end - k + 1, stride)
+                yield from _lift(definition, step, base, pieces, visited, 1, 0)
+                k = end + 1
+        return
     for residue in range(min(period, count)):
         copy, ordinal = divmod(slot + residue * stride, outputs)
         copies = (count - residue + period - 1) // period

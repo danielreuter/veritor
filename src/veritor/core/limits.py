@@ -18,6 +18,10 @@ class CompilationLimits:
     max_cost: int = (1 << 63) - 1
     max_depth: int = 256
     max_verification_unit_proof_cost: int = (1 << 63) - 1
+    max_output_runs: int = 256
+    """Pieces one definition's declared outputs may resolve to; bounds the work of resolving them."""
+    max_output_runs_total: int = 16_384
+    """Resolved output runs over the whole description; bounds the distinctness check."""
 
     def __post_init__(self) -> None:
         for descriptor in fields(self):

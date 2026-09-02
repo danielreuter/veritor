@@ -286,6 +286,11 @@ def _definition(
     ):
         if value > limit:
             raise CompileError(f"{where} has {value} {label}; the limit is {limit}")
+    if definition.resolve_outputs(limits.max_output_runs) is None:
+        raise CompileError(
+            f"{where} resolves its declared outputs to more than "
+            f"max_output_runs = {limits.max_output_runs} runs"
+        )
     repeated = _repeated_output(definition.out_runs)
     if repeated is not None:
         raise CompileError(
@@ -387,6 +392,7 @@ def parse_description(
     if len(entries) > limits.max_definitions:
         raise CompileError("description exceeds max_definitions")
     available: dict[str, Definition] = {}
+    runs = 0
     for index, item in enumerate(entries):
         entry = _object(item, {"digest", "body"}, f"definitions[{index}]")
         digest = _digest(entry["digest"], f"definitions[{index}] digest")
@@ -397,6 +403,9 @@ def parse_description(
         available[digest] = _definition(
             digest, entry["body"], gate_set=gate_set, limits=limits, available=available
         )
+        runs += len(available[digest].resolved_outputs)
+        if runs > limits.max_output_runs_total:
+            raise CompileError("description exceeds max_output_runs_total")
     root = available.get(_digest(document["root"], "root"))
     if root is None:
         raise CompileError("root names a definition that is not defined")

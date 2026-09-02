@@ -20,6 +20,7 @@ from veritor.compile import Compiler
 from veritor.compile.description import CompileError, parse_description
 from veritor.constructors import Tracer
 from veritor.core import (
+    CompilationLimits,
     DescriptionCircuit,
     Index,
     VerificationPolicy,
@@ -240,6 +241,70 @@ def test_disjoint_interleaved_strides_are_accepted(helpers):
     assert definition.out_runs == (Run(0, 3, 2, 8), Run(1, 3, 2, 8), Run(6, 2, 3, 8), Run(7, 1, 0, 8))
     assert definition.out_count == 9 and definition.out_bits == 72
     assert sorted(definition.out_offset(r) for r in range(9)) == [0, 1, 2, 3, 4, 5, 6, 7, 9]
+
+
+# -- resolving an interface costs what it produces, and what it may produce is capped ----
+
+
+def strided_subset_payload(
+    helpers, n: int, count: int, stride: int, copies: int = 1, swapped: bool = False
+) -> bytes:
+    """``count`` slots at ``stride`` over ``copies`` copies of an ``n``-gate block.
+
+    The block declares its gates in order, or as two swapped halves when
+    ``swapped`` (so its interface is two runs and the gate offset is no
+    longer affine in the slot).
+    """
+
+    h = helpers
+    doc = h.Document()
+    one = doc.add(h.body(1, [h.gate("add", h.rng(IN, 0, 2, 0))], [h.rng(LOC, 0)]))
+    half = n // 2
+    outputs = [h.rng(LOC, half, n - half, 1), h.rng(LOC, 0, half, 1)] if swapped else [h.rng(LOC, 0, n, 1)]
+    block = doc.add(h.body(1, [h.repeat(n, one, h.jrng(IN, 0))], outputs))
+    step = h.call(block, h.rng(IN, 0)) if copies == 1 else h.repeat(copies, block, h.jrng(IN, 0))
+    return doc.serialize(doc.add(h.body(1, [step], [h.rng(LOC, 0, count, stride)])))
+
+
+@pytest.mark.parametrize(
+    ("n", "count", "stride", "copies"),
+    [
+        (3_000_000, 1_000_000, 3, 1),  # every third slot inside one copy
+        (3_000_000, 1_000_000, 3, 3),  # ... crossing copies
+        (1_000, 2_140, 1_001, 2_143),  # the diagonal: one element per copy, each a new residue
+    ],
+)
+def test_a_strided_subset_of_a_huge_slot_linear_interface_is_one_run(helpers, n, count, stride, copies):
+    start = time.perf_counter()
+    root = parse_description(strided_subset_payload(helpers, n, count, stride, copies), GATES).root
+    elapsed = time.perf_counter() - start
+
+    assert root.out_runs == (Run(0, count, stride, 8),)
+    assert elapsed < 0.1, elapsed
+
+
+def test_interfaces_resolving_to_too_many_runs_are_rejected_without_doing_the_work(helpers):
+    # the diagonal over a block whose interface is two swapped halves: one piece per element
+    payload = strided_subset_payload(helpers, 1_000, 2_140, 1_001, 2_143, swapped=True)
+    start = time.perf_counter()
+    with pytest.raises(CompileError, match="more than max_output_runs = 256 runs"):
+        parse_description(payload, GATES)
+    assert time.perf_counter() - start < 0.1
+
+    relaxed = CompilationLimits(max_output_runs=4_096)
+    root = parse_description(payload, GATES, relaxed).root
+    assert root.out_count == 2_140 and len(root.out_runs) > 256
+
+
+def test_the_total_number_of_runs_over_a_description_is_capped(helpers):
+    payload = strided_subset_payload(helpers, 10, 5, 2, swapped=True)
+    description = parse_description(payload, GATES)
+    total = sum(len(d.resolved_outputs) for d in description.definitions)
+    assert total >= 3
+
+    assert parse_description(payload, GATES, CompilationLimits(max_output_runs_total=total))
+    with pytest.raises(CompileError, match="max_output_runs_total"):
+        parse_description(payload, GATES, CompilationLimits(max_output_runs_total=total - 1))
 
 
 # -- admission never touches the inputs -------------------------------------------------
