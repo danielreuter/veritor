@@ -107,6 +107,33 @@ def test_a_hand_written_schedule_is_semantically_transparent() -> None:
     assert compiled.index.replay_units.count == 1 + 4 + 5  # weights, pod 0 steps 0-3, pod 1 steps 0-4
 
 
+@pytest.mark.parametrize(
+    "max_news",
+    [(1, 2, 1), (1, 3, 2), (2, 1, 2, 1), (1, 1, 3), (3, 1, 1, 2)],
+    ids=lambda m: "-".join(map(str, m)),
+)
+def test_mixed_lifetimes_in_one_pod_compile_and_decode_like_the_reference(max_news) -> None:
+    """Occupants leaving at different steps make a step declare a strided subset of its tokens.
+
+    Three or four slots in one pod, one-token prompts, `max_new` differing per
+    slot: the root then declares the tokens of some occupants of a step and
+    not others, a stride-`state_size + 1` run over part of one step copy.
+    This is the case that once resolved to more gates than were declared.
+    """
+
+    requests = tuple(Request((1 + i,), max_new) for i, max_new in enumerate(max_news))
+    constructor = ClusterG(SHAPE, pods=1, slots=len(requests), steps=max(max_news))
+    schedule = schedule_fcfs(requests, 1, len(requests), max(max_news))
+    compiled = compile_run(constructor, requests, schedule)
+    parameters = random_parameters(SHAPE, seed=5)
+
+    assert schedule.active_steps(requests) == dict(enumerate(max_news))
+    assert generated(constructor, compiled, requests, schedule, parameters) == reference_generate(
+        SHAPE, parameters, requests
+    )
+    assert len(compiled.circuit.outputs) == sum(max_news)
+
+
 def test_two_layers_and_a_different_fcfs_shape() -> None:
     requests = (Request((3, 1), 4), Request((0,), 3), Request((6, 6, 6), 2), Request((2, 5), 1), Request((4,), 2))
     constructor = ClusterG(DEEP, pods=2, slots=2, steps=5)

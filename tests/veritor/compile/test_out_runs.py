@@ -108,6 +108,36 @@ def interleaved_payload(helpers, count: int, stride: int) -> bytes:
     return doc.serialize(h.wrap(doc, target, 2, 2 * count))
 
 
+def within_copy_payload(helpers) -> bytes:
+    """Two slots at stride 2 over a six-output child whose copy holds three such slots.
+
+    ``six`` is two ``h3`` in a row (outputs at gate offsets 2, 0, 1, 5, 3, 4:
+    not affine in the slot); a replay ``block`` repeats it twice and declares
+    slots 0 and 2 of the first copy only.  The within-copy branch of the
+    resolver visits one copy and must stop at the two slots asked for, not at
+    the last slot of the copy at that stride (slot 4, gate 3 -- distinct from
+    the two declared gates, so the distinctness rule would not notice).
+    """
+
+    h = helpers
+    doc = h.Document()
+    h3 = doc.add(
+        h.body(
+            1,
+            [
+                h.gate("add", h.rng(IN, 0, 2, 0)),
+                h.gate("mul", h.rng(LOC, 0, 2, 0)),
+                h.gate("add", h.rng(LOC, 1), h.rng(IN, 0)),
+            ],
+            [h.rng(LOC, 2), h.rng(LOC, 0), h.rng(LOC, 1)],
+        )
+    )
+    six = doc.add(h.body(1, [h.repeat(2, h3, h.jrng(IN, 0))], [h.rng(LOC, 0, 6, 1)], role="verification"))
+    block = doc.add(h.body(1, [h.repeat(2, six, h.jrng(IN, 0))], [h.rng(LOC, 0, 2, 2)], role="replay"))
+    target = doc.add(h.body(2, [h.repeat(2, block, h.jrng(IN, 0, 1, 0, 1))], [h.rng(LOC, 0, 4, 1)]))
+    return doc.serialize(h.wrap(doc, target, 2, 4))
+
+
 def sources_payload(helpers) -> bytes:
     """Source gates everywhere they may be: a weight block, a unit mixing inputs,
     weights and gates whose declared outputs include them, and a strided repeat."""
@@ -151,6 +181,7 @@ CASES: dict[str, Callable[[object], bytes]] = {
     "interleaved-3x1": lambda h: interleaved_payload(h, 3, 1),
     "interleaved-2x2": lambda h: interleaved_payload(h, 2, 2),
     "interleaved-2x4": lambda h: interleaved_payload(h, 2, 4),
+    "within-copy": within_copy_payload,
     "sources": sources_payload,
 }
 
@@ -196,6 +227,20 @@ def test_strided_outputs_over_children_fall_back_to_residue_runs(helpers):
     assert [block.out_offset(r) for r in range(7)] == members
     assert [block.out_rank(offset) for offset in members] == list(range(7))
     assert all(block.out_rank(offset) is None for offset in range(15) if offset not in members)
+
+
+def test_a_strided_run_inside_one_copy_stops_at_the_declared_count(helpers):
+    index, circuit = build(within_copy_payload(helpers))
+    block = target_of(index).steps[0].child
+    six = block.steps[0].child
+
+    assert six.output_count == 6 and six.out_runs == (Run(0, 6, 1, 8),)
+    # slots 0 and 2 of copy 0 are gates 2 and 1 of `six`; slot 4 (gate 3) is not declared
+    assert block.output_count == 2 and block.out_runs == (Run(1, 2, 1, 8),)
+    assert block.out_count == 2
+    # two `in` gates, then two block copies of twelve gates: gates 2 and 1 of each copy
+    assert list(circuit.outputs) == [4, 3, 16, 15]
+    assert sorted(circuit.Out(index.root)) == [3, 4, 15, 16]
 
 
 @pytest.mark.parametrize(("count", "stride", "runs"), [(2, 2, (Run(1, 2, 1, 8),)), (2, 4, (Run(2, 2, 1, 8),))])

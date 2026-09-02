@@ -736,7 +736,8 @@ def _call_pieces(
         # slots are a strided sub-progression of the child's own interface.
         k = 0
         for visited in range(copy, last_copy + 1):
-            end = ((visited + 1) * outputs - 1 - slot) // stride
+            # the last k whose slot lies in this copy, and never past the request
+            end = min(((visited + 1) * outputs - 1 - slot) // stride, count - 1)
             if end >= k:
                 first = slot + k * stride - visited * outputs
                 pieces = _output_pieces(child, first, end - k + 1, stride)

@@ -304,6 +304,12 @@ def _definition(
                 f"{where} lays out its {label} gates in more than "
                 f"max_output_runs = {limits.max_output_runs} runs"
             )
+    resolved_count = sum(run.count for _, run in definition.resolved_outputs)
+    if resolved_count != definition.output_count:
+        raise CompileError(
+            f"{where} declares {definition.output_count} outputs but they resolve to "
+            f"{resolved_count} positions (internal error in output resolution)"
+        )
     owned = tuple(
         run for kind, run in definition.resolved_outputs if kind is not PieceKind.PORT
     )
