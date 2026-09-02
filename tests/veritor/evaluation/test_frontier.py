@@ -51,9 +51,16 @@ def test_a_point_is_the_protocol_functions_over_the_honest_computation() -> None
     assert base == next(row.replay_cost for row in table.rows if row.kind == table.root) > table.n
     assert point.bits == bound(table, policy, Fraction(1, 100), FRONTIER_OPTIONS).bits
     assert point.overhead == cost(table, policy).total / base
+    assert point.recompute == cost(table, policy).recompute / base
     assert point.work == expected_work(table, policy, TOY.input_count + TOY.output_count) / base
     assert point.out_bits == TOY.output_count * TOY.width and 0 <= point.fraction <= 1
     assert point.policy == policy and point.eta == Fraction(1, 100)
+    # requests are closed: the recomputation is ``q`` of the requests; a cell is not: the sampled cells
+    # force their requests to be re-executed, here (a toy) with probability well below one
+    requests = sum(row.copies * row.replay_cost for row in table.rows if row.role == "replay")
+    assert point.recompute == policy.q * Fraction(requests, base)
+    fine = price(serving_table(TOY, "cell", "gate"), TOY, "cell", "gate", policy, Fraction(1, 100))
+    assert fine.recompute > point.recompute and fine.recompute < 1
 
 
 def test_the_laplace_only_bound_is_the_laplace_term_and_never_below_the_full_fold() -> None:
@@ -70,8 +77,9 @@ def test_the_laplace_only_bound_is_the_laplace_term_and_never_below_the_full_fol
 
 def test_the_sweep_covers_every_partition_policy_and_eta(points: list[Point]) -> None:
     keys = {(p.replay, p.verification, p.q, p.s, p.eta) for p in points}
-    assert len(points) == len(keys) == 7 * 4 * 2
-    assert all(p.seconds >= 0 and p.overhead > 0 and p.work > 0 for p in points)
+    assert len(points) == len(keys) == 12 * 4 * 2
+    assert {(p.replay, p.verification) for p in points} >= {("request", "cell"), ("row", "cell"), ("step", "cell")}
+    assert all(p.seconds >= 0 and p.overhead > 0 and p.work > 0 and 0 <= p.recompute <= p.overhead for p in points)
 
 
 def test_certify_is_monotone_in_the_budgets(points: list[Point]) -> None:
@@ -107,4 +115,5 @@ def test_the_tables_render(points: list[Point]) -> None:
     assert "--" in lines[2] and "`" in lines[3]
 
     by_partition = partition_table(points, eta=Fraction(1, 2), max_work=100)
-    assert by_partition.count("\n") == 1 + 7
+    assert by_partition.count("\n") == 1 + 12
+    assert "of which recompute" in by_partition.splitlines()[0]

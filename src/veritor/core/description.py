@@ -143,6 +143,54 @@ class Run:
         return k if remainder == 0 and k < self.count else None
 
 
+def extended_gcd(a: int, b: int) -> tuple[int, int, int]:
+    """``(g, x, y)`` with ``a * x + b * y == g == gcd(a, b)``."""
+
+    x0, y0, x1, y1 = 1, 0, 0, 1
+    while b:
+        quotient, remainder = divmod(a, b)
+        a, b = b, remainder
+        x0, x1 = x1, x0 - quotient * x1
+        y0, y1 = y1, y0 - quotient * y1
+    return a, x0, y0
+
+
+def progression_meet(start: int, count: int, stride: int, run: Run) -> tuple[int, int, int] | None:
+    """The indices ``e < count`` with ``start + e * stride`` in ``run``, as ``(first, count, step)``.
+
+    ``start + e * stride == run.start + m * run.stride`` with ``0 <= e < count``
+    and ``0 <= m < run.count`` is a linear congruence: solvable iff
+    ``gcd(stride, run.stride)`` divides ``run.start - start``, and then the
+    solutions form one progression in ``e`` that the two index ranges bound
+    from both sides.  ``None`` when the progressions are disjoint.  A
+    progression of one element, or of stride ``0``, is a single coordinate:
+    every index is returned when it lies in ``run``.
+    """
+
+    if count <= 0 or run.count <= 0:
+        return None
+    if count == 1 or stride == 0:
+        return (0, count, 1) if run.index(start) is not None else None
+    if run.count == 1 or run.stride == 0:
+        offset = run.start - start
+        if offset < 0 or offset % stride:
+            return None
+        e = offset // stride
+        return (e, 1, 0) if e < count else None
+    divisor, x, y = extended_gcd(stride, run.stride)
+    difference = run.start - start
+    if difference % divisor:
+        return None
+    scale = difference // divisor
+    e0, m0 = x * scale, -y * scale  # e0 * stride - m0 * run.stride == difference
+    e_step, m_step = run.stride // divisor, stride // divisor
+    low = max(-(e0 // e_step), -(m0 // m_step))
+    high = min((count - 1 - e0) // e_step, (run.count - 1 - m0) // m_step)
+    if low > high:
+        return None
+    return e0 + low * e_step, high - low + 1, e_step
+
+
 @dataclass(frozen=True, slots=True)
 class GateStep:
     gate: Gate

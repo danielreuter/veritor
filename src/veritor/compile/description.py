@@ -57,6 +57,7 @@ from veritor.core.description import (
     Range,
     Run,
     Step,
+    progression_meet,
     ranges_total,
 )
 
@@ -325,43 +326,16 @@ def _definition(
 # -- distinct declared outputs -----------------------------------------------
 
 
-def _extended_gcd(a: int, b: int) -> tuple[int, int, int]:
-    """``(g, x, y)`` with ``a * x + b * y == g == gcd(a, b)``."""
-
-    x0, y0, x1, y1 = 1, 0, 0, 1
-    while b:
-        quotient, remainder = divmod(a, b)
-        a, b = b, remainder
-        x0, x1 = x1, x0 - quotient * x1
-        y0, y1 = y1, y0 - quotient * y1
-    return a, x0, y0
-
-
 def _common_offset(first: Run, second: Run) -> int | None:
     """A gate offset in both runs, or ``None`` when they are disjoint.
 
-    ``a + i s == b + j t`` with ``0 <= i < n`` and ``0 <= j < m`` is a linear
-    congruence: solvable iff ``gcd(s, t)`` divides ``b - a``, and then the
-    solutions form one progression in ``k``; the two index ranges bound ``k``
-    from both sides, so the runs meet iff those bounds leave a ``k``.
+    The linear congruence is solved by
+    :func:`~veritor.core.description.progression_meet`; the first index of
+    ``first`` that lands in ``second`` names the offset.
     """
 
-    if first.count == 1:
-        return first.start if second.index(first.start) is not None else None
-    if second.count == 1:
-        return second.start if first.index(second.start) is not None else None
-    divisor, x, y = _extended_gcd(first.stride, second.stride)
-    difference = second.start - first.start
-    if difference % divisor:
-        return None
-    scale = difference // divisor
-    i0, j0 = x * scale, -y * scale  # i0 * s - j0 * t == difference
-    i_step, j_step = second.stride // divisor, first.stride // divisor
-    low = max(-(i0 // i_step), -(j0 // j_step))
-    high = min((first.count - 1 - i0) // i_step, (second.count - 1 - j0) // j_step)
-    if low > high:
-        return None
-    return first.element(i0 + low * i_step)
+    meet = progression_meet(first.start, first.count, first.stride, second)
+    return None if meet is None else first.element(meet[0])
 
 
 def _repeated_output(runs: tuple[Run, ...]) -> int | None:

@@ -82,6 +82,30 @@ def test_one_replay_unit_per_request_and_the_weights(run) -> None:
     assert all(row.input_count == SHAPE.weight_count for row in requests)
 
 
+def test_the_requests_and_the_weights_are_closed_and_the_decode_steps_are_not(run) -> None:
+    """A request is handed the weights and holds its prompt: replayable from what the server retains.
+
+    A decode step reads the previous token and the KV cache, which the
+    server does not keep; so does everything under it.
+    """
+
+    constructor, compiled = run
+    kinds = compiled.index.kinds()
+    by_kind = {row.kind: row for row in kinds}
+    by_key = constructor.lm.tracer._by_key  # the toy's kinds by the keys ``lm.py`` gives them
+
+    def closed(*keys: object) -> list[bool]:
+        return [by_kind[by_key[key].digest].closed for key in keys]
+
+    requests = [row for row in kinds if row.role == REPLAY and row.out_count > 0]
+    (weights,) = [row for row in kinds if row.role == REPLAY and row.source_weights > 0]
+    assert weights.closed and all(row.closed for row in requests)
+    assert closed("weights", ("request", 3, 3), ("request", 1, 2), ("prefill", 3), ("prefill", 1)) == [True] * 5
+    assert closed(("decode", 4), ("decode", 5), ("decode", 2)) == [False] * 3
+    # the kinds shared between the prefill and the decode steps (an embedding row, a matvec) are open
+    assert closed("embed_row", ("matvec", SHAPE.d_model, SHAPE.d_model), "argmax") == [False] * 3
+
+
 def test_requests_of_one_shape_are_one_kind() -> None:
     constructor = RequestsG(SHAPE)
     same = (Request((1, 2), 3), Request((4, 5), 3), Request((0, 7), 3))

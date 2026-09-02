@@ -300,9 +300,18 @@ of `(G, x, a)`. With `U_max` and `A` enforced at admission, every accepted
 request has capacity at most `U_max + A`.
 
 `Cost` is the exact per-request expectation
-`h|∂| + q Σ_r (replay(R_r) + h|Int(r)|) + q s Σ_v (proof(V_v) + c_0)`, with
-`|∂| = |In| + Σ_r |Out(R_r)|`; the per-epoch weight commitment `h|W|` is
-reported separately (`ExpectedCost.weights`) and is not in the total.
+`h|∂| + Recompute + q Σ_r h|Int(r)| + q s Σ_v (proof(V_v) + c_0)`, with
+`|∂| = |In| + Σ_r |Out(R_r)|`. `Recompute` assumes the honest prover retains
+only the circuit inputs and the weights: a sampled replay unit whose ports
+are all fed by source gates (a *closed* kind, `KindSummary.closed`) costs its
+own `replay(R_r)`, so the term is `q Σ_r replay(R_r)` when every unit is
+closed; any other sampled unit forces the re-execution of the smallest closed
+kind containing it, `Σ_A copies_A (1 - (1 - q)^{m_A}) replay(A)` over closed
+kinds `A` with `m_A` such units under them (nested closed kinds are charged
+only when the outer one is not re-executed). `ExpectedCost` reports
+`recompute` and `commit_interior` separately (`replay` is their sum); the
+per-epoch weight commitment `h|W|` is reported separately
+(`ExpectedCost.weights`) and is not in the total.
 `Optimize` is the client's advisory grid search; the verifier only checks the
 result against `U_max` and `W_max`.
 

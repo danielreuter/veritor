@@ -185,6 +185,16 @@ def test_kinds_are_shared_across_pods_and_steps() -> None:
     ]
     assert step_kinds[0] == step_kinds[1] and step_kinds[1].isdisjoint(step_kinds[2])
     assert max(one[2], three[2], six[2]) < 4 * min(one[2], three[2], six[2]) + 0.01
+    # the weights unit and a step of prefills alone are closed (their ports are the weight cells);
+    # a step with a decode occupant reads a token and a cache produced by an earlier step
+    for run in (one, three, six):
+        rows = {row.kind: row for row in run[1].index.kinds()}
+        units = [row for row in rows.values() if row.role == "replay"]
+        (weights,) = [row for row in units if row.source_weights > 0]
+        steps = [row for row in units if row.source_weights == 0]
+        assert weights.closed and rows[run[1].index.root.kind].closed
+        assert {row.input_count == SHAPE.weight_count for row in steps} == {True, False}
+        assert all(row.closed == (row.input_count == SHAPE.weight_count) for row in steps)
 
 
 def test_marks_tile_every_gate_once_and_the_kv_cache_is_the_step_interface(fcfs) -> None:
@@ -240,8 +250,15 @@ def test_bound_cost_and_optimize_run_over_the_cluster(fcfs) -> None:
     assert cost.boundary == compiled.index.boundary().count == 139  # 9 prompt tokens + 130 declared outputs
     assert cost.weights == SHAPE.weight_count
     full = Cost(compiled, VerificationPolicy(1, 1), CostParameters(hash_cost=1, proof_overhead=0))
-    assert full.replay == 2 * cost.replay and full.proof == 4 * cost.proof
+    assert full.commit_interior == 2 * cost.commit_interior and full.proof == 4 * cost.proof
     assert full.total > cost.total > 0
+    # the decode steps read the caches of earlier steps, which the honest server does not keep:
+    # sampling any of them re-executes the run, so the recomputation is not linear in ``q``
+    rows = {row.kind: row for row in compiled.kind_table().rows}
+    honest = rows[compiled.index.root.kind].replay_cost  # the replay units tile the run
+    assert honest == sum(row.copies * row.replay_cost for row in rows.values() if row.role == "replay")
+    assert full.recompute == honest
+    assert Fraction(1, 2) * honest < cost.recompute < honest  # more than ``q`` of the run, less than all of it
 
     best = Optimize(compiled, Fraction(1, 100), PolicyGrid.uniform(2), max_bits=8)
     assert best is not None and best.policy == VerificationPolicy(1, 1) and best.bound.bits == 0.0

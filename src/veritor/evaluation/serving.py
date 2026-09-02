@@ -25,17 +25,28 @@ requests.  What varies is where the marks go:
   block of residual or square cells) or ``cell`` (every unit has one
   output: a dot product or a single gate, so no unit's cut exceeds a word);
 * the *verification level* -- ``layer``, ``row`` (the toy's marks: dots,
-  heads, the one-hot, the argmax, the residual and square cells) or ``gate``
-  (every gate its own unit).
+  heads, the one-hot, the argmax, the residual and square cells), ``cell``
+  (what ``cell`` denotes for replay: a dot product or a single gate per
+  unit) or ``gate`` (every gate its own unit).
 
-Every gate lies in exactly one unit of each level, nothing marked nests in a
-verification unit, and a kind that would sit above one mark and below the
-other (a token's layer under ``request``, say) is defined only when one of
-the two levels needs it, so the ``request`` and ``step`` tables with ``row``
-units are the toy's own hierarchy.  Source gates (the prompt tokens and the
-weights) are always verification units, as the tracer marks them; the
-weights are one replay unit, and the prompt tokens sit in the request or
-step that reads them or, below those levels, in a ``prompt`` unit.
+The verification level must be strictly finer than the replay level
+(``gate < cell < row < matvec < layer < step = request``), so a ``cell``
+replay unit takes ``gate`` verification units.  Every gate lies in exactly
+one unit of each level, nothing marked nests in a verification unit, and a
+kind that would sit above one mark and below the other (a token's layer
+under ``request``, say) is defined only when one of the two levels needs
+it, so the ``request`` and ``step`` tables with ``row`` units are the toy's
+own hierarchy.  Source gates (the prompt tokens and the weights) are always
+verification units, as the tracer marks them; the weights are one replay
+unit, and the prompt tokens sit in the request or step that reads them or,
+below those levels, in a ``prompt`` unit.
+
+Each kind also records whether it is *closed* (every port fed a source gate
+at every call site, see :attr:`~veritor.core.KindSummary.closed`), derived
+from the builder's own wiring: a kind's ports are the weights it is handed
+and the activations it reads, and every call site says where each group
+comes from.  The weights, the root, a request, a prefill and a prefill step
+are closed; anything reading a token, an activation or the cache is not.
 """
 
 from __future__ import annotations
@@ -47,10 +58,10 @@ from veritor.core import Digest, KindSummary, KindTable, identity_digest
 from veritor.core.description import REPLAY, VERIFICATION
 
 ReplayLevel = Literal["request", "step", "layer", "matvec", "row", "cell"]
-VerificationLevel = Literal["layer", "row", "gate"]
+VerificationLevel = Literal["layer", "row", "cell", "gate"]
 
 REPLAY_LEVELS: tuple[ReplayLevel, ...] = ("request", "step", "layer", "matvec", "row", "cell")
-VERIFICATION_LEVELS: tuple[VerificationLevel, ...] = ("layer", "row", "gate")
+VERIFICATION_LEVELS: tuple[VerificationLevel, ...] = ("layer", "row", "cell", "gate")
 
 _COARSENESS = {"gate": 0, "cell": 1, "row": 2, "matvec": 3, "layer": 4, "step": 5, "request": 5}
 
@@ -160,13 +171,40 @@ class ServingShape:
         }
 
 
+# A kind's ports come in two groups, the weights it is handed (``W``) and the
+# activations, tokens and cache entries it reads (``A``); a call site feeds each
+# group of the child from the caller's own ``W`` or ``A`` ports, from source
+# gates the caller holds (``SOURCE``: the weight cells or the prompt tokens) or
+# from values computed in the caller (``COMPUTED``).  That is enough wiring to
+# derive ``KindSummary.closed`` the way ``Index.kinds`` does: a group is retained
+# iff every call site feeds it source gates or retained ports of the caller,
+# and a kind is closed iff both its groups are retained (an empty group is).
+W, A, SOURCE, COMPUTED = "w", "a", "source", "computed"
+type _Feed = dict[str, frozenset[str]]
+
+
+def _feed(w: str | tuple[str, ...] | None = None, a: str | tuple[str, ...] | None = None) -> _Feed:
+    """What a call site feeds the child's ``W`` and ``A`` groups (``None``: the child has none)."""
+
+    feed: _Feed = {}
+    for group, sources in ((W, w), (A, a)):
+        if sources is not None:
+            feed[group] = frozenset((sources,) if isinstance(sources, str) else sources)
+    return feed
+
+
 @dataclass(slots=True)
 class _Row:
-    """One kind under construction: what :class:`KindSummary` needs, before copies."""
+    """One kind under construction: what :class:`KindSummary` needs, before copies.
+
+    ``ports`` counts the ``W`` and ``A`` groups; ``feeds`` records, per child
+    kind, what this kind feeds each group of the child (united over the call
+    sites inside one copy).
+    """
 
     key: str
     role: str | None
-    input_count: int
+    ports: dict[str, int]
     out_count: int
     size: int = 0
     replay_cost: int = 0
@@ -174,8 +212,13 @@ class _Row:
     source_inputs: int = 0
     source_weights: int = 0
     children: dict[str, int] = field(default_factory=dict)
+    feeds: dict[str, _Feed] = field(default_factory=dict)
     verification_units: int = 0
     verification_kinds: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def input_count(self) -> int:
+        return sum(self.ports.values())
 
 
 class _Builder:
@@ -217,17 +260,24 @@ class _Builder:
         key: tuple[object, ...],
         role: str | None,
         *,
-        ports: int,
+        w: int = 0,
+        a: int = 0,
         outputs: int,
         gates: dict[str, int] | None = None,
         calls: dict[str, int] | None = None,
+        feeds: dict[str, _Feed] | None = None,
     ) -> str:
-        """Define (or reuse) the kind ``key`` with its own ``gates`` and its ``calls``."""
+        """Define (or reuse) the kind ``key`` with its own ``gates`` and its ``calls``.
+
+        ``w`` and ``a`` are the sizes of its port groups; ``feeds`` says, per
+        called kind, what this kind passes to each group of the child (see
+        :func:`_feed`) and must name exactly the child's nonempty groups.
+        """
 
         name = repr(key)
         if name in self.rows:
             return name
-        row = _Row(name, role, ports, outputs)
+        row = _Row(name, role, {W: w, A: a}, outputs)
         for gate, count in (gates or {}).items():
             row.size += count
             row.replay_cost += count * _REPLAY_COST[gate]
@@ -240,12 +290,19 @@ class _Builder:
             if count <= 0:
                 continue
             sub = self.rows[child]
+            groups = {group for group, size in sub.ports.items() if size}
+            feed = (feeds or {}).get(child, {})
+            if set(feed) != groups:
+                raise ValueError(f"{name} feeds {sorted(feed)} of {child}, which has the groups {sorted(groups)}")
             row.size += count * sub.size
             row.replay_cost += count * sub.replay_cost
             row.proof_cost += count * sub.proof_cost
             row.source_inputs += count * sub.source_inputs
             row.source_weights += count * sub.source_weights
             row.children[child] = row.children.get(child, 0) + count
+            merged = row.feeds.setdefault(child, {})
+            for group, sources in feed.items():
+                merged[group] = merged.get(group, frozenset()) | sources
             if role != VERIFICATION:
                 row.verification_units += count * sub.verification_units
                 for kind, inner in sub.verification_kinds.items():
@@ -255,6 +312,18 @@ class _Builder:
             row.verification_kinds = {name: 1}
         self.rows[name] = row
         return name
+
+    @staticmethod
+    def feeds(*parts: dict[str, _Feed]) -> dict[str, _Feed]:
+        """Unite per-child feeds from several call sites of one kind."""
+
+        merged: dict[str, _Feed] = {}
+        for part in parts:
+            for child, feed in part.items():
+                target = merged.setdefault(child, {})
+                for group, sources in feed.items():
+                    target[group] = target.get(group, frozenset()) | sources
+        return merged
 
     @staticmethod
     def merge(*parts: dict[str, int]) -> dict[str, int]:
@@ -276,15 +345,17 @@ class _Builder:
         if ctx == _FREE:
             assert self.ru == "cell", "a bare gate outside every unit"
             inner = self.pair(gate, _IN_REPLAY)
-            return self.define(("cell_unit", gate), REPLAY, ports=_ARITY[gate], outputs=1, calls={inner: 1})
+            return self.define(
+                ("cell_unit", gate), REPLAY, a=_ARITY[gate], outputs=1, calls={inner: 1}, feeds={inner: _feed(a=A)}
+            )
         role = None if ctx == _IN_VERIFICATION else VERIFICATION
-        return self.define(("pair", gate, role), role, ports=_ARITY[gate], outputs=1, gates={_OP[gate]: 1})
+        return self.define(("pair", gate, role), role, a=_ARITY[gate], outputs=1, gates={_OP[gate]: 1})
 
     def source(self, gate: str, ctx: str) -> str:
         """An ``in`` or ``weight`` cell: always a verification unit, its one output pinned."""
 
         assert ctx == _IN_REPLAY, "source cells lie directly in a replay unit"
-        return self.define(("source", gate), VERIFICATION, ports=0, outputs=0, gates={gate: 1})
+        return self.define(("source", gate), VERIFICATION, outputs=0, gates={gate: 1})
 
     def cells(self, gate: str, count: int, ctx: str) -> dict[str, int]:
         """``count`` residual ``add_cell`` or MLP ``square_cell`` gates.
@@ -292,20 +363,28 @@ class _Builder:
         The toy's marked one-gate kinds inside a replay unit; unmarked inside
         a verification unit; where the layer is not a unit and nothing above
         them is, one block unit of them all (``row``) or a unit each (``cell``).
+        Every port is an activation: the caller says where they come from.
         """
 
         if ctx == _FREE and self.ru == "cell":
             ((cell, _),) = self.cells(gate, 1, _IN_REPLAY).items()
-            unit = self.define((gate + "_cell_unit",), REPLAY, ports=_ARITY[gate], outputs=1, calls={cell: 1})
+            unit = self.define(
+                (gate + "_cell_unit",), REPLAY, a=_ARITY[gate], outputs=1, calls={cell: 1}, feeds={cell: _feed(a=A)}
+            )
             return {unit: count}
         if ctx == _FREE:
             cell = self.cells(gate, count, _IN_REPLAY)
             block = self.define(
-                (gate + "_block", count), REPLAY, ports=_ARITY[gate] * count, outputs=count, calls=cell
+                (gate + "_block", count),
+                REPLAY,
+                a=_ARITY[gate] * count,
+                outputs=count,
+                calls=cell,
+                feeds={kind: _feed(a=A) for kind in cell},
             )
             return {block: 1}
         role = None if ctx == _IN_VERIFICATION else VERIFICATION
-        cell = self.define((gate + "_cell", role), role, ports=_ARITY[gate], outputs=1, gates={_OP[gate]: 1})
+        cell = self.define((gate + "_cell", role), role, a=_ARITY[gate], outputs=1, gates={_OP[gate]: 1})
         return {cell: count}
 
     # -- rows ------------------------------------------------------------------------
@@ -328,28 +407,42 @@ class _Builder:
             gates["add"] = carried  # the toy adds the carries directly
         else:
             calls[add] += carried  # every gate must lie in a verification unit
-        return self.define(("dot", k, role), role, ports=2 * k, outputs=1, gates=gates, calls=calls)
+        # a product reads one activation and one weight of the dot; the sums read products
+        feeds = {mul: _feed(a=(A, W)), add: _feed(a=COMPUTED)}
+        return self.define(("dot", k, role), role, w=k, a=k, outputs=1, gates=gates, calls=calls, feeds=feeds)
 
     def onehot(self, ctx: str) -> str:
+        """The token against the constant table: one ``eq`` per vocabulary entry."""
+
         role = self.role(("row",), ctx)
         eq = self.pair("eq", self.within(role, ctx))
         vocab = self.shape.vocab
-        return self.define(("onehot", role), role, ports=1 + vocab, outputs=vocab, calls={eq: vocab})
+        return self.define(
+            ("onehot", role), role, w=vocab, a=1, outputs=vocab, calls={eq: vocab}, feeds={eq: _feed(a=(A, W))}
+        )
 
     def attend_head(self, c: int, ctx: str) -> str:
-        """One head over ``c`` positions: ``c`` scores, ``c`` squares, ``dh`` mixes, ``dh`` shifts."""
+        """One head over ``c`` positions: ``c`` scores, ``c`` squares, ``dh`` mixes, ``dh`` shifts.
+
+        The ports are the query, the keys and the values (activations) and
+        the shift (a weight); the score dots read the query against the keys,
+        the mix dots the squared scores against the values.
+        """
 
         role = self.role(("row", "matvec"), ctx)
         sub = self.within(role, ctx)
         dh = self.shape.d_head
-        calls = self.merge(  # the score and mix dots are one kind when ``c == dh``
-            {self.dot(dh, sub): c},
-            {self.pair("square", sub): c},
-            {self.dot(c, sub): dh},
-            {self.pair("shr", sub): dh},
+        score, square = self.dot(dh, sub), self.pair("square", sub)
+        mix, shift = self.dot(c, sub), self.pair("shr", sub)
+        calls = self.merge({score: c}, {square: c}, {mix: dh}, {shift: dh})  # one dot kind when ``c == dh``
+        feeds = self.feeds(
+            {score: _feed(w=A, a=A)},
+            {square: _feed(a=COMPUTED)},
+            {mix: _feed(w=A, a=COMPUTED)},
+            {shift: _feed(a=(COMPUTED, W))},
         )
         return self.define(
-            ("attend_head", c, role), role, ports=dh + 2 * c * dh + 1, outputs=dh, calls=calls
+            ("attend_head", c, role), role, w=1, a=dh + 2 * c * dh, outputs=dh, calls=calls, feeds=feeds
         )
 
     def argmax(self, ctx: str) -> str:
@@ -359,18 +452,26 @@ class _Builder:
         sub = self.within(role, ctx)
         vocab = self.shape.vocab
         counts = {"lt": vocab - 1, "sub": 2 * (vocab - 1), "mul": 2 * (vocab - 1), "add": 2 * (vocab - 1)}
+        # the selects compare and mix the logits (activations), the running best and index
+        # (computed) and the constant table (weights)
+        reads = {"lt": (A, COMPUTED), "sub": (A, W, COMPUTED), "mul": (COMPUTED,), "add": (A, W, COMPUTED)}
         if sub == _IN_VERIFICATION:
-            gates, calls = counts, {}
+            gates, calls, feeds = counts, {}, {}
         else:
             gates, calls = {}, {self.pair(gate, sub): count for gate, count in counts.items()}
-        return self.define(("argmax", role), role, ports=2 * vocab, outputs=1, gates=gates, calls=calls)
+            feeds = {self.pair(gate, sub): _feed(a=reads[gate]) for gate in counts}
+        return self.define(
+            ("argmax", role), role, w=vocab, a=vocab, outputs=1, gates=gates, calls=calls, feeds=feeds
+        )
 
     # -- matvec-level -----------------------------------------------------------------
 
     def matvec(self, k: int, m: int, ctx: str) -> str:
         role = self.role(("matvec",), ctx)
         dot = self.dot(k, self.within(role, ctx))
-        return self.define(("matvec", k, m, role), role, ports=k + k * m, outputs=m, calls={dot: m})
+        return self.define(
+            ("matvec", k, m, role), role, w=k * m, a=k, outputs=m, calls={dot: m}, feeds={dot: _feed(w=W, a=A)}
+        )
 
     def embed_row(self, ctx: str) -> str:
         """A token to its embedding: one-hot then ``E``; a unit at the ``matvec`` and ``layer`` levels."""
@@ -378,62 +479,91 @@ class _Builder:
         role = self.role(("matvec", "layer"), ctx)
         sub = self.within(role, ctx)
         vocab, d = self.shape.vocab, self.shape.d_model
-        calls = {self.onehot(sub): 1, self.matvec(vocab, d, sub): 1}
-        return self.define(("embed_row", role), role, ports=1 + vocab + vocab * d, outputs=d, calls=calls)
+        onehot, embed = self.onehot(sub), self.matvec(vocab, d, sub)
+        feeds = {onehot: _feed(w=W, a=A), embed: _feed(w=W, a=COMPUTED)}
+        return self.define(
+            ("embed_row", role), role, w=vocab + vocab * d, a=1, outputs=d, calls={onehot: 1, embed: 1}, feeds=feeds
+        )
 
     # -- layers -----------------------------------------------------------------------
 
-    def layer_calls(self, positions: int, cached: int, ctx: str) -> dict[str, int]:
-        """One layer over ``positions`` new positions attending to ``cached`` earlier ones."""
+    def layer_calls(
+        self, positions: int, cached: int, ctx: str, x: str
+    ) -> tuple[dict[str, int], dict[str, dict[str, frozenset[str]]]]:
+        """One layer over ``positions`` new positions attending to ``cached`` earlier ones.
+
+        ``x`` says where the layer's input activations come from in the kind
+        holding these calls: its own ``A`` ports (a ``layer`` kind) or values
+        computed before them (the layers inlined in a prefill or decode); a
+        cache, when there is one, is always read from that kind's ``A`` ports.
+        """
 
         shape = self.shape
         d, hidden, heads = shape.d_model, shape.hidden, shape.heads
-        return self.merge(
-            {self.matvec(d, d, ctx): 3 * positions},
-            *({self.attend_head(cached + p + 1, ctx): heads} for p in range(positions)),
-            {self.matvec(d, d, ctx): positions},
-            self.cells("add", positions * d, ctx),
-            {self.matvec(d, hidden, ctx): positions},
-            self.cells("square", positions * hidden, ctx),
-            {self.matvec(hidden, d, ctx): positions},
-            self.cells("add", positions * d, ctx),
+        project = self.matvec(d, d, ctx)
+        attend = {self.attend_head(cached + p + 1, ctx): heads for p in range(positions)}
+        residual = self.cells("add", positions * d, ctx)
+        up = self.matvec(d, hidden, ctx)
+        square = self.cells("square", positions * hidden, ctx)
+        down = self.matvec(hidden, d, ctx)
+        calls = self.merge(
+            {project: 3 * positions}, attend, {project: positions}, residual, {up: positions}, square, {down: positions}, residual
         )
+        attended = (COMPUTED, A) if cached else (COMPUTED,)
+        feeds = self.feeds(
+            {project: _feed(w=W, a=(x, COMPUTED))},
+            {head: _feed(w=W, a=attended) for head in attend},
+            {kind: _feed(a=(x, COMPUTED)) for kind in residual},
+            {up: _feed(w=W, a=COMPUTED)},
+            {kind: _feed(a=COMPUTED) for kind in square},
+            {down: _feed(w=W, a=COMPUTED)},
+        )
+        return calls, feeds
 
-    def layers(self, positions: int, cached: int, ctx: str) -> dict[str, int]:
+    def layers(
+        self, positions: int, cached: int, ctx: str
+    ) -> tuple[dict[str, int], dict[str, dict[str, frozenset[str]]]]:
         """All layers: inlined calls as in the toy, or ``layers`` calls of a layer kind."""
 
         shape = self.shape
         if "layer" not in (self.ru, self.vu):
-            calls = self.layer_calls(positions, cached, ctx)
-            return {kind: shape.layers * count for kind, count in calls.items()}
+            calls, feeds = self.layer_calls(positions, cached, ctx, COMPUTED)
+            return {kind: shape.layers * count for kind, count in calls.items()}, feeds
         role = self.role(("layer",), ctx)
         d = shape.d_model
+        calls, feeds = self.layer_calls(positions, cached, self.within(role, ctx), A)
         layer = self.define(
             ("layer", positions, cached, role),
             role,
-            ports=positions * d + 2 * cached * d + shape.layer_weights,
+            w=shape.layer_weights,
+            a=positions * d + 2 * cached * d,
             outputs=3 * positions * d,
-            calls=self.layer_calls(positions, cached, self.within(role, ctx)),
+            calls=calls,
+            feeds=feeds,
         )
-        return {layer: shape.layers}
+        return {layer: shape.layers}, {layer: _feed(w=W, a=(COMPUTED, A) if cached else COMPUTED)}
 
-    def head(self, ctx: str) -> dict[str, int]:
+    def head(self, ctx: str) -> tuple[dict[str, int], dict[str, dict[str, frozenset[str]]]]:
         """The unembedding and the argmax: inlined as in the toy, or one ``lm_head`` unit."""
 
         shape = self.shape
         d, vocab = shape.d_model, shape.vocab
         if self.ru not in ("matvec", "layer") and self.vu != "layer":
-            return {self.matvec(d, vocab, ctx): 1, self.argmax(ctx): 1}
+            unembed, argmax = self.matvec(d, vocab, ctx), self.argmax(ctx)
+            return {unembed: 1, argmax: 1}, {unembed: _feed(w=W, a=COMPUTED), argmax: _feed(w=W, a=COMPUTED)}
         role = self.role(("matvec", "layer"), ctx)
         sub = self.within(role, ctx)
+        unembed, argmax = self.matvec(d, vocab, sub), self.argmax(sub)
         head = self.define(
             ("lm_head", role),
             role,
-            ports=d + d * vocab + vocab,
+            w=d * vocab + vocab,
+            a=d,
             outputs=1,
-            calls={self.matvec(d, vocab, sub): 1, self.argmax(sub): 1},
+            calls={unembed: 1, argmax: 1},
+            feeds={unembed: _feed(w=W, a=A), argmax: _feed(w=W, a=COMPUTED)},
         )
-        return {head: 1}
+        return {head: 1}, {head: _feed(w=W, a=COMPUTED)}
 
     def prompt(self, ctx: str) -> dict[str, int]:
         """The prompt tokens: ``in`` cells in the request or step, else a ``prompt`` unit."""
@@ -442,91 +572,129 @@ class _Builder:
         if ctx == _IN_REPLAY:
             return {self.source("in", ctx): n}
         cell = self.source("in", _IN_REPLAY)
-        return {self.define(("prompt", n), REPLAY, ports=0, outputs=0, calls={cell: n}): 1}
+        return {self.define(("prompt", n), REPLAY, outputs=0, calls={cell: n}): 1}
 
     def prefill(self, ctx: str) -> str:
-        """The prompt: its tokens, their embeddings, the layers, the first generated token."""
+        """The prompt: its tokens, their embeddings, the layers, the first generated token.
+
+        Its ports are the weights; the tokens the embeddings read are the
+        ``in`` gates inside it, so an embedding row here is fed source gates.
+        """
 
         shape = self.shape
         n = shape.prompt
-        calls = self.merge(
-            self.prompt(ctx),
-            {self.embed_row(ctx): n},
-            self.layers(n, 0, ctx),
-            self.head(ctx),
-        )
+        embed = self.embed_row(ctx)
+        layer_calls, layer_feeds = self.layers(n, 0, ctx)
+        head_calls, head_feeds = self.head(ctx)
+        calls = self.merge(self.prompt(ctx), {embed: n}, layer_calls, head_calls)
+        feeds = self.feeds({embed: _feed(w=W, a=SOURCE)}, layer_feeds, head_feeds)
         return self.define(
-            ("prefill", n), None, ports=shape.weight_count, outputs=shape.state_size(n) + 1, calls=calls
+            ("prefill", n), None, w=shape.weight_count, outputs=shape.state_size(n) + 1, calls=calls, feeds=feeds
         )
 
     def decode(self, c: int, ctx: str) -> str:
-        """One token at context ``c`` over a cache of ``c - 1``: embedding, layers, next token."""
+        """One token at context ``c`` over a cache of ``c - 1``: embedding, layers, next token.
+
+        Its ports are the weights, the token and the cache: the embedding
+        row reads the token port, the layers the cache ports.
+        """
 
         shape = self.shape
-        calls = self.merge({self.embed_row(ctx): 1}, self.layers(1, c - 1, ctx), self.head(ctx))
+        embed = self.embed_row(ctx)
+        layer_calls, layer_feeds = self.layers(1, c - 1, ctx)
+        head_calls, head_feeds = self.head(ctx)
+        calls = self.merge({embed: 1}, layer_calls, head_calls)
+        feeds = self.feeds({embed: _feed(w=W, a=A)}, layer_feeds, head_feeds)
         return self.define(
             ("decode", c),
             None,
-            ports=shape.weight_count + 1 + shape.state_size(c - 1),
+            w=shape.weight_count,
+            a=1 + shape.state_size(c - 1),
             outputs=shape.state_size(1) + 1,
             calls=calls,
+            feeds=feeds,
         )
 
     # -- the run ------------------------------------------------------------------------
 
     def weights(self) -> str:
         cell = self.source("weight", _IN_REPLAY)
-        return self.define(("weights",), REPLAY, ports=0, outputs=0, calls={cell: self.shape.weight_count})
+        return self.define(("weights",), REPLAY, outputs=0, calls={cell: self.shape.weight_count})
 
     def request(self) -> str:
-        """A request: its prefill then a decode step per further token; the unit at ``request``."""
+        """A request: its prefill then a decode step per further token; the unit at ``request``.
+
+        Its ports are the weights, handed on to the prefill and the decodes;
+        each decode's token and cache are outputs of the calls before it.
+        """
 
         shape = self.shape
         role = REPLAY if self.ru == "request" else None
         ctx = self.within(role, _FREE)
-        calls = {self.prefill(ctx): 1}
+        prefill = self.prefill(ctx)
+        calls, feeds = {prefill: 1}, {prefill: _feed(w=W)}
         for c in range(shape.prompt + 1, shape.prompt + shape.generated):
-            calls[self.decode(c, ctx)] = 1
+            decode = self.decode(c, ctx)
+            calls[decode] = 1
+            feeds[decode] = _feed(w=W, a=COMPUTED)
         return self.define(
             ("request", shape.prompt, shape.generated),
             role,
-            ports=shape.weight_count,
+            w=shape.weight_count,
             outputs=shape.generated,
             calls=calls,
+            feeds=feeds,
         )
 
-    def steps(self) -> dict[str, int]:
-        """The ``step`` layout: a prefill step then a decode step per token, per wave of ``batch`` requests."""
+    def steps(self) -> tuple[dict[str, int], dict[str, dict[str, frozenset[str]]]]:
+        """The ``step`` layout: a prefill step then a decode step per token, per wave of ``batch`` requests.
+
+        A prefill step's ports are the weights; a decode step's are the
+        weights and each occupant's token and cache, produced by the earlier
+        steps of the run.
+        """
 
         shape = self.shape
         b, waves = shape.batch, shape.requests // shape.batch
-        prefill = self.define(
+        prefill = self.prefill(_IN_REPLAY)
+        step = self.define(
             ("prefill_step", b),
             REPLAY,
-            ports=shape.weight_count,
+            w=shape.weight_count,
             outputs=b * (shape.state_size(shape.prompt) + 1),
-            calls={self.prefill(_IN_REPLAY): b},
+            calls={prefill: b},
+            feeds={prefill: _feed(w=W)},
         )
-        calls = {prefill: waves}
+        calls, feeds = {step: waves}, {step: _feed(w=SOURCE)}
         for c in range(shape.prompt + 1, shape.prompt + shape.generated):
+            decode = self.decode(c, _IN_REPLAY)
             step = self.define(
                 ("decode_step", c, b),
                 REPLAY,
-                ports=shape.weight_count + b * (1 + shape.state_size(c - 1)),
+                w=shape.weight_count,
+                a=b * (1 + shape.state_size(c - 1)),
                 outputs=b * (shape.state_size(1) + 1),
-                calls={self.decode(c, _IN_REPLAY): b},
+                calls={decode: b},
+                feeds={decode: _feed(w=W, a=A)},
             )
             calls[step] = waves
-        return calls
+            feeds[step] = _feed(w=SOURCE, a=COMPUTED)
+        return calls, feeds
 
     def root(self) -> str:
+        """The run: the weights unit, then the requests or the steps, handed the weight cells."""
+
         shape = self.shape
-        calls = {self.weights(): 1}
+        calls: dict[str, int] = {self.weights(): 1}
+        feeds: dict[str, _Feed] = {}
         if self.ru == "step":
-            calls.update(self.steps())
+            step_calls, feeds = self.steps()
+            calls.update(step_calls)
         else:
-            calls[self.request()] = shape.requests
-        return self.define(("root",), None, ports=0, outputs=shape.output_count, calls=calls)
+            request = self.request()
+            calls[request] = shape.requests
+            feeds[request] = _feed(w=SOURCE)
+        return self.define(("root",), None, outputs=shape.output_count, calls=calls, feeds=feeds)
 
     # -- the table -----------------------------------------------------------------------
 
@@ -535,14 +703,22 @@ class _Builder:
         copies = {root: 1}
         min_depth = {root: 0}
         max_depth = {root: 0}
+        # a port group is retained iff every caller feeds it source gates or its own
+        # retained groups: callers are settled before their callees, so one pass
+        retained: dict[str, dict[str, bool]] = {root: {}}
         for name in self.parents_first(root):
             row = self.rows[name]
+            own = retained.setdefault(name, {})
             for child, count in row.children.items():
                 copies[child] = copies.get(child, 0) + copies[name] * count
                 depth = min_depth[name] + 1
                 min_depth[child] = min(min_depth.get(child, depth), depth)
                 depth = max_depth[name] + 1
                 max_depth[child] = max(max_depth.get(child, depth), depth)
+                target = retained.setdefault(child, {})
+                for group, sources in row.feeds[child].items():
+                    fed = all(source == SOURCE or own.get(source, False) for source in sources)
+                    target[group] = target.get(group, True) and fed
         width = self.shape.width
         rows = tuple(
             KindSummary(
@@ -562,6 +738,7 @@ class _Builder:
                 children=tuple(row.children.items()),
                 verification_units=row.verification_units,
                 verification_kinds=tuple(row.verification_kinds.items()),
+                closed=all(retained[row.key].values()),
             )
             for row in (self.rows[name] for name in self.preorder(root))
         )

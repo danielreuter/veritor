@@ -61,6 +61,7 @@ def rows_of(table: KindTable) -> list[tuple[object, ...]]:
             row.source_weights,
             row.min_depth,
             row.max_depth,
+            row.closed,
             tuple(sorted(count for _, count in row.children)),
             tuple(sorted(count for _, count in row.verification_kinds)),
         )
@@ -144,28 +145,68 @@ def test_every_partition_tiles_the_same_gates() -> None:
 def test_finer_replay_levels_have_more_units_and_the_cell_level_one_word_each() -> None:
     counts = {levels: serving_table(TOY, *levels).replay_unit_count for levels in partitions()}
 
+    assert len(counts) == 17
     assert counts["request", "row"] < counts["step", "row"] < counts["layer", "row"]
     assert counts["layer", "row"] < counts["matvec", "row"] < counts["row", "gate"] < counts["cell", "gate"]
+    # the verification level does not move the replay units
+    for replay in ("request", "step", "layer", "matvec", "row"):
+        assert len({count for (ru, _), count in counts.items() if ru == replay}) == 1
     widest = max(row.out_bits for row in serving_table(TOY, "cell", "gate").rows if row.role == REPLAY)
     assert widest == TOY.width
 
 
 def test_verification_levels_refine() -> None:
-    layer = serving_table(TOY, "request", "layer")
-    row = serving_table(TOY, "request", "row")
-    gate = serving_table(TOY, "request", "gate")
+    tables = [serving_table(TOY, "request", level) for level in ("layer", "row", "cell", "gate")]
 
-    units = [sum(r.copies for r in table.rows if r.role == VERIFICATION) for table in (layer, row, gate)]
-    assert units[0] < units[1] < units[2] == gate.n
+    units = [sum(r.copies for r in table.rows if r.role == VERIFICATION) for table in tables]
+    assert units[0] < units[1] < units[2] < units[3] == tables[-1].n
+    # ``cell`` verification units are what ``cell`` replay units are: dots and single gates, plus the
+    # source cells, which at the ``cell`` replay level sit in the weights and prompt units instead
+    cell = serving_table(TOY, "cell", "gate")
+    sources = TOY.requests * TOY.prompt + TOY.weight_count
+    prompts = TOY.requests  # one ``prompt`` unit per request, and the one weights unit
+    assert units[2] == cell.replay_unit_count - 1 - prompts + sources
+    assert max(row.out_bits for row in tables[2].rows if row.role == VERIFICATION) == TOY.width
 
 
 @pytest.mark.parametrize(
     "replay, verification",
-    [("row", "row"), ("layer", "layer"), ("cell", "row"), ("matvec", "layer"), ("nope", "row"), ("row", "nope")],
+    [
+        ("row", "row"),
+        ("layer", "layer"),
+        ("cell", "row"),
+        ("cell", "cell"),
+        ("matvec", "layer"),
+        ("nope", "row"),
+        ("row", "nope"),
+    ],
 )
 def test_levels_must_be_admissible(replay: str, verification: str) -> None:
     with pytest.raises(ValueError):
         serving_table(TOY, replay, verification)  # type: ignore[arg-type]
+
+
+def test_closed_kinds_are_the_weights_the_root_the_requests_and_the_prefills() -> None:
+    """At every partition the same kinds are closed: those handed the weights and nothing else."""
+
+    for levels in partitions():
+        table = serving_table(TOY, *levels)
+        rows = {row.kind: row for row in table.rows}
+        assert rows[table.root].closed
+        closed = {row.kind for row in table.rows if row.closed and row.input_count}
+        # a request or a prefill step, a prefill: their ports are the weights
+        expected = {"('prefill', 2)"} | (
+            {"('prefill_step', 2)"} if levels[0] == "step" else {"('request', 2, 3)"}
+        )
+        assert closed == expected, levels
+        # the replay units that are closed are those (when marked) and the source units
+        replay = {row.kind for row in table.rows if row.role == REPLAY and row.closed}
+        assert replay == {row.kind for row in table.rows if row.role == REPLAY and not row.input_count} | (
+            closed & {row.kind for row in table.rows if row.role == REPLAY}
+        )
+        # everything reading an activation, a token or the cache is open
+        assert not any(row.closed for row in table.rows if row.kind.startswith("('decode"))
+        assert not any(row.closed for row in table.rows if row.kind.startswith("('matvec"))
 
 
 def test_the_shape_is_checked() -> None:

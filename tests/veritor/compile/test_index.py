@@ -197,6 +197,7 @@ def test_kinds_table_summarizes_each_definition_once(helpers):
         children=((dot, cols),),
         verification_units=cols,
         verification_kinds=((dot, cols),),
+        closed=True,
     )
     assert activations_row == KindSummary(
         kind=activations_unit.kind,
@@ -215,6 +216,7 @@ def test_kinds_table_summarizes_each_definition_once(helpers):
         children=((in_cell, rows * k),),
         verification_units=rows * k,
         verification_kinds=((in_cell, rows * k),),
+        closed=True,
     )
     assert weights_row == KindSummary(
         kind=weights_unit.kind,
@@ -233,6 +235,7 @@ def test_kinds_table_summarizes_each_definition_once(helpers):
         children=((weight_cell, k * cols),),
         verification_units=k * cols,
         verification_kinds=((weight_cell, k * cols),),
+        closed=True,
     )
     assert by_kind[dot].copies == rows * cols
     assert by_kind[dot].input_count == 2 * k and by_kind[dot].out_count == 1
@@ -245,6 +248,10 @@ def test_kinds_table_summarizes_each_definition_once(helpers):
         (k * cols, 0, 1, 0),
     }
     leaves = [row for row in kinds if row.size == 1 and row.role is None]
+    # the products read the dot's ports (retained through the row from the source units);
+    # the sums read products and partial sums
+    assert {row.copies: row.closed for row in leaves} == {rows * cols * k: True, rows * cols * (k - 1): False}
+    assert by_kind[dot].closed
     assert sorted(row.copies for row in leaves) == sorted(
         [rows * cols * k, rows * cols * (k - 1)]
     )

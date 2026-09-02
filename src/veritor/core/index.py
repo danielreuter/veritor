@@ -13,6 +13,11 @@ input gates ``In``, the weight gates ``W``, the boundary
 ``In ∪ ⋃_r Out(R_r)`` and each interior ``R_r \\ (boundary ∪ W)`` are lazy
 address sets built the same way; nothing about them is stored.
 
+The per-kind table (:meth:`Index.kinds`) also records which kinds are
+*closed*: fed nothing but source gates at every call site, hence
+re-executable from the inputs and the weights alone.  That is what the cost
+model needs to price the recomputation behind a sampled replay unit.
+
 Canonical chunking of long step lists (so a cut can fall inside a definition)
 is a later phase: today a unit is always a whole copy of a definition.
 """
@@ -22,8 +27,24 @@ from __future__ import annotations
 from bisect import bisect_right
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from math import gcd
 
-from .description import REPLAY, VERIFICATION, CallStep, Definition, Frame, GateStep
+from .description import (
+    INPUT,
+    REPLAY,
+    VERIFICATION,
+    CallStep,
+    Definition,
+    Frame,
+    GateStep,
+    PieceKind,
+    Range,
+    Run,
+    _call_pieces,
+    _sorted_runs,
+    _split,
+    progression_meet,
+)
 from .errors import InvalidArtifact
 from .gates import INPUT_SOURCE, WEIGHT_SOURCE
 from .identity import Digest, identity_digest
@@ -204,6 +225,14 @@ class KindSummary:
     kind, the copies one copy of this kind calls directly;
     ``verification_units`` and ``verification_kinds`` describe the
     verification units inside one copy (a verification kind contains itself).
+
+    ``closed`` says whether every port of the kind, at every call site of
+    every copy, is fed a *retained* value: a source gate (``in`` or
+    ``weight``), directly or through a port of the caller that is itself
+    retained.  A closed kind can be re-executed from what an honest prover
+    keeps (the circuit's inputs and the weights); anything else needs the
+    values of the computation around it.  The root has no ports and is
+    closed; so is every kind without ports.
     """
 
     kind: str
@@ -222,6 +251,7 @@ class KindSummary:
     children: tuple[tuple[str, int], ...]
     verification_units: int
     verification_kinds: tuple[tuple[str, int], ...]
+    closed: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +283,8 @@ class KindTable:
             for child, _ in row.children:
                 if child not in kinds:
                     raise ValueError(f"kind {row.kind} calls unknown kind {child}")
+            if row.input_count == 0 and not row.closed:
+                raise ValueError(f"kind {row.kind} has no ports and must be closed")
 
 
 class Index:
@@ -353,11 +385,13 @@ class Index:
         ``O(|description|)``: counts flow from parents to children along the
         definition DAG, so a kind reached through many paths is still visited
         once, and every row is a per-definition summary (declared interfaces
-        as runs, never enumerated).
+        as runs, never enumerated).  ``closed`` comes from
+        :func:`transient_ports`, the same top-down pass over the DAG.
         """
 
         root = self._frame.definition
         parents_first = _reachable(root)[::-1]
+        transient = transient_ports(root)
         copies: dict[str, int] = {root.digest: 1}
         min_depth: dict[str, int] = {root.digest: 0}
         max_depth: dict[str, int] = {root.digest: 0}
@@ -396,6 +430,7 @@ class Index:
                 children=_multiset(definition, None),
                 verification_units=definition.verification_units,
                 verification_kinds=verification_kinds[definition.digest],
+                closed=not transient[definition.digest],
             )
             for definition in _preorder(root)
         )
@@ -608,6 +643,159 @@ def _multiset(
         for kind, count in expansion:
             counts[kind] = counts.get(kind, 0) + step.count * count
     return tuple(counts.items())
+
+
+# -- retained ports ---------------------------------------------------------------
+#
+# A value is *retained* when an honest prover still has it after the run: the
+# circuit's inputs and the weights, i.e. the source gates.  A port of a
+# definition is retained when every call site, in every calling definition and
+# every copy of a ``repeat``, feeds it a source gate (a source-gate step of the
+# caller, or the pinned output of a call the caller makes) or a port of the
+# caller that is itself retained; a computed gate of the caller, an unpinned
+# output of another call, or a transient port of the caller make it transient.
+# Circuit outputs are not counted as retained.  The pass is top-down over the
+# definition DAG (callers before callees), works per step with the run
+# arithmetic of the description, and never enumerates copies or ports: each
+# argument range is a grid over the copies of the step, cut into at most
+# ``min(copies, count)`` progressions, and each progression is intersected
+# with the caller's transient port runs (input space) or classified through the
+# steps it crosses (local space).  Two approximations, both conservative (more
+# ports transient, never fewer): a stretch of a local argument that lies inside
+# one call of the caller is transient as a whole when any of its slots is, and
+# the ports fed by a tiled ``repeat`` argument are taken by residue class when
+# the transient stretch wraps around the copies.
+
+
+def _argument_grid(item: Range, copies: int) -> Iterator[tuple[int, int, int, int, int]]:
+    """The coordinates of argument ``item`` over ``copies`` copies as progressions.
+
+    Yields ``(start, count, stride, k0, kstep)``: element ``e`` of the
+    progression is coordinate ``start + e * stride`` and feeds port
+    ``k0 + e * kstep`` of the argument, modulo ``item.count`` (the copies of
+    a tiled ``repeat`` argument continue one progression, so ``e`` runs over
+    copy after copy).  At most ``min(copies, item.count)`` progressions.
+    """
+
+    rows = copies if item.jstride else 1
+    columns, stride, jstride = item.count, item.stride, item.jstride
+    if rows == 1:
+        yield item.start, columns, stride, 0, 1
+    elif columns == 1:
+        yield item.start, rows, jstride, 0, 0
+    elif jstride == columns * stride:
+        yield item.start, rows * columns, stride, 0, 1
+    elif columns <= rows:
+        for c in range(columns):
+            yield item.start + c * stride, rows, jstride, c, 0
+    else:
+        for r in range(rows):
+            yield item.start + r * jstride, columns, stride, 0, 1
+
+
+def _port_runs(base: int, count: int, k0: int, kstep: int, first: int, n: int, step: int) -> Iterator[Run]:
+    """The ports ``base + ((k0 + e * kstep) mod count)`` for ``e = first + t * step``, ``t < n``, as runs."""
+
+    if n <= 0:
+        return
+    if kstep == 0 or count == 1:
+        yield Run(base + k0, 1, 0, 0)
+        return
+    start = first % count
+    if n == 1 or step % count == 0:
+        yield Run(base + start, 1, 0, 0)
+    elif start + (n - 1) * step < count:
+        yield Run(base + start, n, step, 0)
+    else:
+        # the progression wraps around the copies: the residue class it fills
+        # (exactly when it wraps often enough, conservatively otherwise)
+        modulus = gcd(step, count)
+        yield Run(base + first % modulus, count // modulus, modulus, 0)
+
+
+def _retained_slots(
+    definition: Definition,
+    transient: tuple[Run, ...],
+    step: CallStep,
+    index: int,
+    slot: int,
+    count: int,
+    stride: int,
+) -> bool:
+    """Whether slots ``slot + k * stride`` (``k < count``) of call step ``index`` all hold retained values."""
+
+    kinds = {kind for kind, _ in step.child.resolved_outputs}
+    if kinds == {PieceKind.PINNED}:
+        return True
+    if kinds == {PieceKind.GATE}:
+        return False
+    base = definition.step_address[index]
+    for kind, run in _call_pieces(definition, step, base, slot, count, stride):
+        if kind is PieceKind.GATE:
+            return False
+        if kind is PieceKind.PORT and any(
+            progression_meet(run.start, run.count, run.stride, item) is not None for item in transient
+        ):
+            return False
+    return True
+
+
+def _transient_stretches(
+    definition: Definition, transient: tuple[Run, ...], start: int, count: int, stride: int
+) -> Iterator[tuple[int, int]]:
+    """``(first, taken)`` index stretches of local slots ``start + e * stride`` holding transient values.
+
+    The progression is cut at the caller's step boundaries; a gate step is
+    retained iff it is a source gate, and a stretch inside a call is retained
+    iff every slot of it resolves to a source gate or to a retained port.
+    """
+
+    for index, first, taken in _split(definition.step_slot, start, count, stride):
+        step = definition.steps[index]
+        if isinstance(step, GateStep):
+            if not step.pinned:
+                yield first, taken
+            continue
+        slot = start + first * stride - definition.step_slot[index]
+        if not _retained_slots(definition, transient, step, index, slot, taken, stride):
+            yield first, taken
+
+
+def _normalized(runs: list[Run]) -> tuple[Run, ...]:
+    return _sorted_runs(set(runs))
+
+
+def transient_ports(root: Definition) -> dict[str, tuple[Run, ...]]:
+    """Per reachable definition, runs of the port ordinals fed a transient value somewhere.
+
+    A definition is *closed* iff its tuple is empty.  Top-down over the DAG:
+    in reverse post-order every caller precedes its callees, so a
+    definition's transient ports are final when it is reached and can be
+    propagated through its own call steps.  ``O(|description|)`` up to the
+    number of progressions the argument grids cut into (see the module
+    comment above); copies and ports are never enumerated.
+    """
+
+    pending: dict[str, list[Run]] = {root.digest: []}
+    result: dict[str, tuple[Run, ...]] = {}
+    for definition in _reachable(root)[::-1]:
+        own = result[definition.digest] = _normalized(pending.pop(definition.digest, []))
+        for step in definition.steps:
+            if not isinstance(step, CallStep):
+                continue
+            found = pending.setdefault(step.child.digest, [])
+            for index, item in enumerate(step.args):
+                base = step.arg_starts[index]
+                for start, count, stride, k0, kstep in _argument_grid(item, step.count):
+                    if item.space == INPUT:
+                        for run in own:
+                            meet = progression_meet(start, count, stride, run)
+                            if meet is not None:
+                                found.extend(_port_runs(base, item.count, k0, kstep, *meet))
+                    else:
+                        for first, taken in _transient_stretches(definition, own, start, count, stride):
+                            found.extend(_port_runs(base, item.count, k0, kstep, first, taken, 1))
+    return result
 
 
 def _short(definition: Definition) -> str:

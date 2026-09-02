@@ -3,11 +3,16 @@
 For a serving run (:mod:`.serving`), every partition an honest server might
 mark and every policy on a grid is priced three ways with the protocol's own
 functions: ``Bound`` (the capacity the verifier will certify at its ``eta``),
-``Cost`` (the prover's expected cost: the boundary commitment, the sampled
-replays and their interior commitments, the proofs) and ``expected_work``
-(the verifier's).  Both costs are reported relative to the honest
-computation itself -- the replay cost of the whole circuit -- so ``0.05``
-means five percent of the serving run.
+``Cost`` (the prover's expected cost: the boundary commitment, the
+recomputation the sampled replay units force, their interior commitments,
+the proofs) and ``expected_work`` (the verifier's).  Both costs are reported
+relative to the honest computation itself -- the replay cost of the whole
+circuit -- so ``0.05`` means five percent of the serving run.  The
+recomputation term is what separates the partitions: a request is closed
+(its ports are the weights) and is replayed for ``q`` of its cost, while a
+step, a layer, a matvec or a cell reads activations or the cache the honest
+server does not keep, so sampling any of the millions inside a request
+re-executes the request (see :mod:`veritor.analysis.cost`).
 
 :func:`certify` then answers the calibration question: given what an honest
 server will pay and what the verifier can do, what is the smallest capacity
@@ -52,10 +57,15 @@ DEFAULT_GRID = PolicyGrid(
 )
 DEFAULT_PARTITIONS: tuple[tuple[ReplayLevel, VerificationLevel], ...] = (
     ("request", "row"),
+    ("request", "cell"),
     ("request", "gate"),
     ("step", "row"),
+    ("step", "cell"),
     ("layer", "row"),
+    ("layer", "cell"),
     ("matvec", "row"),
+    ("matvec", "cell"),
+    ("row", "cell"),
     ("row", "gate"),
     ("cell", "gate"),
 )
@@ -80,7 +90,9 @@ class Point:
 
     ``bits`` is ``Bound`` at ``eta``; ``overhead`` the prover's expected cost
     and ``work`` the verifier's, both divided by the honest computation's
-    replay cost; ``seconds`` what the bound took to compute.
+    replay cost; ``recompute`` the recomputation term of that cost alone, on
+    the same scale (``1`` means the sampled units force the whole run to be
+    re-executed); ``seconds`` what the bound took to compute.
     """
 
     replay: str
@@ -93,6 +105,7 @@ class Point:
     overhead: Fraction
     work: Fraction
     seconds: float
+    recompute: Fraction = Fraction(0)
 
     @property
     def policy(self) -> VerificationPolicy:
@@ -106,7 +119,7 @@ class Point:
 
     def to_json(self) -> dict[str, object]:
         record = asdict(self)
-        for name in ("q", "s", "eta", "overhead", "work"):
+        for name in ("q", "s", "eta", "overhead", "work", "recompute"):
             record[name] = str(record[name])
         return record
 
@@ -123,6 +136,7 @@ class Point:
             overhead=Fraction(str(record["overhead"])),
             work=Fraction(str(record["work"])),
             seconds=float(record["seconds"]),  # type: ignore[arg-type]
+            recompute=Fraction(str(record.get("recompute", 0))),
         )
 
 
@@ -162,6 +176,7 @@ def price(
         overhead=expected.total / base,
         work=work / base,
         seconds=seconds,
+        recompute=expected.recompute / base,
     )
 
 
@@ -287,7 +302,10 @@ def partition_table(points: Sequence[Point], *, eta: ProbabilityInput, max_work:
     """Per partition, the smallest capacity within the verifier budget and what it costs the prover."""
 
     eta = exact_fraction(eta, name="eta")
-    lines = ["| partition | U | of output | q | s | prover overhead | verifier work |", "|---|---|---|---|---|---|---|"]
+    lines = [
+        "| partition | U | of output | q | s | prover overhead | of which recompute | verifier work |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
     seen: dict[tuple[str, str], Point] = {}
     for point in points:
         if point.eta != eta or point.work > exact_fraction(max_work, name="max_work"):
@@ -299,7 +317,7 @@ def partition_table(points: Sequence[Point], *, eta: ProbabilityInput, max_work:
     for (replay, verification), best in seen.items():
         lines.append(
             f"| `{replay}/{verification}` | {_bits(best.bits)} | {_percent(best.fraction)} | {best.q} | {best.s} "
-            f"| {_percent(float(best.overhead))} | {_percent(float(best.work))} |"
+            f"| {_percent(float(best.overhead))} | {_percent(float(best.recompute))} | {_percent(float(best.work))} |"
         )
     return "\n".join(lines)
 
