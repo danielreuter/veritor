@@ -18,6 +18,7 @@ from .gates import (
     check_value,
     decode_value,
     encode_value,
+    make_isa_gate_set,
     make_word_gate_set,
     value_byte_length,
 )
@@ -107,6 +108,7 @@ __all__ = [
     "exact_fraction",
     "identity_digest",
     "iter_domain",
+    "make_isa_gate_set",
     "make_word_gate_set",
     "parse_probability",
     "position",
