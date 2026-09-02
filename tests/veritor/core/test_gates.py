@@ -13,7 +13,7 @@ from veritor.core import (
 def test_word_gate_set_declares_add_and_mul_with_costs():
     gates = make_word_gate_set(8)
 
-    assert [gate.name for gate in gates] == ["add", "mul"]
+    assert [gate.name for gate in gates] == ["add", "in", "mul", "weight"]
     assert gates["add"].arity == 2
     assert gates["add"].width == 8
     assert (gates["add"].replay_cost, gates["mul"].replay_cost) == (1, 2)
@@ -21,8 +21,61 @@ def test_word_gate_set_declares_add_and_mul_with_costs():
     assert gates["add"].check((200, 100), 44)
     assert not gates["add"].check((200, 100), 45)
     assert "add" in gates and "sub" not in gates
+    assert gates.id == "veritor.word-arithmetic@2"
     with pytest.raises(InvalidArtifact, match="unknown gate"):
         gates["sub"]
+
+
+def test_word_gate_set_has_an_input_and_a_weight_source_gate():
+    gates = make_word_gate_set(8)
+
+    assert (gates.input_gates, gates.weight_gates) == (("in",), ("weight",))
+    for name, source in (("in", "input"), ("weight", "weight")):
+        gate = gates[name]
+        assert (gate.arity, gate.width, gate.source) == (0, 8, source)
+        assert (gate.replay_cost, gate.proof_cost) == (0, 1)  # free to replay, cheapest to prove
+        assert gate.manifest["source"] == source
+        with pytest.raises(InvalidArtifact, match="is a source gate"):
+            gate.evaluate(())
+        with pytest.raises(InvalidArtifact, match="is a source gate"):
+            gate.check((), 0)
+    assert gates["add"].source is None and gates["add"].manifest["source"] is None
+    assert make_word_gate_set(8).digest == gates.digest
+    assert make_word_gate_set(16).digest != gates.digest
+
+
+def test_source_gates_are_exactly_the_zero_arity_gates():
+    with pytest.raises(ValueError, match="only source gates have arity 0"):
+        Gate("zero", 0, 8, replay_cost=0, proof_cost=1, evaluate=lambda args: 0)
+    with pytest.raises(ValueError, match="only source gates have arity 0"):
+        Gate("in", 1, 8, replay_cost=0, proof_cost=1, source="input")
+    with pytest.raises(ValueError, match="gate source must be None or one of"):
+        Gate("in", 0, 8, replay_cost=0, proof_cost=1, source="advice")
+    with pytest.raises(TypeError, match="source gates have no executable relation"):
+        Gate("in", 0, 8, replay_cost=0, proof_cost=1, source="input", evaluate=lambda args: 0)
+    with pytest.raises(TypeError, match="source gates have no executable relation"):
+        Gate("in", 0, 8, replay_cost=0, proof_cost=1, source="input", check=lambda a, o: True)
+    plain = GateSet(
+        (Gate("add", 2, 8, replay_cost=1, proof_cost=1, evaluate=lambda a: (a[0] + a[1]) & 255),),
+        name="tests.plain",
+        version="1",
+    )
+    assert plain.input_gates == () and plain.weight_gates == ()
+    two = GateSet(
+        (
+            Gate("x", 0, 8, replay_cost=0, proof_cost=1, source="input"),
+            Gate("y", 0, 8, replay_cost=0, proof_cost=1, source="input"),
+            Gate("w", 0, 8, replay_cost=0, proof_cost=1, source="weight"),
+        ),
+        name="tests.sources",
+        version="1",
+    )
+    assert two.input_gates == ("x", "y") and two.weight_gates == ("w",)
+    # the source is part of the identity
+    assert (
+        GateSet((Gate("s", 0, 8, replay_cost=0, proof_cost=1, source="input"),), name="t", version="1").digest
+        != GateSet((Gate("s", 0, 8, replay_cost=0, proof_cost=1, source="weight"),), name="t", version="1").digest
+    )
 
 
 def test_gate_validates_arity_and_value_widths():

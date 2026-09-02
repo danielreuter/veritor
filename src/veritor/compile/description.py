@@ -16,14 +16,18 @@ The wire format is canonical JSON (sorted keys, no whitespace, no floats)::
 
 Besides the shape rules (arity, in-range relative references, dependency
 order, limits), a definition's declared outputs, resolved to the gates a copy
-owns, must be pairwise distinct: the runs of ``Out`` (see
-:mod:`veritor.core.description`) may not intersect.  This makes ``|Out|`` and
-its width sums over runs and rank/unrank inside ``Out`` prefix sums.
+owns (source gates included), must be pairwise distinct: the runs of ``Out``
+(see :mod:`veritor.core.description`) and the pinned runs may not intersect.
+This makes ``|Out|`` and its width sums over runs and rank/unrank inside
+``Out`` prefix sums.  The root has no ports: ``input_count`` of the root must
+be ``0``, the circuit's inputs being ``in`` gates (the compiler enforces this
+when it builds the index).
 
 Every check here is per definition, so validation is ``O(|G|)`` regardless of
 how many gates the description unrolls to; the distinctness check is
 quadratic in the number of runs of a definition, never in the number of
-outputs.
+outputs.  The runs of a definition's source gates (``input_runs``,
+``weight_runs``) are bounded by the same per-definition limit as ``Out``.
 """
 
 from __future__ import annotations
@@ -32,6 +36,8 @@ import json
 from dataclasses import dataclass
 
 from veritor.core import (
+    INPUT_SOURCE,
+    WEIGHT_SOURCE,
     CompilationLimits,
     GateSet,
     InvalidArtifact,
@@ -47,6 +53,7 @@ from veritor.core.description import (
     CallStep,
     Definition,
     GateStep,
+    PieceKind,
     Range,
     Run,
     Step,
@@ -291,7 +298,16 @@ def _definition(
             f"{where} resolves its declared outputs to more than "
             f"max_output_runs = {limits.max_output_runs} runs"
         )
-    repeated = _repeated_output(definition.out_runs)
+    for source, label in ((INPUT_SOURCE, "input"), (WEIGHT_SOURCE, "weight")):
+        if definition.resolve_source_runs(source, limits.max_output_runs) is None:
+            raise CompileError(
+                f"{where} lays out its {label} gates in more than "
+                f"max_output_runs = {limits.max_output_runs} runs"
+            )
+    owned = tuple(
+        run for kind, run in definition.resolved_outputs if kind is not PieceKind.PORT
+    )
+    repeated = _repeated_output(owned)
     if repeated is not None:
         raise CompileError(
             f"{where} declares the gate at offset {repeated} as an output more than once; "
@@ -409,6 +425,6 @@ def parse_description(
     root = available.get(_digest(document["root"], "root"))
     if root is None:
         raise CompileError("root names a definition that is not defined")
-    if root.input_count + root.size > limits.max_addresses:
-        raise CompileError("the circuit exceeds max_addresses")
+    if root.input_count != 0:
+        raise CompileError("the root has no ports; inputs are `in` gates")
     return Description(description_digest(payload), tuple(available.values()), root)

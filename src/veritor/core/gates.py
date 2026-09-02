@@ -2,7 +2,11 @@
 
 A :class:`GateSet` is a public protocol parameter shared by prover and
 verifier.  Every gate is a scalar relation with a fixed arity, an output width
-in bits, executable semantics, and public replay/proof costs.  The value codec
+in bits, executable semantics, and public replay/proof costs.  *Source* gates
+have arity ``0`` and no relation: an ``"input"`` gate takes its value from the
+circuit's public input ``x`` and a ``"weight"`` gate from the model's weights
+``W``, both by rank in address order, so inputs and weights are gates of the
+circuit and lie inside units like every other gate.  The value codec
 (canonical bytes for a value of a given width) also lives here because it is
 the only place widths are defined.
 """
@@ -15,6 +19,9 @@ from .errors import InvalidArtifact
 from .identity import Digest, JSONValue, identity_digest
 
 GATE_SET_IDENTITY_TAG = "veritor/gate-set/v1"
+INPUT_SOURCE = "input"
+WEIGHT_SOURCE = "weight"
+SOURCES = (INPUT_SOURCE, WEIGHT_SOURCE)
 
 
 def value_byte_length(width: int) -> int:
@@ -47,12 +54,14 @@ def decode_value(width: int, payload: object) -> int:
 
 
 class Gate:
-    """One scalar gate: ``name``, ``arity``, output ``width`` and costs.
+    """One scalar gate: ``name``, ``arity``, output ``width``, costs and ``source``.
 
     ``evaluate`` and ``check`` are trusted executable semantics.  They are
     excluded from identity; the enclosing gate set's name and version name the
     semantics.  Arguments are validated against the gate's own width (every
-    gate in a set has the same width for now).
+    gate in a set has the same width for now).  A gate with a ``source``
+    (``"input"`` or ``"weight"``) has arity ``0`` and no semantics: its value
+    comes from the environment, so ``evaluate`` and ``check`` raise.
     """
 
     __slots__ = (
@@ -62,6 +71,7 @@ class Gate:
         "name",
         "proof_cost",
         "replay_cost",
+        "source",
         "width",
     )
 
@@ -73,25 +83,34 @@ class Gate:
         *,
         replay_cost: int,
         proof_cost: int,
-        evaluate: Callable[[tuple[int, ...]], int],
+        evaluate: Callable[[tuple[int, ...]], int] | None = None,
         check: Callable[[tuple[int, ...], int], bool] | None = None,
+        source: str | None = None,
     ) -> None:
         if type(name) is not str or not name.strip():
             raise ValueError("gate names must be nonempty strings")
-        if type(arity) is not int or arity <= 0:
-            raise ValueError("gates need positive integer arity")
+        if source is not None and source not in SOURCES:
+            raise ValueError(f"gate source must be None or one of {list(SOURCES)}")
+        if type(arity) is not int or arity < 0 or (arity == 0) != (source is not None):
+            raise ValueError(
+                "gates need positive integer arity; only source gates have arity 0"
+            )
         if type(width) is not int or width <= 0:
             raise ValueError("gate widths must be positive bit counts")
         for label, cost in (("replay_cost", replay_cost), ("proof_cost", proof_cost)):
             if type(cost) is not int or cost < 0:
                 raise ValueError(f"gate {label} must be a nonnegative integer")
-        if not callable(evaluate) or (check is not None and not callable(check)):
+        if source is not None:
+            if evaluate is not None or check is not None:
+                raise TypeError("source gates have no executable relation")
+        elif not callable(evaluate) or (check is not None and not callable(check)):
             raise TypeError("gate semantics must be callable")
         self.name = name
         self.arity = arity
         self.width = width
         self.replay_cost = replay_cost
         self.proof_cost = proof_cost
+        self.source = source
         self._evaluate = evaluate
         self._check = check
 
@@ -105,10 +124,15 @@ class Gate:
             "name": self.name,
             "proof_cost": self.proof_cost,
             "replay_cost": self.replay_cost,
+            "source": self.source,
             "width": self.width,
         }
 
     def _checked_args(self, args: Sequence[object]) -> tuple[int, ...]:
+        if self.source is not None:
+            raise InvalidArtifact(
+                f"gate {self.name} is a source gate; its value comes from the environment"
+            )
         if len(args) != self.arity:
             raise InvalidArtifact(
                 f"gate {self.name} expects {self.arity} arguments, got {len(args)}"
@@ -122,6 +146,7 @@ class Gate:
         """Evaluate the gate on validated arguments; the result is width-checked."""
 
         checked = self._checked_args(args)
+        assert self._evaluate is not None  # a source gate never gets this far
         try:
             result = self._evaluate(checked)
         except Exception as error:
@@ -144,9 +169,12 @@ class Gate:
 
 
 class GateSet:
-    """A frozen, named registry of gates: the protocol's public parameter Σ."""
+    """A frozen, named registry of gates: the protocol's public parameter Σ.
 
-    __slots__ = ("_gates", "digest", "name", "version")
+    ``input_gates`` and ``weight_gates`` name the source gates of each kind.
+    """
+
+    __slots__ = ("_gates", "digest", "input_gates", "name", "version", "weight_gates")
 
     def __init__(self, gates: Iterable[Gate], *, name: str, version: str) -> None:
         for label, text in (("name", name), ("version", version)):
@@ -162,6 +190,12 @@ class GateSet:
         self.name = name
         self.version = version
         self._gates = dict(sorted(table.items()))
+        self.input_gates: tuple[str, ...] = tuple(
+            gate.name for gate in self._gates.values() if gate.source == INPUT_SOURCE
+        )
+        self.weight_gates: tuple[str, ...] = tuple(
+            gate.name for gate in self._gates.values() if gate.source == WEIGHT_SOURCE
+        )
         self.digest: Digest = identity_digest(GATE_SET_IDENTITY_TAG, self.manifest)
 
     def __repr__(self) -> str:
@@ -196,7 +230,11 @@ class GateSet:
 
 
 def make_word_gate_set(width: int = 8) -> GateSet:
-    """Modular add/multiply on ``width``-bit values: the built-in standard gates."""
+    """Modular add/multiply on ``width``-bit values, plus the ``in`` and ``weight`` sources.
+
+    A source gate costs nothing to replay (its value is given) and the
+    cheapest proof of the set to check (one opening or one comparison).
+    """
 
     if type(width) is not int or width <= 0:
         raise ValueError("width must be a positive bit count")
@@ -219,7 +257,9 @@ def make_word_gate_set(width: int = 8) -> GateSet:
                 proof_cost=2,
                 evaluate=lambda args: (args[0] * args[1]) & mask,
             ),
+            Gate("in", 0, width, replay_cost=0, proof_cost=1, source=INPUT_SOURCE),
+            Gate("weight", 0, width, replay_cost=0, proof_cost=1, source=WEIGHT_SOURCE),
         ),
         name="veritor.word-arithmetic",
-        version="1",
+        version="2",
     )

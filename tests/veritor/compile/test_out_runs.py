@@ -26,7 +26,7 @@ from veritor.core import (
     VerificationPolicy,
     make_word_gate_set,
 )
-from veritor.core.description import Definition, Run
+from veritor.core.description import CallStep, Definition, Run
 from veritor.protocol.parameters import expected_work
 
 GATES = make_word_gate_set(8)
@@ -38,15 +38,26 @@ def build(payload: bytes) -> tuple[Index, DescriptionCircuit]:
     return Index(root), DescriptionCircuit(root, GATES)
 
 
+def target_of(index: Index) -> Definition:
+    """The ported definition under a ``helpers.wrap`` root (its second step)."""
+
+    step = index.root.frame.definition.steps[1]
+    assert isinstance(step, CallStep)
+    return step.child
+
+
 # -- equivalence with enumeration --------------------------------------------------
 
 
 def passthrough_payload(helpers) -> bytes:
-    """Outputs that are inputs of the copy are not part of ``Out``.
+    """Outputs that are ports of the copy are not part of ``Out``.
 
-    ``pair`` emits one gate and passes one input through; a replay unit
-    repeats it and declares every slot; the root declares the units' slots
-    along with one of its own inputs.
+    ``pair`` emits one gate and passes one port through; a replay unit
+    repeats it and declares every slot; the target declares the units' slots
+    along with one of its own ports (one no unit passes through: under the
+    ``wrap`` root the ports are ``in`` gates, and a pinned gate may be
+    declared only once), and sits under a ``wrap`` root whose eight ``in``
+    gates feed it.
     """
 
     h = helpers
@@ -59,10 +70,10 @@ def passthrough_payload(helpers) -> bytes:
     unit = doc.add(
         h.body(4, [h.repeat(2, pair, h.jrng(IN, 0, 2, 1, 2))], [h.rng(LOC, 0, 4, 1)], role="replay")
     )
-    root = doc.add(
-        h.body(8, [h.repeat(2, unit, h.jrng(IN, 0, 4, 1, 4))], [h.rng(LOC, 0, 8, 1), h.rng(IN, 3)])
+    target = doc.add(
+        h.body(8, [h.repeat(2, unit, h.jrng(IN, 0, 4, 1, 4))], [h.rng(LOC, 0, 8, 1), h.rng(IN, 2)])
     )
-    return doc.serialize(root)
+    return doc.serialize(h.wrap(doc, target, 8, 9))
 
 
 def interleaved_payload(helpers, count: int, stride: int) -> bytes:
@@ -71,7 +82,7 @@ def interleaved_payload(helpers, count: int, stride: int) -> bytes:
     ``h3`` has three gates and declares them in the order 2, 0, 1; ``block``
     holds five copies and declares ``count`` slots at ``stride`` from slot 0,
     which land on different child outputs unless ``stride`` is a multiple of
-    three.  The root repeats the block twice and declares every slot.
+    three.  The target repeats the block twice and declares every slot.
     """
 
     h = helpers
@@ -91,8 +102,39 @@ def interleaved_payload(helpers, count: int, stride: int) -> bytes:
     block = doc.add(
         h.body(1, [h.repeat(5, h3, h.jrng(IN, 0))], [h.rng(LOC, 0, count, stride)], role="replay")
     )
-    root = doc.add(
+    target = doc.add(
         h.body(2, [h.repeat(2, block, h.jrng(IN, 0, 1, 0, 1))], [h.rng(LOC, 0, 2 * count, 1)])
+    )
+    return doc.serialize(h.wrap(doc, target, 2, 2 * count))
+
+
+def sources_payload(helpers) -> bytes:
+    """Source gates everywhere they may be: a weight block, a unit mixing inputs,
+    weights and gates whose declared outputs include them, and a strided repeat."""
+
+    h = helpers
+    doc = h.Document()
+    weight_cell = h.source_cell(doc, "weight")
+    weights = doc.add(h.body(0, [h.repeat(6, weight_cell)], [h.rng(LOC, 0, 6, 1)], role="replay"))
+    unit = doc.add(
+        h.body(
+            2,
+            [
+                h.gate("in"),
+                h.gate("mul", h.rng(LOC, 0), h.rng(IN, 0)),
+                h.gate("in"),
+                h.gate("weight"),
+                h.gate("add", h.rng(LOC, 1, 2, 2)),
+            ],
+            [h.rng(LOC, 0, 5, 1), h.rng(IN, 1)],
+            role="verification",
+        )
+    )
+    layer = doc.add(
+        h.body(6, [h.repeat(3, unit, h.jrng(IN, 0, 2, 1, 2))], [h.rng(LOC, 0, 18, 1)], role="replay")
+    )
+    root = doc.add(
+        h.body(0, [h.call(weights), h.call(layer, h.rng(LOC, 0, 6, 1))], [h.rng(LOC, 6, 18, 1)])
     )
     return doc.serialize(root)
 
@@ -109,6 +151,7 @@ CASES: dict[str, Callable[[object], bytes]] = {
     "interleaved-3x1": lambda h: interleaved_payload(h, 3, 1),
     "interleaved-2x2": lambda h: interleaved_payload(h, 2, 2),
     "interleaved-2x4": lambda h: interleaved_payload(h, 2, 4),
+    "sources": sources_payload,
 }
 
 
@@ -121,23 +164,30 @@ def test_run_interfaces_match_enumeration(helpers, check_interfaces, case):
 def test_out_runs_are_what_the_output_ranges_resolve_to(helpers):
     k, cols, rows = 4, 3, 2
     index, _circuit = build(helpers.matmul_payload(k, cols, rows))
+    layout = helpers.matmul_layout(k, cols, rows)
     root = index.root.frame.definition
-    row = root.steps[0].child
+    activations, weights, row = (step.child for step in root.steps)
     dot = row.steps[0].child
     dot_size = 2 * k - 1
 
     assert dot.out_runs == (Run(dot_size - 1, 1, 0, 8),)
+    assert activations.out_runs == () and activations.input_runs == (Run(0, rows * k, 1, 8),)
+    assert weights.out_runs == () and weights.weight_runs == (Run(0, k * cols, 1, 8),)
     assert row.out_runs == (Run(dot_size - 1, cols, dot_size, 8),)
-    assert root.out_runs == (Run(dot_size - 1, rows * cols, dot_size, 8),)
+    assert row.input_runs == row.weight_runs == ()
+    # the rows hold nothing but dots, so their Out tiles the copies: one run over the batch
+    assert root.out_runs == (Run(rows * k + k * cols + dot_size - 1, rows * cols, dot_size, 8),)
     assert (root.out_count, root.out_bits) == (rows * cols, 8 * rows * cols)
     assert [root.out_offset(r) for r in range(root.out_count)] == [
-        dot_size - 1 + i * dot_size for i in range(rows * cols)
+        dot.stop - 1 for dot in layout["dots"]
     ]
+    assert root.input_runs == (Run(0, rows * k, 1, 8),)
+    assert root.weight_runs == (Run(rows * k, k * cols, 1, 8),)
 
 
 def test_strided_outputs_over_children_fall_back_to_residue_runs(helpers):
     index, _circuit = build(interleaved_payload(helpers, 7, 2))
-    block = index.root.frame.definition.steps[0].child
+    block = target_of(index).steps[0].child
 
     # slots 0, 2, ..., 12 of five copies: one progression per residue class of 2 mod 3
     assert block.out_runs == (Run(1, 2, 6, 8), Run(2, 3, 6, 8), Run(3, 2, 6, 8))
@@ -151,20 +201,23 @@ def test_strided_outputs_over_children_fall_back_to_residue_runs(helpers):
 @pytest.mark.parametrize(("count", "stride", "runs"), [(2, 2, (Run(1, 2, 1, 8),)), (2, 4, (Run(2, 2, 1, 8),))])
 def test_fewer_elements_than_residue_classes_is_exact_enumeration(helpers, count, stride, runs):
     index, _circuit = build(interleaved_payload(helpers, count, stride))
-    block = index.root.frame.definition.steps[0].child
+    block = target_of(index).steps[0].child
 
     # slots 0 and `stride` land on different child outputs: one element each, then merged
     assert block.out_runs == runs
     assert block.out_count == count
     index, circuit = build(passthrough_payload(helpers))
     root = index.root.frame.definition
-    unit = root.steps[0].child
+    target = target_of(index)
+    unit = target.steps[0].child
     pair = unit.steps[0].child
 
     assert pair.output_count == 2 and pair.out_runs == (Run(0, 1, 0, 8),)
     assert unit.output_count == 4 and unit.out_runs == (Run(0, 2, 1, 8),)
-    assert root.output_count == 9 and root.out_runs == (Run(0, 4, 1, 8),)
-    assert list(circuit.outputs) == [8, 1, 9, 3, 10, 5, 11, 7, 3]
+    assert target.output_count == 9 and target.out_runs == (Run(0, 4, 1, 8),)
+    # in the root the ports become `in` gates (pinned) and the target's gates shift past them
+    assert root.output_count == 9 and root.out_runs == (Run(8, 4, 1, 8),)
+    assert list(circuit.outputs) == [8, 1, 9, 3, 10, 5, 11, 7, 2]
     assert list(circuit.Out(index.root)) == [8, 9, 10, 11]
 
 
@@ -172,13 +225,14 @@ def test_input_count_is_the_declared_interface_not_what_is_read(helpers):
     h = helpers
     doc = h.Document()
     cell = doc.add(h.body(3, [h.gate("add", h.rng(IN, 0, 2, 1))], [h.rng(LOC, 0)], role="verification"))
-    root = doc.add(h.body(3, [h.call(cell, h.rng(IN, 0, 3, 1))], [h.rng(LOC, 0)], role="replay"))
-    index, circuit = build(doc.serialize(root))
-    node = index.verification_unit(0)
+    target = doc.add(h.body(3, [h.call(cell, h.rng(IN, 0, 3, 1))], [h.rng(LOC, 0)], role="replay"))
+    index, circuit = build(doc.serialize(h.wrap(doc, target, 3, 1)))
+    node = index.verification_unit(3)  # after the three `in` cells of the input block
 
-    assert {row.kind: row.input_count for row in index.kinds()} == {cell: 3, root: 3}
+    assert node.kind == cell
+    assert {row.kind: row.input_count for row in index.kinds()}.items() >= {cell: 3, target: 3}.items()
     assert node.frame.definition.reads == (0, 1) and list(circuit.In(node)) == [0, 1]
-    assert index.root.frame.definition.reads == (0, 1)
+    assert target_of(index).reads == (0, 1) and index.root.frame.definition.reads == ()
 
 
 # -- distinct declared outputs ---------------------------------------------------------
@@ -196,7 +250,8 @@ def ten_gates(helpers, outputs: list[list[object]]) -> bytes:
     h = helpers
     doc = h.Document()
     add = doc.add(h.body(2, [h.gate("add", h.rng(IN, 0, 2, 1))], [h.rng(LOC, 0)]))
-    return doc.serialize(doc.add(h.body(2, [h.repeat(10, add, h.jrng(IN, 0, 2, 1))], outputs)))
+    target = doc.add(h.body(2, [h.repeat(10, add, h.jrng(IN, 0, 2, 1))], outputs))
+    return doc.serialize(h.wrap(doc, target, 2, sum(int(item[2]) for item in outputs)))  # type: ignore[call-overload]
 
 
 @pytest.mark.parametrize(
@@ -236,11 +291,14 @@ def test_disjoint_interleaved_strides_are_accepted(helpers):
     payload = ten_gates(
         helpers, [h.rng(LOC, 1, 3, 2), h.rng(LOC, 0, 3, 2), h.rng(LOC, 6, 2, 3), h.rng(LOC, 7)]
     )
-    definition = parse_description(payload, GATES).root
+    root = parse_description(payload, GATES).root
+    definition = root.steps[1].child
 
     assert definition.out_runs == (Run(0, 3, 2, 8), Run(1, 3, 2, 8), Run(6, 2, 3, 8), Run(7, 1, 0, 8))
     assert definition.out_count == 9 and definition.out_bits == 72
     assert sorted(definition.out_offset(r) for r in range(9)) == [0, 1, 2, 3, 4, 5, 6, 7, 9]
+    # the same interface seen from the wrapping root, shifted past its two `in` gates
+    assert root.out_runs == (Run(2, 3, 2, 8), Run(3, 3, 2, 8), Run(8, 2, 3, 8), Run(9, 1, 0, 8))
 
 
 # -- resolving an interface costs what it produces, and what it may produce is capped ----
@@ -263,7 +321,8 @@ def strided_subset_payload(
     outputs = [h.rng(LOC, half, n - half, 1), h.rng(LOC, 0, half, 1)] if swapped else [h.rng(LOC, 0, n, 1)]
     block = doc.add(h.body(1, [h.repeat(n, one, h.jrng(IN, 0))], outputs))
     step = h.call(block, h.rng(IN, 0)) if copies == 1 else h.repeat(copies, block, h.jrng(IN, 0))
-    return doc.serialize(doc.add(h.body(1, [step], [h.rng(LOC, 0, count, stride)])))
+    target = doc.add(h.body(1, [step], [h.rng(LOC, 0, count, stride)]))
+    return doc.serialize(h.wrap(doc, target, 1, count))
 
 
 @pytest.mark.parametrize(
@@ -279,7 +338,8 @@ def test_a_strided_subset_of_a_huge_slot_linear_interface_is_one_run(helpers, n,
     root = parse_description(strided_subset_payload(helpers, n, count, stride, copies), GATES).root
     elapsed = time.perf_counter() - start
 
-    assert root.out_runs == (Run(0, count, stride, 8),)
+    assert root.steps[1].child.out_runs == (Run(0, count, stride, 8),)
+    assert root.out_runs == (Run(1, count, stride, 8),)  # shifted past the root's one `in` gate
     assert elapsed < 0.1, elapsed
 
 
@@ -313,7 +373,8 @@ def test_the_total_number_of_runs_over_a_description_is_capped(helpers):
 def wide_description(copies: int, length: int) -> bytes:
     """One replay layer of ``copies`` dots, each over ``length`` weights and a shared vector.
 
-    The root has ``length + copies * length`` inputs and passes them down as
+    The layer holds ``length`` input gates and ``copies * length`` weight gates
+    (each a repeat of the tracer's one-gate cells) and passes them down as
     ranges; the description is ``O(log length)`` whatever ``copies`` is.
     """
 
@@ -330,11 +391,10 @@ def wide_description(copies: int, length: int) -> bytes:
             level = tracer.repeat(len(level) // 2, plus, level[0:2].by(2))
         return level[0]
 
-    @tracer.definition(
-        input_count=length + copies * length, key=("layer", copies, length), role="replay"
-    )
-    def layer(v):
-        x, w = v[:length], v[length:]
+    @tracer.definition(input_count=0, key=("layer", copies, length), role="replay")
+    def layer(_v):
+        x = tracer.inputs(length)
+        w = tracer.weights(copies * length)
         return tracer.repeat(copies, dot, x, w[0:length].by(length))
 
     return tracer.serialize(layer)
@@ -344,19 +404,19 @@ def admission(copies: int, length: int) -> Callable[[], float]:
     """Seconds to parse, index, tabulate the kinds, build the boundary and price one run."""
 
     description = wide_description(copies, length)
-    input_count = length + copies * length
     policy = VerificationPolicy(Fraction(1, 2), 1)
 
     def timed() -> float:
         start = time.perf_counter()
-        compiled = Compiler(GATES).compile(description, range(input_count))
+        compiled = Compiler(GATES).compile(description, range(length))
         kinds = compiled.index.kinds()
         boundary = compiled.index.boundary()
         work = expected_work(compiled, policy, 2)
         elapsed = time.perf_counter() - start
-        assert compiled.index.root.frame.definition.input_count == input_count
-        assert boundary.count == input_count + copies
-        assert {row.out_count for row in kinds} == {1, copies}
+        assert compiled.index.root.frame.definition.input_count == 0
+        assert (compiled.index.input_count, compiled.index.weight_count) == (length, copies * length)
+        assert boundary.count == length + copies
+        assert {row.out_count for row in kinds} == {0, 1, copies}
         assert work > 0
         return elapsed
 
@@ -384,11 +444,19 @@ def test_admission_does_not_scale_with_the_input_count(monkeypatch):
 
 
 def test_the_wide_layer_declares_and_reads_every_input():
-    compiled = Compiler(GATES).compile(wide_description(4, 4), range(4 + 4 * 4))
-    layer = compiled.index.root.frame.definition
-    dot = compiled.index.verification_unit(0).frame.definition
+    compiled = Compiler(GATES).compile(wide_description(4, 4), range(4))
+    index = compiled.index
+    layer = index.root.frame.definition
+    dot = index.verification_unit(4 + 16).frame.definition  # after the input and weight cells
 
-    assert layer.out_runs == (Run(2 * 4 - 2, 4, 2 * 4 - 1, 8),)
-    assert len(layer.reads) == layer.input_count == 20
+    assert index.verification_units(0).count == 4 + 16 + 4
+    assert layer.out_runs == (Run(4 + 16 + 2 * 4 - 2, 4, 2 * 4 - 1, 8),)
+    assert layer.input_runs == (Run(0, 4, 1, 8),) and layer.weight_runs == (Run(4, 16, 1, 8),)
+    assert (layer.input_total, layer.weight_total) == (4, 16)
+    assert layer.input_count == 0 and layer.reads == ()
     assert len(dot.reads) == dot.input_count == 8
-    assert [row.input_count for row in compiled.index.kinds() if row.role == "replay"] == [20]
+    assert [row.input_count for row in index.kinds() if row.role == "replay"] == [0]
+    assert [index.boundary().unrank(r) for r in range(4)] == [0, 1, 2, 3]
+    assert [index.weights().rank(a) for a in range(4, 20)] == list(range(16))
+    tape = compiled.circuit.evaluate(range(1, 5), [1] * 16)
+    assert [tape[o] for o in compiled.circuit.outputs] == [10, 10, 10, 10]

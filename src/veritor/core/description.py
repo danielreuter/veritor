@@ -11,22 +11,30 @@ optional ``role`` mark.  Steps are:
   ``j * jstride``.
 
 Every argument (and every declared output) is a :class:`Range` in *relative*
-coordinates: ``space`` is ``"input"`` (the definition's own inputs) or
-``"local"`` (output *slots* of earlier steps in the same definition).  A gate
-step has one slot; a call has ``child.output_count`` slots; a repeat has
-``count * child.output_count`` slots, copy-major.
+coordinates: ``space`` is ``"input"`` (the definition's own inputs, its
+*ports*) or ``"local"`` (output *slots* of earlier steps in the same
+definition).  A gate step has one slot; a call has ``child.output_count``
+slots; a repeat has ``count * child.output_count`` slots, copy-major.
 
-Layout.  The circuit's addresses are ``[0, input_count)`` for the root inputs
-followed by the gates in step order, each call or repeat copy occupying one
-contiguous block.  Every copy of a definition is therefore an interval, and
-descending from the root to any address costs ``O(depth)``: bisect on step
-starts within a definition and divide by the child size within a repeat.
+Layout.  The root has no ports: the circuit's inputs and weights are
+zero-arity *source* gates (``in`` and ``weight``) that live inside units like
+every other gate, and the circuit's addresses are the root's gates in step
+order, each call or repeat copy occupying one contiguous block.  Every copy
+of a definition is therefore an interval, and descending from the root to any
+address costs ``O(depth)``: bisect on step starts within a definition and
+divide by the child size within a repeat.  Ports remain the relative
+addressing mechanism of non-root definitions.
 
 Interfaces.  ``Out`` of a definition is its declared outputs resolved to the
-gates a copy owns.  Everything in a description is affine, so this is a union
-of arithmetic progressions, kept as a tuple of :class:`Run` computed once per
-definition in time proportional to the description, never to the number of
-outputs; the compiler requires the runs to be pairwise disjoint.
+gates a copy owns, minus its source gates (*pinned* positions: they are
+boundary positions already, under the input or the weight commitment).
+Everything in a description is affine, so this is a union of arithmetic
+progressions, kept as a tuple of :class:`Run` computed once per definition
+in time proportional to the description, never to the number of outputs; the
+compiler requires the runs to be pairwise disjoint.  The source gates inside
+a definition are runs too (``input_runs``, ``weight_runs``), and their
+counts are prefix-summed per step so the rank of an input or weight gate in
+address order is an ``O(depth)`` descent.
 """
 
 from __future__ import annotations
@@ -34,16 +42,29 @@ from __future__ import annotations
 from bisect import bisect_right
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
+from enum import Enum
 from functools import cached_property
 from math import gcd
 
-from .gates import Gate
+from .errors import InvalidArtifact
+from .gates import INPUT_SOURCE, WEIGHT_SOURCE, Gate
 
 INPUT = "input"
 LOCAL = "local"
 REPLAY = "replay"
 VERIFICATION = "verification"
 ROLES = (REPLAY, VERIFICATION)
+
+
+class PieceKind(Enum):
+    """What a resolved declared output is, relative to the copy declaring it."""
+
+    GATE = "gate"
+    """A gate the copy owns: a member of ``Out``."""
+    PORT = "port"
+    """A port ordinal passed straight through (width ``0``); the parent resolves it."""
+    PINNED = "pinned"
+    """A source gate the copy owns: a boundary position already, so not in ``Out``."""
 
 
 def _derived():  # type: ignore[no-untyped-def]
@@ -135,6 +156,15 @@ class GateStep:
     def slots(self) -> int:
         return 1
 
+    @property
+    def pinned(self) -> bool:
+        """Whether the gate is a source gate (``in``/``weight``)."""
+
+        return self.gate.source is not None
+
+    def source_total(self, source: str) -> int:
+        return int(self.gate.source == source)
+
 
 @dataclass(frozen=True, slots=True)
 class CallStep:
@@ -157,6 +187,9 @@ class CallStep:
     def slots(self) -> int:
         return self.count * self.child.output_count
 
+    def source_total(self, source: str) -> int:
+        return self.count * self.child.source_total(source)
+
     def arg_at(self, ordinal: int) -> tuple[Range, int]:
         """The argument range and element feeding child input ``ordinal``."""
 
@@ -171,10 +204,13 @@ class Definition:
     """One validated definition with its per-kind summaries.
 
     Summaries are computed once per definition, never per copy: ``size`` is
-    the number of gates, the costs sum gate costs, and the unit counts and
+    the number of gates, the costs sum gate costs, and the unit counts,
     ``out_total`` (the number of boundary addresses contributed by the replay
-    units inside) feed the prefix sums that make unit and boundary lookups
-    ``O(depth)``.
+    units inside) and the source-gate totals (``input_total``,
+    ``weight_total``: the input and weight gates inside, counted through
+    calls and repeats) feed the prefix sums that make unit, boundary, input
+    and weight lookups ``O(depth)``.  ``input_count`` is the number of
+    *ports*, the declared interface ``In``.
     """
 
     digest: str
@@ -186,6 +222,8 @@ class Definition:
     step_slot: tuple[int, ...] = _derived()
     step_replay: tuple[int, ...] = _derived()
     step_verification: tuple[int, ...] = _derived()
+    step_input: tuple[int, ...] = _derived()
+    step_weight: tuple[int, ...] = _derived()
     output_starts: tuple[int, ...] = _derived()
     depth: int = _derived()
     replay_cost: int = _derived()
@@ -197,6 +235,8 @@ class Definition:
         set_(self, "step_address", prefix_sums([step.size for step in steps]))
         set_(self, "step_slot", prefix_sums([step.slots for step in steps]))
         set_(self, "output_starts", prefix_sums([item.count for item in self.outputs]))
+        for source, name in ((INPUT_SOURCE, "step_input"), (WEIGHT_SOURCE, "step_weight")):
+            set_(self, name, prefix_sums([step.source_total(source) for step in steps]))
         calls = [step for step in steps if isinstance(step, CallStep)]
         set_(self, "depth", 1 + max((c.child.depth for c in calls), default=-1))
         set_(
@@ -252,6 +292,26 @@ class Definition:
     def verification_units(self) -> int:
         return 1 if self.role == VERIFICATION else self.step_verification[-1]
 
+    @property
+    def input_total(self) -> int:
+        """Input gates inside one copy (through calls and repeats)."""
+
+        return self.step_input[-1]
+
+    @property
+    def weight_total(self) -> int:
+        """Weight gates inside one copy (through calls and repeats)."""
+
+        return self.step_weight[-1]
+
+    def source_total(self, source: str) -> int:
+        return self.step_source(source)[-1]
+
+    def step_source(self, source: str) -> tuple[int, ...]:
+        """Prefix sums of the ``source`` gates per step (``INPUT_SOURCE``/``WEIGHT_SOURCE``)."""
+
+        return self.step_input if source == INPUT_SOURCE else self.step_weight
+
     # -- relative resolution -------------------------------------------------
 
     def step_at_address(self, offset: int) -> int:
@@ -295,18 +355,18 @@ class Definition:
     # -- lazy per-kind summaries ---------------------------------------------
 
     @cached_property
-    def resolved_outputs(self) -> tuple[tuple[bool, Run], ...]:
-        """The declared outputs as pieces: ``(True, gate run)`` or ``(False, input run)``.
+    def resolved_outputs(self) -> tuple[tuple[PieceKind, Run], ...]:
+        """The declared outputs as pieces: a :class:`PieceKind` and a run.
 
-        An input run (width ``0``) holds the input ordinals that outputs pass
-        straight through; a parent resolves them further through its own
-        argument ranges.  Adjacent pieces that continue one progression are
-        merged.
+        A ``GATE`` or ``PINNED`` run holds gate offsets of the copy; a ``PORT``
+        run (width ``0``) holds the port ordinals that outputs pass straight
+        through, which a parent resolves further through its own argument
+        ranges.  Adjacent pieces that continue one progression are merged.
         """
 
         return tuple(_merge(_declared_pieces(self, 0, self.output_count, 1)))
 
-    def resolve_outputs(self, limit: int) -> tuple[tuple[bool, Run], ...] | None:
+    def resolve_outputs(self, limit: int) -> tuple[tuple[PieceKind, Run], ...] | None:
         """Resolve the declared interface, giving up after ``limit`` pieces.
 
         Pieces are counted before merging, so the work is bounded by
@@ -334,20 +394,58 @@ class Definition:
 
     @cached_property
     def out_runs(self) -> tuple[Run, ...]:
-        """``Out`` of a copy: runs of the gate offsets it owns, ordered by start.
+        """``Out`` of a copy: runs of the unpinned gate offsets it owns, ordered by start.
 
-        The declared interface resolved to gates; outputs that merely pass an
-        input through are not addresses of the copy and are dropped, and runs
-        left adjacent by that are merged.  The members of ``Out`` are ranked
-        run by run in this order, which is address order unless runs
-        interleave.
+        The declared interface resolved to gates; outputs that merely pass a
+        port through are not addresses of the copy, and source gates are
+        boundary positions already (under the input or weight commitment), so
+        both are dropped and runs left adjacent by that are merged.  The
+        members of ``Out`` are ranked run by run in this order, which is
+        address order unless runs interleave.
         """
 
-        gates = sorted(
-            (run for is_gate, run in self.resolved_outputs if is_gate),
-            key=lambda run: (run.start, run.stride),
+        return _sorted_runs(
+            run for kind, run in self.resolved_outputs if kind is PieceKind.GATE
         )
-        return tuple(run for _, run in _merge((True, run) for run in gates))
+
+    @cached_property
+    def input_runs(self) -> tuple[Run, ...]:
+        """Runs of the input-gate offsets inside one copy (through calls and repeats)."""
+
+        return _sorted_runs(_source_runs(self, INPUT_SOURCE))
+
+    @cached_property
+    def weight_runs(self) -> tuple[Run, ...]:
+        """Runs of the weight-gate offsets inside one copy (through calls and repeats)."""
+
+        return _sorted_runs(_source_runs(self, WEIGHT_SOURCE))
+
+    def source_runs(self, source: str) -> tuple[Run, ...]:
+        return self.input_runs if source == INPUT_SOURCE else self.weight_runs
+
+    def resolve_source_runs(self, source: str, limit: int) -> tuple[Run, ...] | None:
+        """Like :meth:`resolve_outputs` for the ``source`` gate runs inside.
+
+        Runs are counted before merging; on success the result is cached as
+        ``input_runs`` or ``weight_runs``, otherwise ``None`` is returned.
+        """
+
+        produced = 0
+
+        def counted() -> Iterator[Run]:
+            nonlocal produced
+            for run in _source_runs(self, source):
+                produced += 1
+                if produced > limit:
+                    return
+                yield run
+
+        runs = _sorted_runs(counted())
+        if produced > limit:
+            return None
+        name = "input_runs" if source == INPUT_SOURCE else "weight_runs"
+        self.__dict__[name] = runs
+        return runs
 
     @cached_property
     def out_starts(self) -> tuple[int, ...]:
@@ -438,18 +536,46 @@ class Definition:
 
 # -- resolving declared outputs to runs --------------------------------------
 #
-# A *piece* is ``(True, run)`` for gate offsets of the definition or
-# ``(False, run)`` for input ordinals it passes through (width 0).  Every
-# coordinate progression is cut at the segment boundaries it crosses (steps,
-# output ranges, argument ranges) and each segment maps affinely onto the
-# child's pieces, so the work is proportional to the pieces produced, never to
-# the number of outputs.  Only a progression whose elements land on different
-# child outputs in a non-affine way (a stride that is not a multiple of the
-# child's output count) is split into its residue classes, one per distinct
-# child output it visits: exact enumeration when there are as many classes as
-# elements.
+# A *piece* is a :class:`PieceKind` with a run: ``GATE`` or ``PINNED`` for gate
+# offsets of the definition (pinned when they are source gates), ``PORT`` for
+# port ordinals it passes through (width 0).  Every coordinate progression is
+# cut at the segment boundaries it crosses (steps, output ranges, argument
+# ranges) and each segment maps affinely onto the child's pieces, so the work
+# is proportional to the pieces produced, never to the number of outputs.
+# Only a progression whose elements land on different child outputs in a
+# non-affine way (a stride that is not a multiple of the child's output count)
+# is split into its residue classes, one per distinct child output it visits:
+# exact enumeration when there are as many classes as elements.
 
-type _Piece = tuple[bool, Run]
+type _Piece = tuple[PieceKind, Run]
+
+
+def _sorted_runs(runs: Iterable[Run]) -> tuple[Run, ...]:
+    """Runs of one kind ordered by start, adjacent continuations merged."""
+
+    ordered = sorted(runs, key=lambda run: (run.start, run.stride))
+    return tuple(run for _, run in _merge((PieceKind.GATE, run) for run in ordered))
+
+
+def _source_runs(definition: Definition, source: str) -> Iterator[Run]:
+    """Runs of the ``source`` gate offsets inside one copy, in step order.
+
+    A source gate step is one offset; a call or repeat lifts the child's runs
+    through the copy grid, so ``repeat n cell`` of a one-gate cell is one run
+    of ``n`` whatever ``n`` is.
+    """
+
+    for index, step in enumerate(definition.steps):
+        base = definition.step_address[index]
+        if isinstance(step, GateStep):
+            if step.gate.source == source:
+                yield Run(base, 1, 0, step.gate.width)
+            continue
+        child = step.child
+        for run in child.source_runs(source):
+            grid = _grid(base + run.start, step.count, child.size, run.count, run.stride)
+            for start, count, stride in grid:
+                yield Run(start, count, stride, run.width)
 
 
 def _split(
@@ -501,21 +627,21 @@ def _merge(pieces: Iterable[_Piece]) -> Iterator[_Piece]:
     """Join adjacent pieces of one kind and width that continue one progression."""
 
     held: _Piece | None = None
-    for is_gate, run in pieces:
+    for kind, run in pieces:
         if held is not None:
-            last_gate, last = held
+            last_kind, last = held
             gap = run.start - last.last
             if (
-                last_gate == is_gate
+                last_kind is kind
                 and last.width == run.width
                 and gap > 0
                 and (last.count == 1 or last.stride == gap)
                 and (run.count == 1 or run.stride == gap)
             ):
-                held = (is_gate, Run(last.start, last.count + run.count, gap, run.width))
+                held = (kind, Run(last.start, last.count + run.count, gap, run.width))
                 continue
             yield held
-        held = (is_gate, run)
+        held = (kind, run)
     if held is not None:
         yield held
 
@@ -526,14 +652,15 @@ def _pieces(
     """Pieces for the relative coordinates ``start + k * stride`` (``k < count``)."""
 
     if space == INPUT:
-        yield False, Run(start, count, stride if count > 1 else 0, 0)
+        yield PieceKind.PORT, Run(start, count, stride if count > 1 else 0, 0)
         return
     for index, first, taken in _split(definition.step_slot, start, count, stride):
         step = definition.steps[index]
         base = definition.step_address[index]
         if isinstance(step, GateStep):
             # several elements here only when stride is 0: the same gate repeated
-            yield True, Run(base, taken, 0, step.gate.width)
+            kind = PieceKind.PINNED if step.pinned else PieceKind.GATE
+            yield kind, Run(base, taken, 0, step.gate.width)
             continue
         slot = start + first * stride - definition.step_slot[index]
         yield from _call_pieces(definition, step, base, slot, taken, stride)
@@ -576,15 +703,15 @@ def _call_pieces(
     child = step.child
     outputs = child.output_count
     resolved = child.resolved_outputs
-    if len(resolved) == 1 and resolved[0][0]:
+    if len(resolved) == 1 and resolved[0][0] is not PieceKind.PORT:
         # One gate run whose pitch tiles the copy (a single output, or a run
         # spanning the copy): the gate offset is affine in the slot, so any
         # stride over any number of copies is one run.
-        run = resolved[0][1]
+        kind, run = resolved[0]
         pitch = child.size if outputs == 1 else run.stride
         if pitch * outputs == child.size:
             start = base + run.start + pitch * slot
-            yield True, Run(start, count, pitch * stride if count > 1 else 0, run.width)
+            yield kind, Run(start, count, pitch * stride if count > 1 else 0, run.width)
             return
     copy, ordinal = divmod(slot, outputs)
     last_copy = (slot + (count - 1) * stride) // outputs
@@ -634,18 +761,18 @@ def _lift(
 ) -> Iterator[_Piece]:
     """Child pieces of copies ``copy + j * copy_stride`` (``j < copies``) in the parent.
 
-    Gate runs shift by the copy's offset; pass-through inputs are fed by the
-    step's argument ranges, so they become the parent's own coordinates and
-    are resolved there in turn.
+    Gate and pinned runs shift by the copy's offset; pass-through ports are
+    fed by the step's argument ranges, so they become the parent's own
+    coordinates and are resolved there in turn.
     """
 
     child = step.child
-    for is_gate, run in pieces:
-        if is_gate:
+    for kind, run in pieces:
+        if kind is not PieceKind.PORT:
             origin = base + copy * child.size + run.start
             grid = _grid(origin, copies, copy_stride * child.size, run.count, run.stride)
             for start, count, stride in grid:
-                yield True, Run(start, count, stride, run.width)
+                yield kind, Run(start, count, stride, run.width)
             continue
         for index, first, taken in _split(step.arg_starts, run.start, run.count, run.stride):
             item = step.args[index]
@@ -656,7 +783,7 @@ def _lift(
             )
             for start, count, stride in grid:
                 if item.space == INPUT:
-                    yield False, Run(start, count, stride, 0)
+                    yield PieceKind.PORT, Run(start, count, stride, 0)
                 else:
                     yield from _pieces(definition, LOCAL, start, count, stride)
 
@@ -668,7 +795,8 @@ class Frame:
     ``base`` is the address of the copy's first gate.  The ``*_before``
     counters are prefix sums over everything laid out before this copy, so a
     frame reached by descent knows its replay-unit index, the global index of
-    its first verification unit, and how many boundary addresses precede it.
+    its first verification unit, how many boundary addresses precede it, and
+    the ranks of its first input and weight gates.
     """
 
     definition: Definition
@@ -680,10 +808,14 @@ class Frame:
     replay_before: int
     verification_before: int
     out_before: int
+    input_before: int
+    weight_before: int
 
     @staticmethod
     def root(definition: Definition) -> Frame:
-        return Frame(definition, definition.input_count, None, -1, 0, 0, 0, 0, 0)
+        if definition.input_count != 0:
+            raise InvalidArtifact("the root has no ports; inputs are `in` gates")
+        return Frame(definition, 0, None, -1, 0, 0, 0, 0, 0, 0, 0)
 
     @property
     def interval(self) -> range:
@@ -707,10 +839,44 @@ class Frame:
             + d.step_verification[index]
             + copy * c.verification_units,
             self.out_before + d.step_out[index] + copy * c.out_total,
+            self.input_before + d.step_input[index] + copy * c.input_total,
+            self.weight_before + d.step_weight[index] + copy * c.weight_total,
         )
 
+    def source_before(self, source: str) -> int:
+        return self.input_before if source == INPUT_SOURCE else self.weight_before
+
+    def source_address(self, source: str, rank: int) -> int:
+        """The address of the ``source`` gate of the given rank inside this copy.
+
+        An ``O(depth)`` descent: bisect the per-step prefix sums, divide by
+        the child's total within a repeat.
+        """
+
+        frame = self
+        rank -= frame.source_before(source)
+        while True:
+            d = frame.definition
+            sums = d.step_source(source)
+            index = bisect_right(sums, rank) - 1
+            step = d.steps[index]
+            if isinstance(step, GateStep):
+                return frame.base + d.step_address[index]
+            copy, rank = divmod(rank - sums[index], step.child.source_total(source))
+            frame = frame.child(index, copy)
+
+    def source_rank(self, source: str, address: int) -> int | None:
+        """The rank of the ``source`` gate at ``address`` in this copy, or ``None``."""
+
+        frame, step = self.locate(address)
+        if step.gate.source != source:
+            return None
+        d = frame.definition
+        index = d.step_at_address(address - frame.base)
+        return frame.source_before(source) + d.step_source(source)[index]
+
     def input_address(self, ordinal: int) -> int:
-        """Absolute address feeding this copy's input ``ordinal``."""
+        """Absolute address feeding this copy's port ``ordinal``."""
 
         frame = self
         while frame.parent is not None:
@@ -723,7 +889,7 @@ class Frame:
                 return parent.slot_address(value)
             ordinal = value
             frame = parent
-        return ordinal
+        raise InvalidArtifact("the root has no ports")
 
     def slot_address(self, slot: int) -> int:
         is_gate, value = self.definition.slot_source(slot)

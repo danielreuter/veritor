@@ -8,8 +8,10 @@ verification unit.  Both are lazy sequences: ``count``, ``unit(k)`` and
 ``owner(address)`` all cost ``O(depth)`` through the prefix sums stored on the
 definitions (bisect within a step list, divide within a ``repeat``).
 
-The boundary ``inputs ∪ ⋃_r Out(R_r)`` and each interior ``R_r \\ boundary``
-are lazy address sets built the same way; nothing about them is stored.
+The circuit's inputs and weights are source gates inside the units.  The
+input gates ``In``, the weight gates ``W``, the boundary
+``In ∪ ⋃_r Out(R_r)`` and each interior ``R_r \\ (boundary ∪ W)`` are lazy
+address sets built the same way; nothing about them is stored.
 
 Canonical chunking of long step lists (so a cut can fall inside a definition)
 is a later phase: today a unit is always a whole copy of a definition.
@@ -23,8 +25,9 @@ from dataclasses import dataclass
 
 from .description import REPLAY, VERIFICATION, CallStep, Definition, Frame, GateStep
 from .errors import InvalidArtifact
+from .gates import INPUT_SOURCE, WEIGHT_SOURCE
 from .identity import Digest, identity_digest
-from .indexed import IndexedDomain, IntervalDifferenceDomain, IntervalDomain
+from .indexed import IndexedDomain, IntervalDifferenceDomain
 from .limits import CompilationLimits
 
 
@@ -193,13 +196,14 @@ class KindSummary:
     Copies of a kind are isomorphic, so everything a fold over the index
     needs is computed once per kind here and weighted by ``copies``.
     ``input_count`` and ``out_count`` are the sizes of the *declared*
-    interfaces of one copy: its inputs as declared (a superset of what its
+    interfaces of one copy: its ports as declared (a superset of what its
     gates read, so pricing by it is conservative) and ``Out``, its declared
-    outputs resolved to the gates it owns; ``out_bits`` is the width of
-    ``Out`` in bits.  ``children`` counts, per child kind, the copies one
-    copy of this kind calls directly; ``verification_units`` and
-    ``verification_kinds`` describe the verification units inside one copy (a
-    verification kind contains itself).
+    outputs resolved to the unpinned gates it owns; ``out_bits`` is the width
+    of ``Out`` in bits.  ``source_inputs`` and ``source_weights`` count the
+    input and weight gates inside one copy.  ``children`` counts, per child
+    kind, the copies one copy of this kind calls directly;
+    ``verification_units`` and ``verification_kinds`` describe the
+    verification units inside one copy (a verification kind contains itself).
     """
 
     kind: str
@@ -211,6 +215,8 @@ class KindSummary:
     input_count: int
     out_count: int
     out_bits: int
+    source_inputs: int
+    source_weights: int
     min_depth: int
     max_depth: int
     children: tuple[tuple[str, int], ...]
@@ -232,11 +238,29 @@ class Index:
 
     @property
     def input_count(self) -> int:
-        return self._frame.definition.input_count
+        """The number of input gates ``|In|`` (the root has no ports)."""
+
+        return self._frame.definition.input_total
+
+    @property
+    def weight_count(self) -> int:
+        """The number of weight gates ``|W|``."""
+
+        return self._frame.definition.weight_total
 
     @property
     def n(self) -> int:
-        return self._frame.base + self._frame.definition.size
+        return self._frame.definition.size
+
+    def inputs(self) -> IndexedDomain[int]:
+        """``In``: the addresses of the input gates, ranked in address order."""
+
+        return _Sources(self, INPUT_SOURCE)
+
+    def weights(self) -> IndexedDomain[int]:
+        """``W``: the addresses of the weight gates, ranked in address order."""
+
+        return _Sources(self, WEIGHT_SOURCE)
 
     def verification_units(self, replay_unit: int) -> Units:
         """The verification units inside replay unit ``replay_unit``.
@@ -266,39 +290,29 @@ class Index:
         )
         return IndexNode(frame)
 
-    def boundary(self, exclude: range | None = None) -> IndexedDomain[int]:
-        """``inputs ∪ ⋃_r Out(R_r)``: the addresses the boundary commitment covers.
+    def boundary(self) -> IndexedDomain[int]:
+        """``In ∪ ⋃_r Out(R_r)``: the addresses the boundary commitment covers.
 
-        ``exclude`` drops a sub-range of the inputs ``range(0, input_count)``
-        (the weights ``W``, committed under their own root), giving ``∂ \\ W``
-        at no cost per address.  The circuit outputs are always inside this
-        set: every output resolves through the declared interface of the
-        replay unit that owns it.
+        The input gates by rank, then the units' ``Out`` in unit order.  The
+        weight gates are committed under their own root and are not here.
+        The circuit outputs are always inside this set: every output resolves
+        through the declared interface of the replay unit that owns it.
         """
 
-        inputs = self.input_count
-        if exclude is None:
-            exclude = range(0)
-        if (
-            type(exclude) is not range
-            or exclude.step != 1
-            or not 0 <= exclude.start <= exclude.stop <= inputs
-        ):
-            raise InvalidArtifact(
-                f"exclude must be a sub-range of the inputs range(0, {inputs})"
-            )
-        return _Boundary(self, exclude)
+        return _Boundary(self)
 
     def interior(self, replay_unit: int) -> IntervalDifferenceDomain:
-        """``R_r`` minus the boundary: the unit's interval minus the runs of its ``Out``."""
+        """``R_r`` minus the boundary and the weights: its interval minus ``Out`` and its pinned runs."""
 
         frame = self.replay_units.unit(replay_unit).frame
+        definition = frame.definition
         return IntervalDifferenceDomain(
             frame.base,
-            frame.base + frame.definition.size,
+            frame.base + definition.size,
             (
                 (frame.base + run.start, run.count, run.stride)
-                for run in frame.definition.out_runs
+                for runs in (definition.out_runs, definition.input_runs, definition.weight_runs)
+                for run in runs
             ),
         )
 
@@ -344,6 +358,8 @@ class Index:
                 input_count=definition.input_count,
                 out_count=definition.out_count,
                 out_bits=definition.out_bits,
+                source_inputs=definition.input_total,
+                source_weights=definition.weight_total,
                 min_depth=min_depth[definition.digest],
                 max_depth=max_depth[definition.digest],
                 children=_multiset(definition, None),
@@ -354,33 +370,86 @@ class Index:
         )
 
 
-class _Boundary:
-    """Lazy ``(inputs \\ W) ∪ ⋃_r Out(R_r)`` with ``O(depth)`` rank and unrank.
+class _Sources:
+    """Lazy addresses of the ``source`` gates (``In`` or ``W``) in address order.
 
-    Inputs occupy ``[0, input_count)`` and every unit's ``Out`` lies inside its
-    interval, so the boundary is the kept inputs followed by the units'
-    declared outputs unit by unit, each unit's in the run order of its kind
-    (address order unless runs interleave); ``out_before`` on the frames
-    gives the prefix sums and a unit's runs the rank within it.  The kept
-    inputs are the at most two runs on either side of the excluded range, an
-    :class:`IntervalDomain`.
+    The rank of a source gate is the number of source gates of its kind laid
+    out before it: ``input_before``/``weight_before`` on the frames and the
+    per-step prefix sums inside a definition give it by descent, and unrank
+    descends the same sums (bisect within a step list, divide within a
+    ``repeat``), so everything is ``O(depth)``.
+    """
+
+    __slots__ = ("_frame", "count", "identity_digest", "source")
+
+    def __init__(self, index: Index, source: str) -> None:
+        self._frame = index._frame
+        self.source = source
+        self.count = self._frame.definition.source_total(source)
+        self.identity_digest = identity_digest(
+            "veritor/indexed-domain/sources/v1",
+            {"index": index.digest, "source": source},
+        )
+
+    @property
+    def digest(self) -> Digest:
+        return self.identity_digest
+
+    def _rank(self, item: int) -> int | None:
+        if type(item) is not int or item not in self._frame.interval:
+            return None
+        return self._frame.source_rank(self.source, item)
+
+    def contains(self, item: int) -> bool:
+        return self._rank(item) is not None
+
+    def __contains__(self, item: object) -> bool:
+        return self.contains(item)  # type: ignore[arg-type]
+
+    def rank(self, item: int) -> int:
+        rank = self._rank(item)
+        if rank is None:
+            raise KeyError(item)
+        return rank
+
+    def unrank(self, rank: int) -> int:
+        if type(rank) is not int:
+            raise TypeError("rank must be an integer")
+        if not 0 <= rank < self.count:
+            raise IndexError(f"rank {rank} is outside domain of size {self.count}")
+        return self._frame.source_address(self.source, rank)
+
+    def __iter__(self) -> Iterator[int]:
+        for rank in range(self.count):
+            yield self.unrank(rank)
+
+    def __len__(self) -> int:
+        return self.count
+
+
+class _Boundary:
+    """Lazy ``In ∪ ⋃_r Out(R_r)`` with ``O(depth)`` rank and unrank.
+
+    The input gates come first, by rank, then the units' declared outputs
+    unit by unit, each unit's in the run order of its kind (address order
+    unless runs interleave); ``out_before`` on the frames gives the prefix
+    sums and a unit's runs the rank within it.  The two parts are disjoint:
+    ``Out`` never contains a pinned gate.
     """
 
     __slots__ = ("_index", "_inputs", "count", "identity_digest")
 
-    def __init__(self, index: Index, exclude: range) -> None:
+    def __init__(self, index: Index) -> None:
         self._index = index
-        frame = index._frame
-        inputs = frame.definition.input_count
-        self._inputs = IntervalDomain(((0, exclude.start), (exclude.stop, inputs)))
-        self.count = self._inputs.count + frame.definition.out_total
+        self._inputs = _Sources(index, INPUT_SOURCE)
+        self.count = self._inputs.count + index._frame.definition.out_total
         self.identity_digest = identity_digest(
-            "veritor/indexed-domain/boundary/v3",
-            {
-                "index": index.digest,
-                "inputs": [list(run) for run in self._inputs.intervals],
-            },
+            "veritor/indexed-domain/boundary/v4", {"index": index.digest}
         )
+
+    @property
+    def digest(self) -> Digest:
+        return self.identity_digest
 
     def _locate(self, address: int) -> tuple[Frame, int] | None:
         frame = _unit_frame_at(self._index._frame, address, REPLAY)
@@ -394,9 +463,7 @@ class _Boundary:
     def contains(self, item: int) -> bool:
         if type(item) is not int or not 0 <= item < self._index.n:
             return False
-        if item < self._index.input_count:
-            return self._inputs.contains(item)
-        return self._locate(item) is not None
+        return self._inputs.contains(item) or self._locate(item) is not None
 
     def __contains__(self, item: object) -> bool:
         return self.contains(item)  # type: ignore[arg-type]
@@ -404,8 +471,9 @@ class _Boundary:
     def rank(self, item: int) -> int:
         if type(item) is not int or not 0 <= item < self._index.n:
             raise KeyError(item)
-        if item < self._index.input_count:
-            return self._inputs.rank(item)
+        input_rank = self._inputs._rank(item)
+        if input_rank is not None:
+            return input_rank
         located = self._locate(item)
         if located is None:
             raise KeyError(item)
@@ -419,7 +487,7 @@ class _Boundary:
             raise IndexError(f"rank {rank} is outside domain of size {self.count}")
         inputs = self._inputs.count
         if rank < inputs:
-            return int(self._inputs.unrank(rank))
+            return self._inputs.unrank(rank)
         frame, offset = _frame_by_rank(
             self._index._frame,
             rank - inputs,

@@ -20,10 +20,12 @@ class Compiler:
     """Trusted compilation of a description against a public gate set.
 
     ``compile`` parses and validates the description (canonical encoding,
-    arity, in-range relative references, dependency order, limits), summarizes
-    every definition once, checks the role marks, and builds the lazy circuit
-    and index.  Only the input *count* is checked here (values are checked
-    when they are encoded); ``advice`` is the prover's untrusted hint,
+    arity, in-range relative references, dependency order, limits, a root
+    without ports), summarizes every definition once, checks the role marks,
+    and builds the lazy circuit and index.  Only the input *count* is checked
+    here, against the number of ``in`` gates (values are checked when they
+    are encoded); weight values are not a compile input, they enter through
+    the protocol's ``Weights``.  ``advice`` is the prover's untrusted hint,
     admitted only within ``advice_bound_bits``.
 
     Parametric descriptions (integer parameters bound from the input shape or
@@ -57,15 +59,15 @@ class Compiler:
                 raise CompileError("advice exceeds the public bit bound")
         parsed = parse_description(description, self.gate_set, self.limits)
         root = parsed.root
-        if len(inputs) != root.input_count:
-            raise CompileError(
-                f"the circuit expects {root.input_count} inputs, got {len(inputs)}"
-            )
         try:
             index = Index(root, self.limits)
             circuit = DescriptionCircuit(root, self.gate_set)
         except InvalidArtifact as error:
             raise CompileError(str(error)) from error
+        if len(inputs) != index.input_count:
+            raise CompileError(
+                f"the circuit expects {index.input_count} inputs, got {len(inputs)}"
+            )
         return Compiled(
             circuit, index, Compiled.digest_of(parsed.digest, self.gate_set.digest)
         )

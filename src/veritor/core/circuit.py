@@ -1,8 +1,11 @@
 """The circuit ``C``: one interface, a flat and a lazy implementation.
 
 Addresses ``0 .. n-1`` name every value of the computation.  ``C[i]`` is a
-:class:`GateRef`; inputs are gates with op ``"input"`` and no arguments, so
-they are members of the address space (and of units) like any other gate.
+:class:`GateRef`; the circuit's inputs and weights are *source* gates (the
+gate set's ``in`` and ``weight`` gates) with no arguments, so they are members
+of the address space (and of units) like any other gate.  ``inputs`` and
+``weights`` list their addresses by rank in address order; ``evaluate``
+assigns them from ``x`` and ``W`` by rank.
 
 For a set ``S`` of addresses (a node of the index, or an interval for the
 flat circuit):
@@ -21,28 +24,40 @@ flat circuit):
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Protocol, runtime_checkable
 
 from .description import Definition, Frame
 from .errors import InvalidArtifact
-from .gates import GateSet, decode_value, encode_value
+from .gates import INPUT_SOURCE, WEIGHT_SOURCE, GateSet, decode_value, encode_value
 
-INPUT_OP = "input"
 type CostKind = Literal["replay", "proof"]
 
 
 @dataclass(frozen=True, slots=True)
 class GateRef:
-    """``C[i]``: an op name, absolute argument addresses and an output width."""
+    """``C[i]``: an op name, absolute argument addresses, an output width and a source.
+
+    ``source`` is ``"input"`` or ``"weight"`` for a source gate (no
+    arguments; its value comes from ``x`` or ``W``), ``None`` otherwise.
+    """
 
     op: str
     args: tuple[int, ...]
     width: int
+    source: str | None = None
+
+    @property
+    def is_source(self) -> bool:
+        return self.source is not None
 
     @property
     def is_input(self) -> bool:
-        return self.op == INPUT_OP
+        return self.source == INPUT_SOURCE
+
+    @property
+    def is_weight(self) -> bool:
+        return self.source == WEIGHT_SOURCE
 
 
 def _interval(subset: object) -> range:
@@ -74,10 +89,20 @@ class Circuit(Protocol):
     def input_count(self) -> int: ...
 
     @property
-    def inputs(self) -> tuple[int, ...]: ...
+    def weight_count(self) -> int: ...
+
+    @property
+    def inputs(self) -> Sequence[int]: ...
+
+    @property
+    def weights(self) -> Sequence[int]: ...
 
     @property
     def outputs(self) -> Sequence[int]: ...
+
+    def input_rank(self, address: int) -> int: ...
+
+    def weight_rank(self, address: int) -> int: ...
 
     def __getitem__(self, address: int) -> GateRef: ...
 
@@ -97,7 +122,7 @@ class Circuit(Protocol):
 
     def decode(self, address: int, payload: bytes) -> int: ...
 
-    def evaluate(self, inputs: Sequence[int]) -> tuple[int, ...]: ...
+    def evaluate(self, inputs: Sequence[int], weights: Sequence[int] = ()) -> tuple[int, ...]: ...
 
 
 class _Semantics:
@@ -108,17 +133,20 @@ class _Semantics:
     def __getitem__(self, address: int) -> GateRef:
         raise NotImplementedError
 
-    def evaluate_gate(self, address: int, args: Sequence[int]) -> int:
+    def _relation(self, address: int) -> GateRef:
         ref = self[address]
-        if ref.is_input:
-            raise InvalidArtifact(f"address {address} is an input, not a gate")
-        return self.gate_set[ref.op].evaluate(args)
+        if ref.is_source:
+            raise InvalidArtifact(
+                f"address {address} is a source gate ({ref.op}); "
+                "its value comes from the environment, not a relation"
+            )
+        return ref
+
+    def evaluate_gate(self, address: int, args: Sequence[int]) -> int:
+        return self.gate_set[self._relation(address).op].evaluate(args)
 
     def check_gate(self, address: int, args: Sequence[int], out: int) -> bool:
-        ref = self[address]
-        if ref.is_input:
-            raise InvalidArtifact(f"address {address} is an input, not a gate")
-        return self.gate_set[ref.op].check(args, out)
+        return self.gate_set[self._relation(address).op].check(args, out)
 
     def encode(self, address: int, value: object) -> bytes:
         return encode_value(self[address].width, value)
@@ -127,8 +155,6 @@ class _Semantics:
         return decode_value(self[address].width, payload)
 
     def _cost(self, ref: GateRef, kind: CostKind) -> int:
-        if ref.is_input:
-            return 0
         gate = self.gate_set[ref.op]
         if kind == "replay":
             return gate.replay_cost
@@ -137,14 +163,22 @@ class _Semantics:
         raise ValueError(f"unknown cost kind {kind!r}")
 
 
+def _checked_sources(values: Sequence[int], count: int, what: str) -> Sequence[int]:
+    if len(values) != count:
+        raise InvalidArtifact(f"expected {count} {what}, got {len(values)}")
+    return values
+
+
 class FlatCircuit(_Semantics):
     """An explicit gate list; the reference implementation used in tests.
 
-    Inputs may sit anywhere in the address space.  ``In``/``Out``/``Size``/
-    ``Cost`` accept an interval or an index node and are computed by scanning.
+    Source gates may sit anywhere in the address space; a ``GateRef`` whose
+    op is a source gate of the gate set is completed with that source.
+    ``In``/``Out``/``Size``/``Cost`` accept an interval or an index node and
+    are computed by scanning.
     """
 
-    __slots__ = ("_gates", "_inputs", "_outputs", "gate_set")
+    __slots__ = ("_gates", "_inputs", "_outputs", "_ranks", "_weights", "gate_set")
 
     def __init__(
         self,
@@ -152,24 +186,30 @@ class FlatCircuit(_Semantics):
         outputs: Sequence[int],
         gate_set: GateSet,
     ) -> None:
-        self._gates = tuple(gates)
-        for address, ref in enumerate(self._gates):
+        completed: list[GateRef] = []
+        for address, ref in enumerate(gates):
             if not isinstance(ref, GateRef):
                 raise TypeError("FlatCircuit gates must be GateRef values")
-            if ref.is_input:
-                if ref.args:
-                    raise InvalidArtifact(f"input {address} cannot have arguments")
-                continue
             if ref.op not in gate_set:
                 raise InvalidArtifact(f"address {address} uses unknown gate {ref.op!r}")
-            if len(ref.args) != gate_set[ref.op].arity:
+            gate = gate_set[ref.op]
+            if ref.source is not None and ref.source != gate.source:
+                raise InvalidArtifact(f"address {address} misstates the source of {ref.op!r}")
+            if len(ref.args) != gate.arity:
                 raise InvalidArtifact(f"address {address} has the wrong arity")
             if any(not 0 <= arg < address for arg in ref.args):
                 raise InvalidArtifact(f"address {address} reads a later address")
+            completed.append(replace(ref, source=gate.source))
+        self._gates = tuple(completed)
         self._outputs = tuple(outputs)
         if any(not 0 <= out < len(self._gates) for out in self._outputs):
             raise InvalidArtifact("an output names an address outside the circuit")
         self._inputs = tuple(i for i, ref in enumerate(self._gates) if ref.is_input)
+        self._weights = tuple(i for i, ref in enumerate(self._gates) if ref.is_weight)
+        self._ranks = {
+            INPUT_SOURCE: {address: rank for rank, address in enumerate(self._inputs)},
+            WEIGHT_SOURCE: {address: rank for rank, address in enumerate(self._weights)},
+        }
         self.gate_set = gate_set
 
     @property
@@ -181,12 +221,26 @@ class FlatCircuit(_Semantics):
         return len(self._inputs)
 
     @property
+    def weight_count(self) -> int:
+        return len(self._weights)
+
+    @property
     def inputs(self) -> tuple[int, ...]:
         return self._inputs
 
     @property
+    def weights(self) -> tuple[int, ...]:
+        return self._weights
+
+    @property
     def outputs(self) -> tuple[int, ...]:
         return self._outputs
+
+    def input_rank(self, address: int) -> int:
+        return self._ranks[INPUT_SOURCE][address]
+
+    def weight_rank(self, address: int) -> int:
+        return self._ranks[WEIGHT_SOURCE][address]
 
     def __getitem__(self, address: int) -> GateRef:
         if type(address) is not int or not 0 <= address < len(self._gates):
@@ -224,14 +278,15 @@ class FlatCircuit(_Semantics):
     def Cost(self, subset: object, kind: CostKind = "replay") -> int:
         return sum(self._cost(self._gates[a], kind) for a in _interval(subset))
 
-    def evaluate(self, inputs: Sequence[int]) -> tuple[int, ...]:
-        if len(inputs) != len(self._inputs):
-            raise InvalidArtifact(f"expected {len(self._inputs)} inputs")
+    def evaluate(self, inputs: Sequence[int], weights: Sequence[int] = ()) -> tuple[int, ...]:
+        given = {
+            INPUT_SOURCE: iter(_checked_sources(inputs, self.input_count, "inputs")),
+            WEIGHT_SOURCE: iter(_checked_sources(weights, self.weight_count, "weights")),
+        }
         values: list[int] = []
-        given = iter(inputs)
         for ref in self._gates:
-            if ref.is_input:
-                values.append(next(given))
+            if ref.source is not None:
+                values.append(next(given[ref.source]))
             else:
                 values.append(
                     self.gate_set[ref.op].evaluate(tuple(values[a] for a in ref.args))
@@ -298,27 +353,57 @@ class DescriptionCircuit(_Semantics):
 
     @property
     def n(self) -> int:
-        return self.root.input_count + self.root.size
+        return self.root.size
 
     @property
     def input_count(self) -> int:
-        return self.root.input_count
+        return self.root.input_total
 
     @property
-    def inputs(self) -> tuple[int, ...]:
-        return tuple(range(self.root.input_count))
+    def weight_count(self) -> int:
+        return self.root.weight_total
+
+    @property
+    def inputs(self) -> Sequence[int]:
+        frame = self.frame
+        return _LazyAddresses(
+            self.root.input_total, lambda rank: frame.source_address(INPUT_SOURCE, rank)
+        )
+
+    @property
+    def weights(self) -> Sequence[int]:
+        frame = self.frame
+        return _LazyAddresses(
+            self.root.weight_total, lambda rank: frame.source_address(WEIGHT_SOURCE, rank)
+        )
 
     @property
     def outputs(self) -> Sequence[int]:
         return self._outputs
 
+    def _source_rank(self, source: str, address: int) -> int:
+        rank = None
+        if type(address) is int and 0 <= address < self.n:
+            rank = self.frame.source_rank(source, address)
+        if rank is None:
+            raise KeyError(address)
+        return rank
+
+    def input_rank(self, address: int) -> int:
+        """The rank of the input gate at ``address`` (``O(depth)``)."""
+
+        return self._source_rank(INPUT_SOURCE, address)
+
+    def weight_rank(self, address: int) -> int:
+        """The rank of the weight gate at ``address`` (``O(depth)``)."""
+
+        return self._source_rank(WEIGHT_SOURCE, address)
+
     def __getitem__(self, address: int) -> GateRef:
         if type(address) is not int or not 0 <= address < self.n:
             raise IndexError(address)
-        if address < self.root.input_count:
-            return GateRef(INPUT_OP, (), self.width)
         gate, args = self.frame.gate(address)
-        return GateRef(gate.name, args, gate.width)
+        return GateRef(gate.name, args, gate.width, gate.source)
 
     def In(self, subset: object) -> tuple[int, ...]:
         frame = _frame(subset)
@@ -344,12 +429,17 @@ class DescriptionCircuit(_Semantics):
             return definition.proof_cost
         raise ValueError(f"unknown cost kind {kind!r}")
 
-    def evaluate(self, inputs: Sequence[int]) -> tuple[int, ...]:
-        if len(inputs) != self.root.input_count:
-            raise InvalidArtifact(f"expected {self.root.input_count} inputs")
-        values = list(inputs)
-        for address in range(self.root.input_count, self.n):
+    def evaluate(self, inputs: Sequence[int], weights: Sequence[int] = ()) -> tuple[int, ...]:
+        given = {
+            INPUT_SOURCE: iter(_checked_sources(inputs, self.input_count, "inputs")),
+            WEIGHT_SOURCE: iter(_checked_sources(weights, self.weight_count, "weights")),
+        }
+        values: list[int] = []
+        for address in range(self.n):
             gate, args = self.frame.gate(address)
-            values.append(gate.evaluate(tuple(values[a] for a in args)))
+            if gate.source is not None:
+                values.append(next(given[gate.source]))
+            else:
+                values.append(gate.evaluate(tuple(values[a] for a in args)))
         return tuple(values)
 

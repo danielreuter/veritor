@@ -1,7 +1,6 @@
 """The objects of the paper: gate sets, circuits, the index, ``Compiled``, policies."""
 
 from .circuit import (
-    INPUT_OP,
     Circuit,
     CostKind,
     DescriptionCircuit,
@@ -12,6 +11,8 @@ from .compiled import COMPILED_DIGEST_TAG, Compiled
 from .errors import CoreContractError, InvalidArtifact, ResourceLimit
 from .gates import (
     GATE_SET_IDENTITY_TAG,
+    INPUT_SOURCE,
+    WEIGHT_SOURCE,
     Gate,
     GateSet,
     check_value,
@@ -61,7 +62,8 @@ from .policy import (
 __all__ = [
     "COMPILED_DIGEST_TAG",
     "GATE_SET_IDENTITY_TAG",
-    "INPUT_OP",
+    "INPUT_SOURCE",
+    "WEIGHT_SOURCE",
     "Circuit",
     "CompilationLimits",
     "Compiled",

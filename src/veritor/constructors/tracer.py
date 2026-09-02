@@ -6,11 +6,19 @@ compiler re-validates every byte.  Tracer cache keys only affect which
 functions are traced; the definition identity is always the digest of its
 canonical body.
 
-Values are ranges.  ``inputs`` is a :class:`Wires` vector; slicing it (with a
-step) yields another range, indexing yields a :class:`Wire`, and ``by(j)``
-marks a range that shifts by ``j`` per copy of a :meth:`Tracer.repeat`.  A
-call passing a whole vector or a strided column is therefore one range in the
-description regardless of its length.
+Values are ranges.  A definition's ports are a :class:`Wires` vector; slicing
+it (with a step) yields another range, indexing yields a :class:`Wire`, and
+``by(j)`` marks a range that shifts by ``j`` per copy of a
+:meth:`Tracer.repeat`.  A call passing a whole vector or a strided column is
+therefore one range in the description regardless of its length.
+
+The circuit's inputs and weights are source gates: :meth:`Tracer.inputs` and
+:meth:`Tracer.weights` emit ``n`` of them inside the current body as one
+``repeat`` of a canonical one-gate definition marked ``verification`` (so a
+block of ``10**9`` weights is ``O(1)`` description and every source gate is
+its own verification unit by default).  A caller who wants a wider
+verification unit around its inputs calls the ``in``/``weight`` gate of the
+gate set directly inside its own verification-marked definition.
 """
 
 from __future__ import annotations
@@ -24,8 +32,8 @@ from veritor.compile.description import (
     canonical_description,
     definition_digest,
 )
-from veritor.core import Gate, GateSet
-from veritor.core.description import INPUT, LOCAL, ROLES
+from veritor.core import INPUT_SOURCE, WEIGHT_SOURCE, Gate, GateSet
+from veritor.core.description import INPUT, LOCAL, ROLES, VERIFICATION
 
 
 class TracerError(ValueError):
@@ -322,6 +330,42 @@ class Tracer:
         """``count`` copies of ``definition``; ``by(j)`` arguments shift per copy."""
 
         return self._active().emit_repeat(count, definition, args)
+
+    def source_cell(self, source: str) -> TracedDefinition:
+        """The canonical verification unit holding one ``source`` gate (``"input"``/``"weight"``)."""
+
+        names = {INPUT_SOURCE: self.gate_set.input_gates, WEIGHT_SOURCE: self.gate_set.weight_gates}
+        if source not in names:
+            raise TracerError(f"source must be one of {sorted(names)}")
+        if not names[source]:
+            raise TracerError(f"the gate set has no {source} gate")
+        gate = self.gate(names[source][0])
+        return self.definition(input_count=0, key=("veritor.source", source), role=VERIFICATION)(
+            lambda _: gate()
+        )
+
+    def sources(self, source: str, count: int) -> Wires:
+        """``count`` source gates in the current body: one call or ``repeat`` of the canonical cell."""
+
+        if type(count) is not int or count < 1:
+            raise TracerError("the number of source gates must be a positive integer")
+        cell = self.source_cell(source)
+        trace = self._active()
+        if count == 1:
+            wire = trace.emit_call(cell, ())
+            assert isinstance(wire, Wire)
+            return Wires(trace.identity, LOCAL, wire.index, 1, 0)
+        return trace.emit_repeat(count, cell, ())
+
+    def inputs(self, count: int) -> Wires:
+        """``count`` input gates (``x`` by rank) in the current body."""
+
+        return self.sources(INPUT_SOURCE, count)
+
+    def weights(self, count: int) -> Wires:
+        """``count`` weight gates (``W`` by rank) in the current body."""
+
+        return self.sources(WEIGHT_SOURCE, count)
 
     def serialize(self, root: TracedDefinition) -> bytes:
         """Canonical description bytes for ``root`` and everything it calls."""
