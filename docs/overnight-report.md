@@ -353,8 +353,8 @@ downstream tokens are kilobits. Recommendation, in order:
 - **κ_W provenance**: which root a request runs under, and that the verifier held it before the
   epoch, are deployment rules; the code binds the root in the `Expectation` only.
 - **Tracer ergonomics** (§2.8): 2-D ranges, a concatenation primitive, `Wire`/`Wires`.
-- **Paper §7 draft** (`docs/paper/section-7-secure-circuit-compilation.md`) is uncommitted and
-  awaits the Thaler-style revision pass; the Notion outline was unreachable from the
+- **Paper §7 draft** (`docs/paper/section-7-secure-circuit-compilation.md`) is committed as a
+  draft and awaits the Thaler-style revision pass; the Notion outline was unreachable from the
   integration last night.
 - **`W_max` price of one-gate source cells**: `(|x| + |W|)(1 + c_0)` proof cost at `q s`; a
   client defines wider input units to pay less (§2.1). Decide whether the paper's `Cost` should
