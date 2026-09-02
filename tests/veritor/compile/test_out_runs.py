@@ -106,6 +106,8 @@ CASES: dict[str, Callable[[object], bytes]] = {
     "interleaved-4x4": lambda h: interleaved_payload(h, 4, 4),
     "interleaved-5x3": lambda h: interleaved_payload(h, 5, 3),
     "interleaved-3x1": lambda h: interleaved_payload(h, 3, 1),
+    "interleaved-2x2": lambda h: interleaved_payload(h, 2, 2),
+    "interleaved-2x4": lambda h: interleaved_payload(h, 2, 4),
 }
 
 
@@ -145,7 +147,14 @@ def test_strided_outputs_over_children_fall_back_to_residue_runs(helpers):
     assert all(block.out_rank(offset) is None for offset in range(15) if offset not in members)
 
 
-def test_passthrough_outputs_are_not_in_out(helpers):
+@pytest.mark.parametrize(("count", "stride", "runs"), [(2, 2, (Run(1, 2, 1, 8),)), (2, 4, (Run(2, 2, 1, 8),))])
+def test_fewer_elements_than_residue_classes_is_exact_enumeration(helpers, count, stride, runs):
+    index, _circuit = build(interleaved_payload(helpers, count, stride))
+    block = index.root.frame.definition.steps[0].child
+
+    # slots 0 and `stride` land on different child outputs: one element each, then merged
+    assert block.out_runs == runs
+    assert block.out_count == count
     index, circuit = build(passthrough_payload(helpers))
     root = index.root.frame.definition
     unit = root.steps[0].child
