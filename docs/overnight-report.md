@@ -5,8 +5,9 @@ this repository; commit hashes are given where a decision landed.
 
 ## 1. Where the implementation stands
 
-Twenty-six commits on `main` since last evening (`6d15b1f..09c4b52`), 69 files, +9 056 / −1 207
-lines; 798 tests, 89 s, ruff clean. `src/veritor` is 9 900 lines in five packages:
+Thirty-two commits on `main` since last evening (`6d15b1f..HEAD`), about 70 files, +9 500 /
+−1 200 lines; 806 tests, 90 s, ruff clean on `src/veritor` and `tests`. `src/veritor` is 9 900
+lines in five packages:
 
 | Package | Role | Trusted |
 |---|---|---|
