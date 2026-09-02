@@ -311,17 +311,17 @@ class Definition:
         """``Out`` of a copy: runs of the gate offsets it owns, ordered by start.
 
         The declared interface resolved to gates; outputs that merely pass an
-        input through are not addresses of the copy and are dropped.  The
-        members of ``Out`` are ranked run by run in this order, which is
-        address order unless runs interleave.
+        input through are not addresses of the copy and are dropped, and runs
+        left adjacent by that are merged.  The members of ``Out`` are ranked
+        run by run in this order, which is address order unless runs
+        interleave.
         """
 
-        return tuple(
-            sorted(
-                (run for is_gate, run in self.resolved_outputs if is_gate),
-                key=lambda run: (run.start, run.stride),
-            )
+        gates = sorted(
+            (run for is_gate, run in self.resolved_outputs if is_gate),
+            key=lambda run: (run.start, run.stride),
         )
+        return tuple(run for _, run in _merge((True, run) for run in gates))
 
     @cached_property
     def out_starts(self) -> tuple[int, ...]:
