@@ -10,6 +10,7 @@ whose inputs are far larger than anything admission may touch.
 
 from __future__ import annotations
 
+import random
 import time
 from collections.abc import Callable
 from fractions import Fraction
@@ -138,6 +139,56 @@ def within_copy_payload(helpers) -> bytes:
     return doc.serialize(h.wrap(doc, target, 2, 4))
 
 
+def random_strided_payload(helpers, seed: int) -> bytes | None:
+    """Random progressions of slots declared over a repeated leaf with permuted outputs.
+
+    The leaf has ``m`` gates and declares them in a random order, so a slot's
+    gate is not affine in the slot; a replay ``block`` repeats it and declares
+    one to three random ``(start, count, stride)`` runs of slots, which visit
+    whole copies, partial copies, one copy or several residue classes at
+    random.  ``None`` when the runs name a gate twice (rejected, tested
+    elsewhere).
+    """
+
+    rng = random.Random(seed)
+    h = helpers
+    doc = h.Document()
+    m = rng.randint(1, 4)
+    steps = [h.gate("add", h.rng(IN, 0, 2, 0))]
+    for g in range(1, m):
+        steps.append(h.gate("mul", h.rng(LOC, rng.randrange(g)), h.rng(IN, 0)))
+    order = list(range(m))
+    rng.shuffle(order)
+    leaf = doc.add(h.body(1, steps, [h.rng(LOC, p) for p in order], role="verification"))
+    copies = rng.randint(1, 5)
+    slots = copies * m
+    runs: list[tuple[int, int, int]] = []
+    gates: list[int] = []
+    for _ in range(rng.randint(1, 3)):
+        start = rng.randrange(slots)
+        stride = rng.randint(1, max(1, slots // 2))
+        count = rng.randint(1, 1 + (slots - 1 - start) // stride)
+        runs.append((start, count, stride if count > 1 else 0))
+        for k in range(count):
+            copy, ordinal = divmod(start + k * stride, m)
+            gates.append(copy * m + order[ordinal])
+    if len(set(gates)) != len(gates):
+        return None
+    block = doc.add(
+        h.body(
+            1,
+            [h.repeat(copies, leaf, h.jrng(IN, 0))],
+            [h.rng(LOC, start, count, stride) for start, count, stride in runs],
+            role="replay",
+        )
+    )
+    reps = rng.randint(1, 2)
+    target = doc.add(
+        h.body(reps, [h.repeat(reps, block, h.jrng(IN, 0, 1, 0, 1))], [h.rng(LOC, 0, reps * len(gates), 1)])
+    )
+    return doc.serialize(h.wrap(doc, target, reps, reps * len(gates)))
+
+
 def sources_payload(helpers) -> bytes:
     """Source gates everywhere they may be: a weight block, a unit mixing inputs,
     weights and gates whose declared outputs include them, and a strided repeat."""
@@ -227,6 +278,22 @@ def test_strided_outputs_over_children_fall_back_to_residue_runs(helpers):
     assert [block.out_offset(r) for r in range(7)] == members
     assert [block.out_rank(offset) for offset in members] == list(range(7))
     assert all(block.out_rank(offset) is None for offset in range(15) if offset not in members)
+
+
+def test_random_strided_declarations_match_enumeration(helpers, check_interfaces):
+    """The run resolver against the per-ordinal resolver on random strided declarations."""
+
+    checked = 0
+    for seed in range(400):
+        payload = random_strided_payload(helpers, seed)
+        if payload is None:
+            continue
+        index, circuit = build(payload)
+        block = target_of(index).steps[0].child
+        assert sum(run.count for _, run in block.resolved_outputs) == block.output_count
+        check_interfaces(index, circuit)
+        checked += 1
+    assert checked > 200
 
 
 def test_a_strided_run_inside_one_copy_stops_at_the_declared_count(helpers):
