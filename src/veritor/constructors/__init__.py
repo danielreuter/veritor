@@ -32,6 +32,7 @@ from .matmul import (
     expected_matmul_outputs,
     matmul_expected_matrices,
 )
+from .requests import RequestsG
 from .schedule import (
     Join,
     Occupant,
@@ -64,6 +65,7 @@ __all__ = [
     "Occupant",
     "Parameters",
     "Request",
+    "RequestsG",
     "Schedule",
     "ScheduleError",
     "ToyLM",

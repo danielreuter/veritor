@@ -224,6 +224,37 @@ class KindSummary:
     verification_kinds: tuple[tuple[str, int], ...]
 
 
+@dataclass(frozen=True, slots=True)
+class KindTable:
+    """The rows of :meth:`Index.kinds` with the totals a fold over them reads.
+
+    ``Bound``, ``Cost`` and ``expected_work`` are functions of this table
+    alone, so they accept it in place of a :class:`Compiled` artifact: a
+    table written from a model of a circuit (``veritor.evaluation``) is
+    priced exactly like one profiled from a compiled description.  ``root``
+    is the kind of the root definition, ``n`` the number of gates.
+    """
+
+    rows: tuple[KindSummary, ...]
+    root: str
+    n: int
+    input_count: int
+    weight_count: int
+    replay_unit_count: int
+    digest: Digest
+
+    def __post_init__(self) -> None:
+        kinds = {row.kind for row in self.rows}
+        if len(kinds) != len(self.rows):
+            raise ValueError("kind table rows must have distinct kinds")
+        if self.root not in kinds:
+            raise ValueError("kind table root must be one of its rows")
+        for row in self.rows:
+            for child, _ in row.children:
+                if child not in kinds:
+                    raise ValueError(f"kind {row.kind} calls unknown kind {child}")
+
+
 class Index:
     """The hierarchy of copies over the circuit, with its two unit antichains."""
 
@@ -367,6 +398,19 @@ class Index:
                 verification_kinds=verification_kinds[definition.digest],
             )
             for definition in _preorder(root)
+        )
+
+    def kind_table(self) -> KindTable:
+        """:meth:`kinds` with the totals the analysis folds read, under the index digest."""
+
+        return KindTable(
+            rows=self.kinds(),
+            root=self.root.kind,
+            n=self.n,
+            input_count=self.input_count,
+            weight_count=self.weight_count,
+            replay_unit_count=self.replay_units.count,
+            digest=self.digest,
         )
 
 

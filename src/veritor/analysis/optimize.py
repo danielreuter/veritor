@@ -14,6 +14,7 @@ from dataclasses import dataclass, replace
 from fractions import Fraction
 
 from veritor.core.compiled import Compiled
+from veritor.core.index import KindTable
 from veritor.core.policy import ProbabilityInput, VerificationPolicy, exact_fraction
 
 from .bound import BoundOptions, BoundResult, bound
@@ -60,7 +61,7 @@ class Optimization:
 
 
 def optimize(
-    compiled: Compiled,
+    target: Compiled | KindTable,
     eta: ProbabilityInput,
     grid: PolicyGrid,
     *,
@@ -88,10 +89,10 @@ def optimize(
         if accept is not None and not accept(policy):
             continue
         evaluated += 1
-        expected = cost(compiled, policy, parameters)
+        expected = cost(target, policy, parameters)
         if budget is not None and expected.total > budget:
             continue
-        result = bound(compiled, policy, eta, bound_options)
+        result = bound(target, policy, eta, bound_options)
         if max_bits is not None and result.bits > max_bits:
             continue
         key = (expected.total, result.bits) if budget is None else (result.bits, expected.total)

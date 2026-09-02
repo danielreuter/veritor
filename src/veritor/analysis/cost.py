@@ -19,8 +19,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 
-from veritor.core.compiled import Compiled
+from veritor.core.compiled import Compiled, as_kind_table
 from veritor.core.description import REPLAY, VERIFICATION
+from veritor.core.index import KindTable
 from veritor.core.policy import ProbabilityInput, VerificationPolicy, exact_fraction
 
 
@@ -58,23 +59,21 @@ class ExpectedCost:
 
 
 def cost(
-    compiled: Compiled,
+    target: Compiled | KindTable,
     policy: VerificationPolicy,
     parameters: CostParameters | None = None,
 ) -> ExpectedCost:
-    """Fold the expected cost of ``policy`` over the kinds of ``compiled.index``."""
+    """Fold the expected cost of ``policy`` over the kinds of ``target`` (an artifact or its table)."""
 
-    if not isinstance(compiled, Compiled):
-        raise TypeError("cost needs a Compiled artifact")
+    table = as_kind_table(target)
     if not isinstance(policy, VerificationPolicy):
         raise TypeError("policy must be a VerificationPolicy")
     parameters = CostParameters() if parameters is None else parameters
     h, c0 = parameters.hash_cost, parameters.proof_overhead
-    index = compiled.index
-    boundary = Fraction(index.input_count)  # the input gates, then every unit's Out
+    boundary = Fraction(table.input_count)  # the input gates, then every unit's Out
     replay = Fraction(0)
     proof = Fraction(0)
-    for kind in index.kinds():
+    for kind in table.rows:
         if kind.role == REPLAY:
             boundary += kind.copies * kind.out_count
             interior = kind.size - kind.out_count - kind.source_inputs - kind.source_weights
@@ -85,7 +84,7 @@ def cost(
         h * boundary,
         policy.q * replay,
         policy.q * policy.s * proof,
-        h * index.weight_count,
+        h * table.weight_count,
     )
 
 

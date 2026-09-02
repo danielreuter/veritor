@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .circuit import Circuit
 from .identity import Digest, identity_digest
-from .index import Index
+from .index import Index, KindTable
 
 COMPILED_DIGEST_TAG = "veritor/compiled/v1"
 
@@ -30,4 +30,19 @@ class Compiled:
             COMPILED_DIGEST_TAG,
             {"description": description_digest, "gate_set": gate_set_digest},
         )
+
+    def kind_table(self) -> KindTable:
+        """The index's per-kind table under ``H(C, I)``, what the analysis folds read."""
+
+        return replace(self.index.kind_table(), digest=self.digest)
+
+
+def as_kind_table(target: Compiled | KindTable) -> KindTable:
+    """The table of a :class:`Compiled` artifact, or ``target`` if it is one already."""
+
+    if isinstance(target, Compiled):
+        return target.kind_table()
+    if isinstance(target, KindTable):
+        return target
+    raise TypeError("expected a Compiled artifact or a KindTable")
 

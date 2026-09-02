@@ -17,8 +17,10 @@ from fractions import Fraction
 from veritor.core import (
     Compiled,
     KindSummary,
+    KindTable,
     ProbabilityInput,
     VerificationPolicy,
+    as_kind_table,
     exact_fraction,
 )
 from veritor.core.description import VERIFICATION
@@ -101,7 +103,9 @@ def positions_per_unit(kind: KindSummary) -> int:
     return kind.size
 
 
-def expected_work(compiled: Compiled, policy: VerificationPolicy, io_count: int) -> Fraction:
+def expected_work(
+    target: Compiled | KindTable, policy: VerificationPolicy, io_count: int
+) -> Fraction:
     """The verifier's expected work for one run, from counts alone.
 
     One operation is counted per opened leaf, per Merkle path hash, per gate
@@ -118,18 +122,18 @@ def expected_work(compiled: Compiled, policy: VerificationPolicy, io_count: int)
     a client cannot make admission cost depend on the size of its inputs.
     """
 
-    index = compiled.index
+    table = as_kind_table(target)
     openings = 0
     gates = 0
-    for kind in index.kinds():
+    for kind in table.rows:
         if kind.role == VERIFICATION:
             openings += kind.copies * (kind.size + kind.input_count)
             gates += kind.copies * kind.size
     sampled = policy.q * policy.s
-    depth = merkle_depth(index.n)
+    depth = merkle_depth(table.n)
     return (
         (io_count + sampled * openings) * (1 + depth)
         + sampled * gates
         + 1
-        + policy.q * index.replay_units.count
+        + policy.q * table.replay_unit_count
     )

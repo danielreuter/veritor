@@ -7,7 +7,7 @@ from .circuit import (
     FlatCircuit,
     GateRef,
 )
-from .compiled import COMPILED_DIGEST_TAG, Compiled
+from .compiled import COMPILED_DIGEST_TAG, Compiled, as_kind_table
 from .errors import CoreContractError, InvalidArtifact, ResourceLimit
 from .gates import (
     GATE_SET_IDENTITY_TAG,
@@ -35,7 +35,7 @@ from .identity import (
     validate_digest,
 )
 from .ids import Position, position
-from .index import Index, IndexNode, KindSummary, Units, validate_marks
+from .index import Index, IndexNode, KindSummary, KindTable, Units, validate_marks
 from .indexed import (
     ExplicitDomain,
     ExplicitIndexedDomain,
@@ -68,6 +68,7 @@ __all__ = [
     "Circuit",
     "CompilationLimits",
     "Compiled",
+    "as_kind_table",
     "CoreContractError",
     "CostKind",
     "DescriptionCircuit",
@@ -88,6 +89,7 @@ __all__ = [
     "JSONScalar",
     "JSONValue",
     "KindSummary",
+    "KindTable",
     "LazyIndexedDomain",
     "Position",
     "ProbabilityInput",

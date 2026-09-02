@@ -56,10 +56,10 @@ from fractions import Fraction
 
 import numpy as np
 
-from veritor.core.compiled import Compiled
+from veritor.core.compiled import Compiled, as_kind_table
 from veritor.core.description import REPLAY, VERIFICATION
 from veritor.core.identity import Digest
-from veritor.core.index import KindSummary
+from veritor.core.index import KindSummary, KindTable
 from veritor.core.policy import ProbabilityInput, VerificationPolicy, exact_fraction
 
 from .probability import budget, saturation_cost, unit_cost
@@ -87,18 +87,26 @@ class BoundOptions:
     ``resolution`` cost buckets span the cost ``c(1)`` of one erroneous unit,
     with at most ``max_buckets`` buckets over the whole budget (a coarser
     grid is sound; the Laplace bound then usually wins).  ``max_errors``
-    truncates the per-copy error count.
+    truncates the per-copy error count.  With ``knapsack`` false only the
+    Laplace bound is computed: it uses the grid for nothing but the error
+    truncation, so ``max_buckets`` can then be large at no cost, which is
+    what a run with millions of units per copy or a single-unit cost far
+    below ``Lambda / 2048`` needs (the knapsack on a coarse grid would round
+    such costs down to zero).
     """
 
     max_buckets: int = 2048
     resolution: int = 16
     max_errors: int = 256
+    knapsack: bool = True
 
     def __post_init__(self) -> None:
         for name in ("max_buckets", "resolution", "max_errors"):
             value = getattr(self, name)
             if type(value) is not int or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
+        if type(self.knapsack) is not bool:
+            raise ValueError("knapsack must be a bool")
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +116,7 @@ class BoundResult:
     ``bits`` is the certified capacity: ``min(knapsack_bits, laplace_bits,
     out_bits)`` tightened to an integer count of outputs (a fully checked run
     is exactly ``0.0``); ``capped`` says the circuit interface was the minimum.
+    ``knapsack_bits`` is ``inf`` when the knapsack was not computed.
     ``cost_step`` (nats) and ``buckets`` describe the knapsack grid,
     ``errors_limit`` the error-count truncation; ``policy`` and ``eta`` are
     the ``theta`` and threshold bounded.  The result is always an upper
@@ -129,27 +138,29 @@ class BoundResult:
 
 
 def bound(
-    compiled: Compiled,
+    target: Compiled | KindTable,
     policy: VerificationPolicy,
     eta: ProbabilityInput,
     options: BoundOptions | None = None,
 ) -> BoundResult:
-    """Fold ``U = Bound(C, I, theta)`` at threshold ``eta`` over the kinds of the index."""
+    """Fold ``U = Bound(C, I, theta)`` at threshold ``eta`` over the kinds of the index.
 
-    if not isinstance(compiled, Compiled):
-        raise TypeError("bound needs a Compiled artifact")
+    ``target`` is the compiled artifact or its :class:`KindTable`: the fold
+    reads nothing else.
+    """
+
+    table = as_kind_table(target)
     if not isinstance(policy, VerificationPolicy):
         raise TypeError("policy must be a VerificationPolicy")
     eta = exact_fraction(eta, name="eta")
     if not 0 <= eta < 1:
         raise ValueError("eta must lie in [0, 1)")
     options = BoundOptions() if options is None else options
-    index = compiled.index
-    rows = {row.kind: row for row in index.kinds()}
-    out_bits = rows[index.root.kind].out_bits
+    rows = {row.kind: row for row in table.rows}
+    out_bits = rows[table.root].out_bits
     fold = _Fold(rows, policy, eta, options)
     replay = [row for row in rows.values() if row.role == REPLAY]
-    knapsack = fold.knapsack(replay)
+    knapsack = fold.knapsack(replay) if options.knapsack else math.inf
     laplace = fold.laplace(replay)
     bits = min(knapsack, laplace, float(out_bits))
     return BoundResult(
@@ -163,7 +174,7 @@ def bound(
         errors_limit=fold.limit,
         policy=policy,
         eta=eta,
-        digest=compiled.digest,
+        digest=table.digest,
     )
 
 
