@@ -15,22 +15,32 @@ at the same point in the interaction.
 
 - **Gate set** `Σ` (`veritor.core.GateSet`): the public operators. Each gate
   has an arity, an output width in bits, a replay cost, a proof cost, and
-  modular semantics. `make_word_gate_set(B)` is `add`/`mul` over `Z_{2^B}`.
+  modular semantics. `make_word_gate_set(B)` is `add`/`mul` over `Z_{2^B}`
+  plus two zero-arity *source* gates, `in` and `weight`, whose values come
+  from the environment rather than from a relation.
 - **Description**: the wire format a constructor `G` produces. A hash-consed
   sequence of definitions built from three steps, `gate`, `call`, and
   `repeat`, with relative range arguments, so a transformer-sized circuit is a
   few kilobytes. Definitions may carry a mark, `replay` or `verification`.
 - **Circuit** `C` (`veritor.core.Circuit`): `C[i]` gives the operator and the
-  absolute argument addresses of gate `i`; inputs occupy the first addresses.
-  `DescriptionCircuit` answers these queries lazily in `O(depth)`.
+  absolute argument addresses of gate `i`. The circuit's inputs are its `in`
+  gates and its weights its `weight` gates: they sit inside units like any
+  other gate, so the root definition has no ports (ports remain the relative
+  addressing mechanism *inside* the hierarchy). `C.inputs` and `C.weights`
+  list their addresses by rank. `DescriptionCircuit` answers these queries
+  lazily in `O(depth)`.
 - **Index** `I` (`veritor.core.Index`): the hierarchy of copies over `C`.
   Every copy of a definition is a node; copies of the same definition are one
   *kind*. The marked nodes form two antichains: the replay units tile the
-  gates and the verification units refine them. `I.boundary()` is
-  `inputs ∪ ⋃_r Out(R_r)`; `I.interior(r)` is `R_r` minus its interface.
-  `In` and `Out` of a unit are its *declared* interfaces, held per kind as
-  arithmetic runs of addresses, so the per-kind table, the boundary and the
-  interiors cost by the number of runs, never by the addresses they span.
+  gates -- every gate, source gates included, lies in exactly one replay unit
+  and one verification unit -- and the verification units refine them.
+  `I.inputs()` and `I.weights()` are the source gates by rank; `I.boundary()`
+  is `In ∪ ⋃_r Out(R_r)`; `I.interior(r)` is `R_r` minus its interface minus
+  its source gates. `In` and `Out` of a unit are its *declared* interfaces,
+  held per kind as arithmetic runs of addresses, so the per-kind table, the
+  boundary and the interiors cost by the number of runs, never by the
+  addresses they span; `Out` excludes a unit's *pinned* (source) gates, which
+  are boundary or `κ_W` positions already.
 - **Compiled** `(C, I, digest)`: what `Compile` returns and everything else
   consumes. The digest binds the description, its marks and the gate set.
 - **Policy** `θ = (q, s)`: the client's proposed sampling rates, as exact
@@ -63,9 +73,10 @@ archive/         earlier incarnations, untouched
 ## Compile
 
 A constructor is untrusted Python that traces a computation into a
-description. `MatmulG` traces `Y_i = X_i W mod 2^B` with one replay unit per
-row `x_i W` and one verification unit per output dot product; `DemoG` traces
-batches of multiply-accumulate chains.
+description. `MatmulG` traces `Y_i = X_i W mod 2^B` with the activations and
+the weights each a replay unit of source gates (every gate its own
+verification unit), one replay unit per row `x_i W` and one verification unit
+per output dot product; `DemoG` traces batches of multiply-accumulate chains.
 
 ~~~python
 from veritor import Compile, MatmulCompileRequest, compile_matmul, make_word_gate_set
@@ -82,8 +93,9 @@ description = MatmulG(request.width)(request.workload, b"")
 compiled = Compile(description, request.public_inputs, make_word_gate_set(request.width))
 
 assert compiled.digest == compile_matmul(request).digest  # the same thing, in one call
-assert compiled.index.replay_units.count == 3
-assert compiled.index.verification_unit_count == 6
+assert compiled.index.replay_units.count == 2 + 3        # activations, weights, three rows
+assert compiled.index.verification_unit_count == 9 + 6 + 6  # in gates, weight gates, dots
+assert (compiled.index.input_count, compiled.index.weight_count) == (9, 6)
 ~~~
 
 Writing a constructor:
@@ -99,25 +111,29 @@ add, mul = tracer.gate("add"), tracer.gate("mul")
 def mac(v):
     return add(v[0], mul(v[1], v[2]))
 
-@tracer.definition(input_count=1 + 2 * 4, key=("dot", 4), role="replay")
-def dot(v):
-    acc = v[0]
+@tracer.definition(input_count=0, key=("dot", 4), role="replay")
+def dot(_v):
+    x = tracer.inputs(9)  # nine `in` gates: the accumulator, four values, four weights
+    acc = x[0]
     for i in range(4):
-        acc = mac(acc, v[1 + i], v[5 + i])
+        acc = mac(acc, x[1 + i], x[5 + i])
     return acc
 
-@tracer.definition(input_count=9 * 16, key="batch")
-def batch(v):
-    return tracer.repeat(16, dot, v[0:9].by(9))  # 16 copies, one range argument
+@tracer.definition(input_count=0, key="batch")
+def batch(_v):
+    return tracer.repeat(16, dot)  # 16 copies; the root has no ports
 
 description = tracer.serialize(batch)
 ~~~
 
 Python loops unroll; `tracer.repeat` is what keeps the description small.
-Weights must be inputs, not constants: copies are the same kind only when
-their values flow in as arguments. A definition's declared outputs must be
-distinct gates: `Compile` rejects a definition whose output ranges resolve
-to the same gate twice.
+`tracer.inputs(n)` and `tracer.weights(n)` emit `n` source gates as one
+`repeat` of a one-gate verification-marked cell, so a block of `10^9` weights
+is `O(1)` description; source gates must sit inside a replay unit like every
+other gate. Values must flow in as source gates or arguments, not constants:
+copies are the same kind only when their values do. A definition's declared
+outputs must be distinct gates: `Compile` rejects a definition whose output
+ranges resolve to the same gate (source gates included) twice.
 
 ## Verify
 
@@ -125,18 +141,21 @@ The protocol has three messages from the prover and two challenges from the
 verifier. Values are committed in stages so the client never learns a
 challenge before the values it constrains are fixed.
 
-1. The prover commits the boundary `τ|∂` and opens the inputs and outputs;
-   the verifier checks them against `x` and `y*` and reveals `q_seed`.
+1. The prover commits the boundary `τ|∂`, `∂ = In ∪ ⋃_r Out(R_r)`, and opens
+   every input gate and every output; the verifier checks them against `x`
+   (by rank) and `y*` and reveals `q_seed`.
 2. Replay units are selected at rate `q`. The prover commits the interior of
    each selected unit; the verifier reveals `s_seed`.
 3. Verification units inside selected replay units are selected at rate `s`.
    The prover opens every value each selected unit reads or writes; the
-   verifier recomputes the gate relations.
+   verifier recomputes the gate relations, checks each input gate against
+   `x` and each weight gate by its opening under `κ_W`.
 
 Selection is `Binomial(N, q)` followed by Floyd's uniform subset, so the
 verifier's work is `O(K log N)` in the number `K` of selected units, never in
-`N`. Model weights are committed once per model under their own root `κ_W`
-and opened where sampled; a run never carries them.
+`N`. Model weights are the circuit's `weight` gates, committed once per model
+under their own root `κ_W` over `I.weights()` and opened where sampled; a run
+never carries them, and they are never boundary or interior positions.
 
 ~~~python
 from veritor import (
@@ -147,20 +166,22 @@ from veritor import (
     make_verification_expectation,
     run_protocol,
 )
-from veritor.protocol import encode_transcript
+from veritor.protocol import commit_weights, encode_transcript
 
 compiled = compile_matmul(request)
-values = dict(enumerate(compiled.circuit.evaluate(request.public_inputs)))
+values = dict(enumerate(compiled.circuit.evaluate(request.public_inputs, request.weight_values)))
 outputs = tuple(values[a] for a in compiled.circuit.outputs)
+weights, weight_tree = commit_weights(compiled, request.weight_values)  # kappa_W, once per model
 
 expectation = make_verification_expectation(       # the verifier's side of one run
     compiled,
     VerificationPolicy(q=1, s=1),                  # the client's proposal, theta
-    request.public_inputs,
+    request.public_inputs,                         # the values of the `in` gates, by rank
     outputs,
     parameters=VerifierParameters(eta=0),          # eta, U_max, W_max are the verifier's
+    weights=weights,
 )
-run = run_protocol(compiled, expectation, values)  # prover and verifier in one process
+run = run_protocol(compiled, expectation, values, weight_tree=weight_tree)
 assert run.report.accepted
 assert Verify(encode_transcript(run.transcript), expectation, compiled) == run.report
 ~~~
@@ -195,8 +216,10 @@ print(Cost(compiled, theta, CostParameters(hash_cost=1, proof_overhead=0)).total
 best = Optimize(compiled, eta, PolicyGrid.uniform(8), max_bits=20)
 ~~~
 
-`Cost` is the exact expectation
-`h|∂| + q Σ_r (replay(R_r) + h|Int(r)|) + q s Σ_v (proof(V_v) + c_0)`.
+`Cost` is the exact per-request expectation
+`h|∂| + q Σ_r (replay(R_r) + h|Int(r)|) + q s Σ_v (proof(V_v) + c_0)`, with
+`|∂| = |In| + Σ_r |Out(R_r)|`; the per-epoch weight commitment `h|W|` is
+reported separately (`ExpectedCost.weights`) and is not in the total.
 `Optimize` is the client's advisory grid search; the verifier only checks the
 result against `U_max` and `W_max`.
 

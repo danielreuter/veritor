@@ -20,24 +20,25 @@ from veritor import (
     make_verification_expectation,
     run_protocol,
 )
-from veritor.protocol import assignment_replay, encode_transcript
+from veritor.protocol import assignment_replay, commit_weights, encode_transcript
 
 SEEDS = {"session_id": b"research-api/conformance", "q_seed": b"Q" * 32, "s_seed": b"S" * 32}
 CHECK_EVERYTHING = VerificationPolicy(1, 1)
 WORKLOADS = {
-    "demo-g": (DemoGCompileRequest(), compile_demo_g),
-    "matmul": (MatmulCompileRequest(), compile_matmul),
+    "demo-g": (DemoGCompileRequest(), compile_demo_g, ()),
+    "matmul": (MatmulCompileRequest(), compile_matmul, MatmulCompileRequest().weight_values),
 }
 
 
 @pytest.mark.parametrize("name", tuple(WORKLOADS))
 def test_honest_conformance_transcript_verifies_purely(name: str) -> None:
-    request, compile = WORKLOADS[name]
+    request, compile, weights = WORKLOADS[name]
     compiled = compile(request)
     assert isinstance(compiled, Compiled)
+    assert compiled.index.weight_count == len(weights)
 
     run = build_executable_conformance_transcript(
-        compiled, request.public_inputs, CHECK_EVERYTHING, **SEEDS
+        compiled, request.public_inputs, CHECK_EVERYTHING, weights=weights, **SEEDS
     )
 
     report = Verify(run.transcript_bytes, run.expectation, compiled)
@@ -48,6 +49,12 @@ def test_honest_conformance_transcript_verifies_purely(name: str) -> None:
     )
     assert run.expectation.claimed_outputs == request.expected_outputs
     assert run.expectation.compiled_digest == compiled.digest
+    # the weights, if any, are bound to the header as kappa_W and never carried in the run
+    if weights:
+        assert run.expectation.weights == commit_weights(compiled, weights)[0]
+        assert run.expectation.weights.count == len(weights)
+    else:
+        assert run.expectation.weights is None
 
 
 def test_conformance_transcript_is_deterministic_given_seeds() -> None:
@@ -100,12 +107,18 @@ def test_verify_rejects_transcript_against_the_wrong_expectation() -> None:
 def test_interactive_run_and_pure_verification_agree() -> None:
     request = MatmulCompileRequest()
     compiled = compile_matmul(request)
+    weights, tree = commit_weights(compiled, request.weight_values)
     expectation = make_verification_expectation(
-        compiled, CHECK_EVERYTHING, request.public_inputs, request.expected_outputs, **SEEDS
+        compiled,
+        CHECK_EVERYTHING,
+        request.public_inputs,
+        request.expected_outputs,
+        weights=weights,
+        **SEEDS,
     )
-    values = dict(enumerate(compiled.circuit.evaluate(request.public_inputs)))
+    values = dict(enumerate(compiled.circuit.evaluate(request.public_inputs, request.weight_values)))
 
-    run = run_protocol(compiled, expectation, values)
+    run = run_protocol(compiled, expectation, values, weight_tree=tree)
 
     assert run.transcript is not None
     data = encode_transcript(run.transcript)
@@ -120,9 +133,10 @@ def test_interactive_run_and_pure_verification_agree() -> None:
         request.public_inputs,
         request.expected_outputs,
         parameters=VerifierParameters(eta, max_capacity=math.ceil(bits) - 1),
+        weights=weights,
         **SEEDS,
     )
-    rejected = run_protocol(compiled, capped, values)
+    rejected = run_protocol(compiled, capped, values, weight_tree=tree)
     assert rejected.report.code is VerificationCode.POLICY_REJECTED
     assert rejected.transcript is None
     assert Verify(data, capped, compiled) == rejected.report

@@ -54,9 +54,9 @@ def one_unit_compiled(gates: int) -> Compiled:
             accumulator = add(accumulator, v[0])
         return accumulator
 
-    @tracer.definition(input_count=1, key=("root", gates), role="replay")
-    def root(v):
-        return block(v[0])
+    @tracer.definition(input_count=0, key=("root", gates), role="replay")
+    def root(_v):
+        return block(tracer.inputs(1))
 
     return Compiler(GATE_SET).compile(tracer.serialize(root), (3,))
 
@@ -206,9 +206,9 @@ def test_a_limit_hit_during_the_run_is_a_reject_not_an_exception() -> None:
     run = run_protocol(compiled, expectation, values, limits=limits)
 
     assert run.report.code is VerificationCode.RESOURCE_LIMIT
-    assert "openings is 201" in run.report.detail
+    assert "openings is 202" in run.report.detail  # the input cell's one, then the block's 201
     assert run.report.sampled_replay_units == (0,)
-    assert run.report.sampled_verification_units == (0,)
+    assert run.report.sampled_verification_units == (0, 1)
 
     verifier = VerifierSession(expectation, compiled, limits=limits)
     prover = ProverSession(compiled, verifier.header, values)
@@ -228,20 +228,23 @@ def test_a_limit_hit_during_the_run_is_a_reject_not_an_exception() -> None:
 
 def test_expected_work_follows_the_documented_formula(compiled, workload) -> None:
     index = compiled.index
-    dots = index.verification_unit_count
-    dot = index.verification_unit(0)
-    size, reads = dot.size, dot.frame.definition.input_count  # declared inputs price a unit
-    assert reads == len(compiled.circuit.In(dot))  # a dot reads each of its declared inputs
+    # every verification unit is priced at its gates plus its declared ports: a source
+    # cell at 1 + 0, a dot at its gates plus the 2k values it reads
+    positions = gates = 0
+    for unit in range(index.verification_unit_count):
+        node = index.verification_unit(unit)
+        reads = node.frame.definition.input_count
+        assert reads == len(compiled.circuit.In(node))  # each unit reads each declared input
+        assert (reads == 0) == compiled.circuit[node.interval.start].is_source
+        positions += node.size + reads
+        gates += node.size
     io = len(workload.public_inputs) + len(compiled.circuit.outputs)
     depth = merkle_depth(index.n)
 
     for q, s in ((Fraction(1), Fraction(1)), (Fraction(1, 2), Fraction(1, 3))):
         work = expected_work(compiled, VerificationPolicy(q, s), io)
         assert work == (
-            (io + q * s * dots * (size + reads)) * (1 + depth)
-            + q * s * dots * size
-            + 1
-            + q * index.replay_units.count
+            (io + q * s * positions) * (1 + depth) + q * s * gates + 1 + q * index.replay_units.count
         )
     assert expected_work(compiled, CHECK_EVERYTHING, io) > expected_work(
         compiled, VerificationPolicy(Fraction(1, 2), 1), io

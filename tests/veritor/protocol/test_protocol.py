@@ -21,7 +21,10 @@ from veritor.protocol import (
 
 def forge_interior(compiled: Compiled, values: dict[int, object]) -> dict[int, object]:
     forged = dict(values)
-    address = int(compiled.index.interior(0).unrank(0))
+    index = compiled.index
+    # the first replay unit with an interior (the source units have none: their gates are pinned)
+    unit = next(r for r in range(index.replay_units.count) if index.interior(r).count)
+    address = int(index.interior(unit).unrank(0))
     forged[address] = (forged[address] + 1) % 256  # type: ignore[operator]
     return forged
 
@@ -44,10 +47,10 @@ def test_honest_run_accepts_and_transcript_round_trips(compiled, honest_values, 
 
 
 def test_sessions_produce_identical_transcripts_on_both_sides(
-    compiled, honest_values, expect
+    compiled, honest_values, expect, model_weights
 ) -> None:
     verifier = VerifierSession(expect(), compiled)
-    prover = ProverSession(compiled, verifier.header, honest_values)
+    prover = ProverSession(compiled, verifier.header, honest_values, weight_tree=model_weights[1])
 
     replay_challenge = verifier.receive_boundary(prover.boundary())
     sample_challenge = verifier.receive_interiors(prover.interiors(replay_challenge))
@@ -88,6 +91,21 @@ def test_wrong_claimed_output_is_rejected_at_the_boundary(
     run = run_protocol(compiled, expect(claimed_outputs=wrong), honest_values)
 
     assert run.report.code is VerificationCode.PUBLIC_IO_MISMATCH
+    assert run.report.sampled_replay_units == ()
+
+
+def test_wrong_input_value_is_rejected_at_the_boundary(compiled, honest_values, expect) -> None:
+    """Every ``in`` gate is opened at commit and compared to the public input of its rank."""
+
+    address = compiled.circuit.inputs[2]
+    assert compiled.circuit[address].is_input
+    forged = dict(honest_values)
+    forged[address] = (forged[address] + 1) % 256
+
+    run = run_protocol(compiled, expect(VerificationPolicy(0, 0)), forged)
+
+    assert run.report.code is VerificationCode.PUBLIC_IO_MISMATCH
+    assert f"input at address {address}" in run.report.detail
     assert run.report.sampled_replay_units == ()
 
 

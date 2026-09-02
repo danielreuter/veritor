@@ -128,12 +128,8 @@ def _openings(value: object, where: str) -> tuple[Opening, ...]:
 def _weights(value: object, where: str) -> Weights | None:
     if value is None:
         return None
-    fields = _object(value, {"root", "start", "stop"}, where)
-    return Weights(
-        _int(fields["start"], f"{where}.start"),
-        _int(fields["stop"], f"{where}.stop"),
-        _hex(fields["root"], f"{where}.root"),
-    )
+    fields = _object(value, {"count", "root"}, where)
+    return Weights(_int(fields["count"], f"{where}.count"), _hex(fields["root"], f"{where}.root"))
 
 
 def _challenge[T](

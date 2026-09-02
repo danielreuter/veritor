@@ -8,6 +8,7 @@ from fractions import Fraction
 
 import pytest
 
+from veritor import compile_matmul
 from veritor.analysis import BoundOptions, BoundResult, bound
 from veritor.analysis.reference import (
     accepted_outputs,
@@ -224,6 +225,24 @@ def test_a_unit_of_source_gates_has_no_capacity(make_compiled):
     everything = accepted_outputs(outputs, VerificationPolicy(0, 1), Fraction(1, 2))
     honest = accepted_outputs(outputs, VerificationPolicy(1, 1), Fraction(0))
     assert len(everything) == 256 and honest == {(5,)}  # 1 + 4: the sources hold their values
+
+
+def test_bound_on_the_matmul_counts_the_dots_and_not_the_source_units():
+    compiled = compile_matmul()  # activations and weights units, 3 rows of 2 dots
+    index = compiled.index
+    rows = {row.kind: row for row in index.kinds()}
+    activations, weights = index.replay_units.unit(0), index.replay_units.unit(1)
+
+    assert rows[activations.kind].out_bits == rows[weights.kind].out_bits == 0
+    assert all(rows[index.replay_units.unit(r).kind].out_bits == 16 for r in range(2, 5))
+    for policy, eta in POLICIES[:4]:
+        result = bound(compiled, policy, eta)
+        assert result.out_bits == 6 * 8 and 0 <= result.bits <= 48
+        # a policy checking everything leaves nothing; sampling half the rows leaves at least a row
+        if policy.q == policy.s == 1 and eta == 0:
+            assert result.bits == 0
+    leaky = bound(compiled, VerificationPolicy(Fraction(1, 2), 1), Fraction(1, 4))
+    assert 16 <= leaky.bits <= 48 and not leaky.capped
 
 
 def test_bound_rejects_foreign_inputs_and_bad_options(make_compiled):

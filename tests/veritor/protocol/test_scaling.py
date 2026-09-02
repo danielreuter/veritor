@@ -1,10 +1,11 @@
 """The verifier's work is sampled work: flat in the number of units and gates.
 
-The circuit is ``units`` identical replay tiles reading the one input, each
-two verification cells deep, so the description is ``O(1)`` while ``|∂| = units
-+ 1`` and ``N = 6 units + 1`` grow.  With ``q = 16 / units`` the verifier
-expects sixteen replay units in ``J`` whatever ``units`` is, so its work per
-phase must not move when ``units`` grows 32x.
+The circuit is ``units`` identical replay tiles reading the one input (an
+``in`` gate in a replay unit of its own), each two verification cells deep, so
+the description is ``O(1)`` while ``|∂| = units + 1`` and ``N = 6 units + 1``
+grow.  With ``q = 16 / units`` the verifier expects sixteen replay units in
+``J`` whatever ``units`` is, so its work per phase must not move when
+``units`` grows 32x.
 """
 
 from __future__ import annotations
@@ -39,7 +40,11 @@ EXPECTED_SELECTED = 16
 
 
 def tiled_description(units: int, *, tile_role: str, cell_role: str | None, root_role: str | None):
-    """``units`` tiles of two cells of three ``add`` gates, with the given marks."""
+    """``units`` tiles of two cells of three ``add`` gates, with the given marks.
+
+    The one input is an ``in`` gate at address 0: inside the root when the
+    root is the replay unit, else in a one-gate replay unit of its own.
+    """
 
     tracer = Tracer(GATE_SET)
     add = tracer.gate("add")
@@ -54,9 +59,14 @@ def tiled_description(units: int, *, tile_role: str, cell_role: str | None, root
     def tile(v):
         return cell(cell(v[0]))
 
-    @tracer.definition(input_count=1, key=("root", units), role=root_role)
-    def root(v):
-        return tracer.repeat(units, tile, v[0])[-1]
+    @tracer.definition(input_count=0, key="source", role="replay")
+    def source(_v):
+        return tracer.inputs(1)
+
+    @tracer.definition(input_count=0, key=("root", units), role=root_role)
+    def root(_v):
+        x = tracer.inputs(1) if root_role == "replay" else source()
+        return tracer.repeat(units, tile, x)[-1]
 
     return tracer.serialize(root)
 
@@ -72,11 +82,11 @@ class TileValues(Mapping[int, object]):
     def __init__(self, compiled: Compiled) -> None:
         one = tiled_compiled(1)
         self._reference = one.circuit.evaluate(INPUT)
-        tile = compiled.index.replay_units.unit(0)
+        tile = compiled.index.replay_units.unit(1)  # unit 0 holds the input gate
         self._base = tile.interval.start
         self._size = tile.size
         self._n = compiled.circuit.n
-        assert one.index.replay_units.unit(0).interval == tile.interval
+        assert one.index.replay_units.unit(1).interval == tile.interval
 
     def __getitem__(self, address: int) -> object:
         if not 0 <= address < self._n:
@@ -171,9 +181,11 @@ SMALL, LARGE = 1024, 32768
 def test_the_tiling_scales_as_described() -> None:
     small, large = scenario(SMALL), scenario(LARGE)
 
-    assert large.compiled.index.replay_units.count == 32 * small.compiled.index.replay_units.count
+    tiles = {name: s.compiled.index.replay_units.count - 1 for name, s in (("small", small), ("large", large))}
+    assert tiles == {"small": SMALL, "large": LARGE}  # plus the input's unit
     assert large.compiled.circuit.n - 1 == 32 * (small.compiled.circuit.n - 1)
     assert large.compiled.index.boundary().count == LARGE + 1
+    assert large.compiled.index.input_count == 1 and large.compiled.index.interior(0).count == 0
     assert 4 <= small.selected <= 40 and 4 <= large.selected <= 40
     assert small.sampled == 2 * small.selected and large.sampled == 2 * large.selected
 
@@ -257,7 +269,7 @@ def test_changing_a_role_mark_changes_the_compiled_digest() -> None:
 
     assert cells.circuit.n == tiles.circuit.n
     assert cells.circuit.evaluate(INPUT) == tiles.circuit.evaluate(INPUT)
-    assert cells.index.replay_units.count == 8 and tiles.index.replay_units.count == 1
+    assert cells.index.replay_units.count == 8 + 1 and tiles.index.replay_units.count == 1
     assert cells.digest != tiles.digest
     assert cells.index.digest != tiles.index.digest
     assert cells.digest == again.digest

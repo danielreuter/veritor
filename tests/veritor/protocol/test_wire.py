@@ -76,7 +76,7 @@ def test_noncanonical_bytes_are_rejected(compiled, recorded, rewrite) -> None:
         pytest.param(lambda data: b"[]", id="not-an-object"),
         pytest.param(lambda data: data.replace(b'"version"', b'"verzion"'), id="unknown-key"),
         pytest.param(
-            lambda data: data.replace(b"veritor/protocol/v4", b"veritor/protocol/v3"),
+            lambda data: data.replace(b"veritor/protocol/v5", b"veritor/protocol/v4"),
             id="version",
         ),
         pytest.param(lambda data: data.replace(b'"count":', b'"count":1.0,"c":', 1), id="float"),

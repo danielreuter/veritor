@@ -86,7 +86,8 @@ def test_matmul_request_compiles_through_the_top_level_package() -> None:
 
     assert isinstance(compiled, Compiled)
     assert request.expected_outputs == (2,)
-    assert compiled.circuit.evaluate(request.public_inputs)[compiled.circuit.outputs[0]] == 2
+    tape = compiled.circuit.evaluate(request.public_inputs, request.weight_values)
+    assert tape[compiled.circuit.outputs[0]] == 2
 
 
 def test_paper_level_api_is_exported() -> None:

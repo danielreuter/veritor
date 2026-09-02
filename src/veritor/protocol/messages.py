@@ -10,9 +10,9 @@ The protocol has five messages after the public header::
 
 The header binds the client's proposal ``theta`` and the verifier's ``eta``,
 so the whole hash chain does.  It may also bind :class:`Weights`: a per-model
-commitment ``kappa_W`` over the weight inputs ``W`` that the verifier holds,
-so a run never carries the weights themselves.  A :class:`Transcript` is the
-header plus these five messages in order.
+commitment ``kappa_W`` over the circuit's ``weight`` gates ``W`` that the
+verifier holds, so a run never carries the weights themselves.  A
+:class:`Transcript` is the header plus these five messages in order.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from veritor.core import (
     validate_digest,
 )
 
-PROTOCOL_VERSION = "veritor/protocol/v4"
+PROTOCOL_VERSION = "veritor/protocol/v5"
 
 
 class ProtocolError(InvalidArtifact):
@@ -155,37 +155,29 @@ class Opening:
 
 @dataclass(frozen=True, slots=True)
 class Weights:
-    """The weight inputs ``W = [start, stop)`` and their root ``kappa_W``.
+    """The root ``kappa_W`` over the circuit's ``count`` weight gates.
 
-    Committed once per model, not per run: the verifier holds this and binds
-    it into the header, and weight values are opened only where sampled.
+    The domain is the index's weight gates in address order, so the message
+    carries no addresses.  Committed once per model, not per run: the
+    verifier holds this and binds it into the header, and weight values are
+    opened only where sampled.
     """
 
-    start: int
-    stop: int
+    count: int
     root: bytes
 
     def __post_init__(self) -> None:
-        if type(self.start) is not int or type(self.stop) is not int:
-            raise ProtocolError("weight bounds must be integers")
-        if not 0 <= self.start <= self.stop:
-            raise ProtocolError("weights must be a range of nonnegative addresses")
+        if type(self.count) is not int or self.count < 0:
+            raise ProtocolError("weight count must be a nonnegative integer")
         _bytes32(self.root, "weight root")
-
-    @property
-    def count(self) -> int:
-        return self.stop - self.start
 
     @property
     def commitment(self) -> Commitment:
         return Commitment(self.root, self.count)
 
-    def __contains__(self, address: object) -> bool:
-        return type(address) is int and self.start <= address < self.stop
-
     @property
     def manifest(self) -> dict[str, JSONValue]:
-        return {"root": self.root.hex(), "start": self.start, "stop": self.stop}
+        return {"count": self.count, "root": self.root.hex()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,8 +185,9 @@ class Header:
     """Public parameters both parties fix before any message is sent.
 
     ``policy`` is the client's ``theta = (q, s)`` and ``eta`` the verifier's
-    acceptance threshold.  ``public_inputs`` are the encoded inputs outside
-    ``weights`` in address order; with no weights, every input.
+    acceptance threshold.  ``public_inputs`` are the encoded values of the
+    circuit's ``in`` gates by rank (address order); the weight gates are under
+    ``weights``.
     """
 
     session_id: bytes
@@ -224,7 +217,7 @@ class Header:
             self,
             "digest",
             raw_digest(
-                "veritor/protocol/header/v4",
+                "veritor/protocol/header/v5",
                 {
                     "claimed_outputs": [item.hex() for item in self.claimed_outputs],
                     "compiled_digest": self.compiled_digest,

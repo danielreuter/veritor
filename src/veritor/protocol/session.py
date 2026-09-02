@@ -31,7 +31,6 @@ from .domains import (
     commit_weights,
     interior_domain,
     leaf_schema,
-    public_boundary,
     weight_domain,
 )
 from .merkle import CommitmentDomain, MerkleTree, validate_commitment, verify_opening
@@ -65,10 +64,12 @@ class Expectation:
 
     ``policy`` is the client's ``theta = (q, s)``; ``parameters`` hold the
     verifier's own ``eta``, ``U_max`` and ``W_max``.  ``public_inputs`` are
-    the values of the inputs outside ``weights`` in address order (every
-    input when there are none) and ``claimed_outputs`` the outputs; the
-    verifier encodes them with the circuit's canonical codec.  Both seeds are
-    mandatory so a verifier can never accidentally let the prover choose them.
+    the values of the circuit's ``in`` gates by rank (address order) and
+    ``claimed_outputs`` the outputs; the verifier encodes them with the
+    circuit's canonical codec.  ``weights`` is the model's ``kappa_W`` over
+    the circuit's ``weight`` gates, required exactly when it has any.  Both
+    seeds are mandatory so a verifier can never accidentally let the prover
+    choose them.
     """
 
     session_id: bytes
@@ -141,36 +142,38 @@ def rejection_report(rejection: Reject, session: VerifierSession | None) -> Veri
 class _Layout:
     """Address-level lookups shared by both sessions; all ``O(depth)``.
 
-    Construction is ``O(|public I/O|)``: the non-weight inputs and the outputs
-    are the only addresses either party touches wholesale.
+    Construction is ``O(|public I/O|)``: the input gates and the outputs are
+    the only addresses either party touches wholesale.
     """
 
     __slots__ = ("boundary", "circuit", "compiled", "index", "io", "public_inputs", "weights")
 
-    def __init__(self, compiled: Compiled, weights: Weights | None) -> None:
+    def __init__(self, compiled: Compiled) -> None:
         if not isinstance(compiled, Compiled):
             raise ProtocolError("sessions require a Compiled circuit")
         self.compiled = compiled
         self.circuit = compiled.circuit
         self.index = compiled.index
-        self.weights = weights
-        self.boundary = public_boundary(self.index, weights)
-        inputs = self.index.input_count
-        self.public_inputs: tuple[int, ...] = (
-            tuple(range(inputs))
-            if weights is None
-            else (*range(weights.start), *range(weights.stop, inputs))
-        )
-        """The non-weight input addresses, ascending."""
+        self.boundary = self.index.boundary()
+        self.weights = self.index.weights()
+        self.public_inputs: tuple[int, ...] = tuple(self.circuit.inputs)
+        """The input gate addresses by rank (ascending)."""
         addresses = set(self.public_inputs)
         addresses.update(self.circuit.outputs)
+        for address in addresses:
+            if not self.boundary.contains(address):
+                raise ProtocolError(
+                    f"circuit output at address {address} is not a boundary position "
+                    "(a weight gate cannot be a claimed output)"
+                )
         self.io: tuple[int, ...] = tuple(sorted(addresses, key=self.boundary.rank))
         """Distinct public I/O addresses in boundary rank order."""
 
     def owner(self, address: int) -> int:
-        """Who commits to ``address``: the weights, the boundary or a replay unit."""
+        """Who commits to ``address``: ``kappa_W`` for a weight gate, the boundary
+        for an input gate or a declared output, else the owning replay unit."""
 
-        if self.weights is not None and address in self.weights:
+        if self.weights.contains(address):
             return WEIGHT_OWNER
         if self.boundary.contains(address):
             return BOUNDARY_OWNER
@@ -244,7 +247,7 @@ class ProverSession:
         limits: VerificationLimits | None = None,
         weight_tree: MerkleTree | None = None,
     ) -> None:
-        self._layout = _Layout(compiled, header.weights)
+        self._layout = _Layout(compiled)
         if header.compiled_digest != compiled.digest:
             raise ProtocolError("header names a different compiled circuit")
         self.header = header
@@ -255,10 +258,12 @@ class ProverSession:
         if header.weights is None:
             if weight_tree is not None:
                 raise ProtocolError("the header binds no weights")
+            if compiled.index.weight_count:
+                raise ProtocolError("the circuit has weight gates but the header binds no weights")
         else:
             if weight_tree is None:
                 raise ProtocolError("the header binds weights; the prover needs their tree")
-            expected = weight_domain(header.weights.start, header.weights.stop)
+            expected = weight_domain(compiled)
             if (
                 weight_tree.domain.domain_id != expected.domain_id
                 or weight_tree.commitment != header.weights.commitment
@@ -365,13 +370,19 @@ class VerifierSession:
         if expectation.compiled_digest != compiled.digest:
             raise ProtocolError("expectation names a different compiled circuit")
         weights = expectation.weights
-        if weights is not None and weights.stop > compiled.index.input_count:
+        weight_count = compiled.index.weight_count
+        if weights is None and weight_count:
             raise Reject(
                 VerificationCode.INVALID_COMPILED_RESULT,
-                f"weights end at address {weights.stop} but the circuit has "
-                f"{compiled.index.input_count} inputs",
+                f"the circuit has {weight_count} weight gates but no kappa_W is bound",
             )
-        self._layout = _Layout(compiled, weights)
+        if weights is not None and weights.count != weight_count:
+            raise Reject(
+                VerificationCode.INVALID_COMPILED_RESULT,
+                f"kappa_W binds {weights.count} weights but the circuit has "
+                f"{weight_count} weight gates",
+            )
+        self._layout = _Layout(compiled)
         self._expectation = expectation
         self._limits = VerificationLimits() if limits is None else limits
         self._phase = "admission"
@@ -405,10 +416,7 @@ class VerifierSession:
         )
         self._commitments: dict[int, tuple[CommitmentDomain, Commitment]] = {}
         if weights is not None:
-            self._commitments[WEIGHT_OWNER] = (
-                weight_domain(weights.start, weights.stop),
-                weights.commitment,
-            )
+            self._commitments[WEIGHT_OWNER] = (weight_domain(compiled), weights.commitment)
         self._phase = "boundary"
         self._boundary_phase = b""
         self._replay_phase = b""
@@ -597,7 +605,12 @@ class VerifierSession:
         )
 
     def _check_unit(self, unit: int, batch: tuple[Opening, ...]) -> None:
-        """Open every value a sampled unit touches and check each of its gates."""
+        """Open every value a sampled unit touches and check each of its gates.
+
+        An input gate must hold the header's public input of its rank; a
+        weight gate is checked by its opening under ``kappa_W`` alone; every
+        other gate by its relation.
+        """
 
         layout = self._layout
         circuit = layout.circuit
@@ -607,9 +620,10 @@ class VerifierSession:
                 VerificationCode.COVERAGE_MISMATCH,
                 f"evidence for unit {unit} must open exactly its required addresses",
             )
+        payloads: dict[int, bytes] = {}
         values: dict[int, int] = {}
         for (owner, address), opening in zip(required, batch, strict=True):
-            payload = self._open(owner, opening)
+            payload = payloads[address] = self._open(owner, opening)
             try:
                 values[address] = circuit.decode(address, payload)
             except Exception as error:
@@ -620,6 +634,13 @@ class VerifierSession:
         for member in layout.index.verification_unit(unit).interval:
             gate = circuit[member]
             if gate.is_input:
+                if payloads[member] != self.header.public_inputs[circuit.input_rank(member)]:
+                    raise self._reject(
+                        VerificationCode.PUBLIC_IO_MISMATCH,
+                        f"input at address {member} differs from the public input",
+                    )
+                continue
+            if gate.is_weight:
                 continue
             try:
                 satisfied = circuit.check_gate(
@@ -668,9 +689,12 @@ def run_protocol(
         verifier = VerifierSession(expectation, compiled, limits=limits)
     except Reject as rejection:
         return ProtocolRun(rejection_report(rejection, None), None)
-    weights = expectation.weights
-    if weights is not None and weight_tree is None:
-        _, weight_tree = commit_weights(compiled, weights.start, weights.stop, values)
+    if expectation.weights is not None and weight_tree is None:
+        try:
+            weight_values = [values[address] for address in compiled.circuit.weights]
+        except KeyError as error:
+            raise ProtocolError(f"prover has no value for weight gate {error.args[0]}") from None
+        _, weight_tree = commit_weights(compiled, weight_values)
     prover = ProverSession(
         compiled,
         verifier.header,

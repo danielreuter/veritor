@@ -36,6 +36,11 @@ errors, again admitting more.  Everything is computed once per kind in
 ``log2`` with upward rounding (:mod:`veritor.analysis.series`) and weighted
 by copy counts; no copy is ever enumerated, and the running time is
 polynomial in ``buckets`` and ``errors_limit`` only.
+
+Source gates (``in``/``weight``) are pinned to the boundary or to ``kappa_W``
+and never counted in a node's ``out_bits``: a unit holding nothing but
+source gates has capacity ``2**0``.  An error set may still name such a
+unit (no rule excludes it), which only adds terms of weight one to the sum.
 """
 
 from __future__ import annotations

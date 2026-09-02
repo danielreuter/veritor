@@ -40,6 +40,7 @@ from veritor.protocol import (
     VerificationReport,
     VerifierParameters,
     Weights,
+    commit_weights,
     encode_transcript,
     make_expectation,
     run_protocol,
@@ -177,6 +178,7 @@ def build_executable_conformance_transcript(
     public_inputs: Sequence[int],
     policy: VerificationPolicy = DEFAULT_CONFORMANCE_POLICY,
     *,
+    weights: Sequence[int] = (),
     session_id: bytes | None = None,
     q_seed: bytes | None = None,
     s_seed: bytes | None = None,
@@ -184,26 +186,34 @@ def build_executable_conformance_transcript(
 ) -> ExecutableConformanceTranscript:
     """Run an honest prover against the verifier in one process.
 
-    The circuit is evaluated on ``public_inputs``, the claimed outputs are
-    read from that evaluation, and both protocol parties run locally via
+    The circuit is evaluated on ``public_inputs`` and ``weights`` (the values
+    of its ``in`` and ``weight`` gates by rank), the claimed outputs are read
+    from that evaluation, the weights are committed under ``kappa_W`` when the
+    circuit has any, and both protocol parties run locally via
     :func:`run_protocol`.  This cannot demonstrate that either seed was
     withheld until the message it depends on was fixed; it is a conformance
     fixture for :func:`Verify`.
     """
 
     compiled = _compiled(compiled)
-    values = compiled.circuit.evaluate(public_inputs)
+    values = compiled.circuit.evaluate(public_inputs, weights)
     outputs = tuple(values[address] for address in compiled.circuit.outputs)
+    bound_weights, weight_tree = (
+        commit_weights(compiled, weights) if compiled.index.weight_count else (None, None)
+    )
     expectation = make_expectation(
         compiled,
         policy,
         public_inputs,
         outputs,
+        weights=bound_weights,
         session_id=session_id,
         q_seed=q_seed,
         s_seed=s_seed,
     )
-    run = run_protocol(compiled, expectation, dict(enumerate(values)), limits=limits)
+    run = run_protocol(
+        compiled, expectation, dict(enumerate(values)), limits=limits, weight_tree=weight_tree
+    )
     if run.transcript is None:
         raise RuntimeError(
             f"honest conformance run was rejected: {run.report.code.value}: "
