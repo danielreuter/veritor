@@ -726,6 +726,10 @@ def run_protocol(
 ) -> ProtocolRun:
     """Run prover and verifier against each other in one process.
 
+    ``values`` supply the boundary and the weights; by default the prover
+    *replays* each selected interior honestly from the boundary, so interior
+    entries of ``values`` are not what gets committed.  To model a prover that
+    commits a dishonest interior, pass ``replay=assignment_replay(values)``.
     When the expectation binds weights and no ``weight_tree`` is given, the
     prover commits the weights in ``values`` (an honest prover's tree).
     """

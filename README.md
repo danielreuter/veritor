@@ -70,7 +70,10 @@ capacity at most `U_max + A`. In this prototype `G` is ordinary Python the
 verifier executes, identified by a versioned digest like the gate set; a
 deployment would run it sandboxed and metered, or have the client prove
 `Compile(G, x, a) = (C, I)`. A client who chooses its units badly pays in cost
-or in a larger `U`, never in soundness.
+or in a larger `U`, never in soundness. `docs/security-argument.md` states,
+component by component, what is claimed, why the code provides it, which
+attack test in `tests/veritor/security/` shows the failure mode caught, and
+what is only achieved by convention.
 
 ~~~text
 src/veritor/
