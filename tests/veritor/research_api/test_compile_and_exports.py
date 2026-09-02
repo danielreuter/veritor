@@ -6,19 +6,26 @@ import pytest
 
 import veritor
 from veritor import (
-    AggregateBoundArtifact,
     ArchitectureId,
     Compile,
     Compiled,
     DemoGCompileRequest,
-    IndexedStructureArtifact,
     MatmulCompileRequest,
     Unsupported,
     VerificationPolicy,
     build_executable_conformance_transcript,
     make_verification_expectation,
 )
+from veritor.core import Capability
+from veritor.plugins import NO_CONSTRUCTOR
 from veritor.protocol import ProtocolError
+
+CONFIGURED = (
+    ArchitectureId.GPT2,
+    ArchitectureId.KIMI_K3,
+    ArchitectureId.DEEPSEEK_V4_PRO,
+    ArchitectureId.INKLING,
+)
 
 
 @pytest.mark.parametrize(
@@ -33,24 +40,15 @@ def test_compile_returns_compiled_for_executable_architectures(
     assert Compile(architecture_id).digest == compiled.digest
 
 
-@pytest.mark.parametrize(
-    ("architecture_id", "expected_type"),
-    (
-        (ArchitectureId.GPT2, IndexedStructureArtifact),
-        (ArchitectureId.KIMI_K3, AggregateBoundArtifact),
-        (ArchitectureId.DEEPSEEK_V4_PRO, AggregateBoundArtifact),
-        (ArchitectureId.INKLING, AggregateBoundArtifact),
-    ),
-)
-def test_compile_delegates_described_registry_artifacts(
+@pytest.mark.parametrize("architecture_id", CONFIGURED)
+def test_compile_reports_the_missing_constructor_for_configured_architectures(
     architecture_id: ArchitectureId,
-    expected_type: type[object],
 ) -> None:
     artifact = Compile(architecture_id)
 
-    assert isinstance(artifact, expected_type)
-    assert artifact.architecture_id is architecture_id
-    assert Compile(architecture_id).identity == artifact.identity
+    assert isinstance(artifact, Unsupported)
+    assert artifact.capability is Capability.COMPILE
+    assert artifact.reason_code == NO_CONSTRUCTOR
 
 
 def test_compile_rejects_unknown_architecture_without_fabricating_artifact() -> None:
@@ -58,16 +56,8 @@ def test_compile_rejects_unknown_architecture_without_fabricating_artifact() -> 
         Compile("not-an-architecture")
 
 
-@pytest.mark.parametrize(
-    "architecture_id",
-    (
-        ArchitectureId.GPT2,
-        ArchitectureId.KIMI_K3,
-        ArchitectureId.DEEPSEEK_V4_PRO,
-        ArchitectureId.INKLING,
-    ),
-)
-def test_non_executable_artifacts_have_typed_transcript_outcomes(
+@pytest.mark.parametrize("architecture_id", CONFIGURED)
+def test_configured_artifacts_have_typed_transcript_outcomes(
     architecture_id: ArchitectureId,
 ) -> None:
     artifact = Compile(architecture_id)
@@ -78,7 +68,8 @@ def test_non_executable_artifacts_have_typed_transcript_outcomes(
     )
 
     assert all(isinstance(outcome, Unsupported) for outcome in outcomes)
-    assert all(outcome.capability.value == "verify" for outcome in outcomes)
+    assert all(outcome.capability is Capability.VERIFY for outcome in outcomes)
+    assert all(outcome.reason_code == NO_CONSTRUCTOR for outcome in outcomes)
 
 
 def test_expectation_generates_mandatory_verifier_seeds() -> None:
@@ -117,7 +108,7 @@ def test_matmul_request_is_exported_and_compiles_through_public_facade() -> None
 
 
 def test_paper_level_api_is_exported() -> None:
-    names = {"Bound", "Compile", "Optimize", "Verify", "run_protocol"}
+    names = {"Bound", "Compile", "Verify", "run_protocol"}
 
     assert names <= set(veritor.__all__)
     assert all(hasattr(veritor, name) for name in names)

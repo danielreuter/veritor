@@ -1,177 +1,101 @@
-"""Exact two-stage survival probabilities for finite error sets."""
+"""Survival of an error set under ``theta = (q, s)``, exact and in nats.
+
+Each replay unit is selected with probability ``q``; inside a selected
+replay unit each verification unit is selected with probability ``s``.  An
+error set ``E`` (verification units holding an incorrect gate) escapes
+detection with probability
+
+    sigma(E) = prod_r f(l_r),   f(l) = 1 - q + q (1 - s)^l,   l_r = |E ∩ R_r|,
+
+and is *admissible* iff ``sigma(E) > eta``.  Writing ``c(l) = -ln f(l)`` and
+``Lambda = ln(1 / eta)`` this is ``sum_r c(l_r) < Lambda``: a knapsack over
+replay units.  ``c`` is increasing and saturates at ``-ln(1 - q)``, so many
+errors in one replay unit cost little more than a few -- concentration is
+cheap, and that falls out of the formula.
+
+The exact functions return :class:`~fractions.Fraction`; the ``float``
+functions round in the direction that admits more error sets (costs down,
+the budget up), so a bound computed from them stays an upper bound.
+"""
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
-from dataclasses import dataclass
-from enum import StrEnum
 from fractions import Fraction
 
-from veritor.core.index import Index
 from veritor.core.policy import VerificationPolicy
 
-
-class AttackSetKind(StrEnum):
-    """The atom named by an error-set input."""
-
-    VERIFICATION_UNITS = "verification_units"
-    POSITIONS = "positions"
+_REL = 2.0**-40
+_ABS = 2.0**-48
 
 
-@dataclass(frozen=True, slots=True)
-class VerificationUnitErrorSet:
-    """An explicitly typed finite set of verification-unit indices."""
+def _ln(value: Fraction) -> float:
+    """``ln value`` for a positive rational, safe far outside the float range."""
 
-    units: frozenset[int]
-
-    def __init__(self, units: Iterable[int]) -> None:
-        object.__setattr__(self, "units", frozenset(units))
-
-
-@dataclass(frozen=True, slots=True)
-class PositionErrorSet:
-    """An explicitly typed finite set of attacked computed positions."""
-
-    positions: frozenset[int]
-
-    def __init__(self, positions: Iterable[int]) -> None:
-        object.__setattr__(self, "positions", frozenset(positions))
+    as_float = float(value)
+    if as_float >= 2.0**-1000:
+        return math.log(as_float)
+    return math.log(value.numerator) - math.log(value.denominator)
 
 
-type ErrorSetInput = Iterable[int] | VerificationUnitErrorSet | PositionErrorSet
+def survival_factor(policy: VerificationPolicy, errors: int) -> Fraction:
+    """``f(l)``: the chance one replay unit with ``l`` erroneous units escapes."""
+
+    if type(errors) is not int or errors < 0:
+        raise ValueError("the error count must be a nonnegative integer")
+    return 1 - policy.q + policy.q * (1 - policy.s) ** errors
 
 
-def _attack_kind(value: AttackSetKind | str) -> AttackSetKind:
-    aliases = {
-        "units": AttackSetKind.VERIFICATION_UNITS,
-        "verification_unit_ids": AttackSetKind.VERIFICATION_UNITS,
-        "verification_units": AttackSetKind.VERIFICATION_UNITS,
-        "positions": AttackSetKind.POSITIONS,
-    }
-    try:
-        return aliases[str(value)]
-    except KeyError:
-        try:
-            return AttackSetKind(value)
-        except (TypeError, ValueError) as error:
-            raise ValueError(f"unknown attack-set kind {value!r}") from error
+def survival(policy: VerificationPolicy, errors_per_replay_unit: Iterable[int]) -> Fraction:
+    """``sigma(E) = prod_r f(l_r)`` from the per-replay-unit error counts."""
+
+    result = Fraction(1)
+    for errors in errors_per_replay_unit:
+        result *= survival_factor(policy, errors)
+    return result
 
 
-def verification_owner(index: Index, address: int) -> int:
-    """The global index of the verification unit containing ``address``."""
+def admissible(policy: VerificationPolicy, errors_per_replay_unit: Iterable[int]) -> bool:
+    """Whether ``E`` is accepted with probability strictly above ``eta``."""
 
-    units = index.verification_units(index.replay_units.owner(address))
-    return units.first + units.owner(address)
-
-
-def normalize_error_units(
-    index: Index,
-    error_set: ErrorSetInput,
-    *,
-    attack_kind: AttackSetKind | str = AttackSetKind.VERIFICATION_UNITS,
-) -> tuple[int, ...]:
-    """Normalize verification-unit IDs or positions to sorted unit indices.
-
-    Plain integer iterables name verification units by default.  Callers using
-    positions should pass ``attack_kind="positions"`` or :class:`PositionErrorSet`
-    so an integer that is valid in both domains is never interpreted by a
-    heuristic.
-    """
-
-    if not isinstance(index, Index):
-        raise TypeError("index must be an Index")
-    if isinstance(error_set, VerificationUnitErrorSet):
-        values = error_set.units
-        kind = AttackSetKind.VERIFICATION_UNITS
-    elif isinstance(error_set, PositionErrorSet):
-        values = error_set.positions
-        kind = AttackSetKind.POSITIONS
-    else:
-        try:
-            values = frozenset(error_set)
-        except TypeError as error:
-            raise TypeError("error_set must be a finite iterable of integers") from error
-        kind = _attack_kind(attack_kind)
-
-    for value in values:
-        if type(value) is not int or value < 0:
-            raise ValueError("error-set members must be nonnegative integers")
-
-    if kind is AttackSetKind.VERIFICATION_UNITS:
-        if any(value >= index.verification_unit_count for value in values):
-            raise ValueError("error set names an unknown verification unit")
-        return tuple(sorted(values))
-
-    units: set[int] = set()
-    for value in values:
-        try:
-            units.add(verification_owner(index, value))
-        except KeyError as error:
-            raise ValueError(f"error set names an address outside every unit {value}") from error
-    return tuple(sorted(units))
+    return survival(policy, errors_per_replay_unit) > policy.eta
 
 
-def survival_from_replay_error_counts(
-    policy: VerificationPolicy,
-    incorrect_units_per_replay: Iterable[int],
-) -> Fraction:
-    """Evaluate ``prod_r (1-q + q(1-s)^ell_r)`` exactly."""
+def unit_cost(policy: VerificationPolicy, errors: int) -> float:
+    """``c(l) = -ln f(l)`` in nats, rounded down (``inf`` when ``f(l) = 0``)."""
 
-    counts = tuple(incorrect_units_per_replay)
-    if any(type(count) is not int or count < 0 for count in counts):
-        raise ValueError("replay error counts must be nonnegative integers")
-    q = policy.q
-    s = policy.s
-    survival = Fraction(1)
-    for count in counts:
-        survival *= 1 - q + q * (1 - s) ** count
-    return survival
+    factor = survival_factor(policy, errors)
+    if factor == 0:
+        return math.inf
+    if factor == 1:
+        return 0.0
+    cost = -_ln(factor)
+    return max(0.0, cost - cost * _REL - _ABS)
 
 
-def survival_probability(
-    index: Index,
-    policy: VerificationPolicy,
-    error_set: ErrorSetInput,
-    *,
-    attack_kind: AttackSetKind | str = AttackSetKind.VERIFICATION_UNITS,
-) -> Fraction:
-    """Return the exact fixed-policy survival probability for ``error_set``.
+def saturation_cost(policy: VerificationPolicy) -> float:
+    """``c(inf) = -ln(1 - q)``, the cost of corrupting a whole replay unit."""
 
-    First-stage replay choices are independent across replay units.  All
-    verification units inside one replay unit share its first-stage choice,
-    while their second-stage choices are independent.  The strict admissibility
-    predicate used by bound solvers is ``survival > policy.eta``.
-    """
-
-    if not isinstance(policy, VerificationPolicy):
-        raise TypeError("policy must be a VerificationPolicy")
-    units = normalize_error_units(index, error_set, attack_kind=attack_kind)
-    counts = [0] * index.replay_units.count
-    for unit_index in units:
-        owner = index.verification_unit(unit_index).replay_unit
-        assert owner is not None
-        counts[owner] += 1
-    return survival_from_replay_error_counts(policy, counts)
+    if policy.q == 1:
+        return math.inf
+    return -math.log(1 - policy.q)
 
 
-def survives_strict_threshold(
-    survival: Fraction,
-    policy: VerificationPolicy,
-) -> bool:
-    """Return the protocol's strict admissibility decision."""
+def budget(policy: VerificationPolicy) -> float:
+    """``Lambda = ln(1 / eta)`` in nats, rounded up (``inf`` when ``eta = 0``)."""
 
-    if not isinstance(survival, Fraction):
-        raise TypeError("survival must be an exact Fraction")
-    return survival > policy.eta
+    if policy.eta == 0:
+        return math.inf
+    value = -_ln(policy.eta)
+    return value + value * _REL + _ABS
 
 
 __all__ = [
-    "AttackSetKind",
-    "ErrorSetInput",
-    "PositionErrorSet",
-    "VerificationUnitErrorSet",
-    "normalize_error_units",
-    "survival_from_replay_error_counts",
-    "survival_probability",
-    "survives_strict_threshold",
+    "admissible",
+    "budget",
+    "saturation_cost",
+    "survival",
+    "survival_factor",
+    "unit_cost",
 ]

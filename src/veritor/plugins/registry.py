@@ -39,16 +39,10 @@ def architecture_registry() -> ArchitectureRegistry:
     return ARCHITECTURE_PLUGINS
 
 
-get_registry = architecture_registry
-
-
 def list_architectures() -> tuple[ArchitectureId, ...]:
     """Return stable IDs in stable display order."""
 
     return tuple(plugin.architecture_id for plugin in _ORDERED_PLUGINS)
-
-
-list_plugins = list_architectures
 
 
 def list_architecture_plugins() -> tuple[ArchitecturePlugin, ...]:
@@ -70,9 +64,6 @@ def get_architecture_plugin(
     return ARCHITECTURE_PLUGINS[resolved]
 
 
-get_plugin = get_architecture_plugin
-
-
 def compile_architecture(
     architecture_id: ArchitectureId | str,
     request: object | None = None,
@@ -90,6 +81,3 @@ def compile_architecture(
                 "compile request architecture does not match registry selection"
             )
     return plugin.compile(request)
-
-
-compile_plugin = compile_architecture

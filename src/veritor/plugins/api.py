@@ -1,53 +1,20 @@
 """Stable contracts shared by architecture plug-ins.
 
-A plug-in compiles to one of three disjoint results:
-
-* :class:`~veritor.core.Compiled` -- a genuine executable ``(C, I)``;
-* :class:`IndexedStructureArtifact` -- exact structural metadata only; and
-* :class:`AggregateBoundArtifact` -- a counted capacity model with no circuit.
-
-Keeping those representations separate prevents aggregate accounting from
-accidentally acquiring protocol-circuit semantics.
+A plug-in compiles to a :class:`~veritor.core.Compiled` -- the executable
+``(C, I)`` the protocol verifies and the analysis bounds -- or reports
+:class:`~veritor.core.Unsupported`.  The LLM plug-ins currently hold model
+configurations only: they keep the dimensions constructors will be written
+against and compile to ``Unsupported`` until then.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
-from circuit_cut_analysis.capacity import LogCardinality
-from circuit_cut_analysis.indexed import GateRef
-from circuit_cut_analysis.models.capacity_profile import (
-    CapacityRegion,
-    ModelCapacityProfile,
-)
-from circuit_cut_analysis.models.gpt2_capacity_oracle import (
-    GPT2StructuralCapacityOracle,
-)
-from circuit_cut_analysis.models.gpt2_circuit import GPT2IndexedCircuit
-from circuit_cut_analysis.models.gpt2_gate_classes import (
-    GPT2ClassGranularity,
-    GPT2GateClassCatalog,
-)
-from circuit_cut_analysis.weighted_sampling import (
-    WeightedGateClassPartition,
-    capacity_upper_bound_for_counts,
-)
-from veritor.core import (
-    ArtifactKind,
-    Capability,
-    CapabilityReport,
-    ClaimStatus,
-    Compiled,
-    Digest,
-    EvidenceStatus,
-    IndexedDomain,
-    JSONValue,
-    Unsupported,
-    identity_digest,
-)
+from veritor.core import Capability, Compiled, JSONValue, Unsupported
 
 
 class ArchitectureId(StrEnum):
@@ -129,469 +96,7 @@ class GreedyTextExecutionShape:
         }
 
 
-FixedGreedyTextShape = GreedyTextExecutionShape
-
-
-@dataclass(frozen=True, slots=True)
-class AssumptionRecord:
-    """One stable, auditable assumption attached to an artifact."""
-
-    code: str
-    statement: str
-    source: str
-
-    def __post_init__(self) -> None:
-        for field_name in ("code", "statement", "source"):
-            value = getattr(self, field_name)
-            if type(value) is not str or not value.strip():
-                raise ValueError(f"{field_name} must be a nonempty string")
-
-
-@dataclass(frozen=True, slots=True)
-class EvidenceRecord:
-    """Evidence strength and claim strength for one artifact assertion."""
-
-    code: str
-    claim: ClaimStatus
-    evidence: EvidenceStatus
-    detail: str
-    source: str
-
-    def __post_init__(self) -> None:
-        if type(self.code) is not str or not self.code.strip():
-            raise ValueError("evidence code must be a nonempty string")
-        if type(self.detail) is not str or not self.detail.strip():
-            raise ValueError("evidence detail must be a nonempty string")
-        if type(self.source) is not str or not self.source.strip():
-            raise ValueError("evidence source must be a nonempty string")
-
-
-@dataclass(frozen=True, slots=True)
-class ArchitectureArtifactIdentity:
-    """Deterministic identity of one plug-in request and representation."""
-
-    architecture_id: ArchitectureId
-    plugin_id: str
-    plugin_version: str
-    artifact_kind: ArtifactKind
-    request_digest: Digest
-    representation_digest: Digest
-    digest: Digest
-
-    @classmethod
-    def build(
-        cls,
-        *,
-        architecture_id: ArchitectureId,
-        plugin_id: str,
-        plugin_version: str,
-        artifact_kind: ArtifactKind,
-        request_manifest: JSONValue,
-        representation_manifest: JSONValue,
-    ) -> ArchitectureArtifactIdentity:
-        if type(plugin_id) is not str or not plugin_id.strip():
-            raise ValueError("plugin_id must be a nonempty string")
-        if type(plugin_version) is not str or not plugin_version.strip():
-            raise ValueError("plugin_version must be a nonempty string")
-        request_digest = identity_digest(
-            "veritor/plugins/compile-request/v1",
-            request_manifest,
-        )
-        representation_digest = identity_digest(
-            "veritor/plugins/representation/v1",
-            representation_manifest,
-        )
-        digest = identity_digest(
-            "veritor/plugins/artifact/v1",
-            {
-                "architecture_id": architecture_id.value,
-                "artifact_kind": artifact_kind.value,
-                "plugin_id": plugin_id,
-                "plugin_version": plugin_version,
-                "representation_digest": representation_digest,
-                "request_digest": request_digest,
-            },
-        )
-        return cls(
-            architecture_id=architecture_id,
-            plugin_id=plugin_id,
-            plugin_version=plugin_version,
-            artifact_kind=artifact_kind,
-            request_digest=request_digest,
-            representation_digest=representation_digest,
-            digest=digest,
-        )
-
-
-class CapacityClaimKind(StrEnum):
-    """Strength of the capacity provider attached to an artifact."""
-
-    EXACT = "exact"
-    CERTIFIED_INTERVAL = "certified-interval"
-    PROFILE_SELF_CUT_RELAXATION = "profile-self-cut-relaxation"
-
-    EXACT_CIRCUIT = "exact"
-    CERTIFIED_CIRCUIT_INTERVAL = "certified-interval"
-
-
-@dataclass(frozen=True, slots=True)
-class CapacityBoundEvidence:
-    """Guarantee-carrying result from a plug-in bound provider."""
-
-    lower_bound: LogCardinality
-    upper_bound: LogCardinality
-    claim_kind: CapacityClaimKind
-    method: str
-    certificate: str
-    assumptions: tuple[str, ...] = ()
-    cut_gate_ids: frozenset[str] | None = None
-
-    def __post_init__(self) -> None:
-        if self.lower_bound > self.upper_bound:
-            raise ValueError("capacity lower bound exceeds upper bound")
-        if type(self.method) is not str or not self.method.strip():
-            raise ValueError("capacity method must be nonempty")
-        if type(self.certificate) is not str or not self.certificate.strip():
-            raise ValueError("capacity certificate must be nonempty")
-
-    @property
-    def is_exact(self) -> bool:
-        return self.lower_bound == self.upper_bound
-
-
-@runtime_checkable
-class CapacityBoundProvider[AttackT](Protocol):
-    """Common surface consumed by a later analysis facade."""
-
-    @property
-    def claim_kind(self) -> CapacityClaimKind: ...
-
-    @property
-    def output_frontier(self) -> LogCardinality: ...
-
-    def evaluate(self, attack: AttackT) -> CapacityBoundEvidence: ...
-
-
-@dataclass(frozen=True, slots=True)
-class AggregateProfileBoundProvider:
-    """Certified class-count self-cut relaxation for aggregate profiles."""
-
-    profile: ModelCapacityProfile
-    partition: WeightedGateClassPartition
-    claim_kind: CapacityClaimKind = field(
-        init=False,
-        default=CapacityClaimKind.PROFILE_SELF_CUT_RELAXATION,
-    )
-
-    def __post_init__(self) -> None:
-        if self.partition.model_id != self.profile.model_id:
-            raise ValueError("profile and weighted partition model IDs differ")
-        if self.partition.total_gate_count != self.profile.total_gate_count:
-            raise ValueError("profile and weighted partition gate counts differ")
-
-    @property
-    def output_frontier(self) -> LogCardinality:
-        return self.partition.output_frontier
-
-    @property
-    def weighted_partition(self) -> WeightedGateClassPartition:
-        return self.partition
-
-    def evaluate(self, attack: Sequence[int]) -> CapacityBoundEvidence:
-        counts = tuple(attack)
-        upper = capacity_upper_bound_for_counts(self.partition, counts)
-        return CapacityBoundEvidence(
-            lower_bound=LogCardinality.zero(),
-            upper_bound=upper,
-            claim_kind=self.claim_kind,
-            method="profile-class-count-self-cut",
-            certificate=self.partition.certificate,
-            assumptions=self.profile.assumptions,
-        )
-
-
-class TraceBinding(StrEnum):
-    """Whether a trace-conditional profile names a concrete trace."""
-
-    NOT_APPLICABLE = "not-applicable"
-    UNBOUND_TRACE_CONDITIONAL = "unbound-trace-conditional"
-    TRACE_BOUND = "trace-bound"
-
-
-@runtime_checkable
-class GPT2CapacityProviderSurface(Protocol):
-    """Factories exposed by the GPT-2 structural plug-in."""
-
-    @property
-    def claim_kind(self) -> CapacityClaimKind: ...
-
-    @property
-    def output_frontier(self) -> LogCardinality: ...
-
-    @property
-    def catalog_available(self) -> bool: ...
-
-    def structural_oracle(
-        self,
-        *,
-        max_exact_gates: int = 200_000,
-        max_exact_edges: int = 2_000_000,
-    ) -> GPT2StructuralCapacityOracle: ...
-
-    def gate_class_catalog(
-        self,
-        *,
-        granularity: GPT2ClassGranularity | str = GPT2ClassGranularity.ROW,
-        position_bands: int = 8,
-    ) -> GPT2GateClassCatalog | Unsupported: ...
-
-    def evaluate(
-        self,
-        attack: Iterable[GateRef],
-        *,
-        max_exact_gates: int = 200_000,
-        max_exact_edges: int = 2_000_000,
-    ) -> CapacityBoundEvidence: ...
-
-
-def _unsupported(
-    *,
-    capability: Capability,
-    plugin_id: str,
-    artifact_kind: ArtifactKind,
-    reason_code: str,
-    detail: str,
-) -> Unsupported:
-    return Unsupported(
-        capability=capability,
-        plugin_id=plugin_id,
-        reason_code=reason_code,
-        detail=detail,
-        artifact_kind=artifact_kind,
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class IndexedStructureArtifact:
-    """Exact GPT-2 indexed structure without protocol gate semantics."""
-
-    architecture_id: ArchitectureId
-    plugin_id: str
-    plugin_version: str
-    identity: ArchitectureArtifactIdentity
-    capabilities: CapabilityReport
-    execution_shape: GreedyTextExecutionShape
-    indexed: GPT2IndexedCircuit
-    ordered_output_refs: tuple[GateRef, ...]
-    gate_domain: IndexedDomain[GateRef]
-    computed_gate_domain: IndexedDomain[GateRef]
-    bound_provider: GPT2CapacityProviderSurface
-    gate_count: int
-    computed_gate_count: int
-    primitive_gate_count: int
-    gate_family_count: int
-    edge_rule_count: int
-    assumptions: tuple[AssumptionRecord, ...]
-    evidence: tuple[EvidenceRecord, ...]
-    runtime_validated: bool = False
-    artifact_kind: ArtifactKind = field(
-        init=False,
-        default=ArtifactKind.STRUCTURAL_CIRCUIT,
-    )
-
-    @property
-    def kind(self) -> ArtifactKind:
-        return self.artifact_kind
-
-    @property
-    def shape(self) -> GreedyTextExecutionShape:
-        return self.execution_shape
-
-    @property
-    def structure(self) -> GPT2IndexedCircuit:
-        return self.indexed
-
-    @property
-    def structural_circuit(self) -> object:
-        return self.indexed.circuit
-
-    @property
-    def output_refs(self) -> tuple[GateRef, ...]:
-        return self.ordered_output_refs
-
-    @property
-    def assumption_texts(self) -> tuple[str, ...]:
-        return tuple(record.statement for record in self.assumptions)
-
-    def count_expanded_edges(
-        self,
-        *,
-        max_gates: int,
-        max_edges: int,
-    ) -> int:
-        count = 0
-        for _edge in self.indexed.circuit.iter_edges(
-            max_gates=max_gates,
-            max_edges=max_edges,
-        ):
-            count += 1
-        return count
-
-    def structural_oracle(
-        self,
-        *,
-        max_exact_gates: int = 200_000,
-        max_exact_edges: int = 2_000_000,
-    ) -> GPT2StructuralCapacityOracle:
-        return self.bound_provider.structural_oracle(
-            max_exact_gates=max_exact_gates,
-            max_exact_edges=max_exact_edges,
-        )
-
-    def gate_class_catalog(
-        self,
-        *,
-        granularity: GPT2ClassGranularity | str = GPT2ClassGranularity.ROW,
-        position_bands: int = 8,
-    ) -> GPT2GateClassCatalog | Unsupported:
-        return self.bound_provider.gate_class_catalog(
-            granularity=granularity,
-            position_bands=position_bands,
-        )
-
-    def replay(self) -> Unsupported:
-        return _unsupported(
-            capability=Capability.STATIC_PARTITION,
-            plugin_id=self.plugin_id,
-            artifact_kind=self.artifact_kind,
-            reason_code="NO_PROTOCOL_REPLAY_PARTITION",
-            detail=(
-                "GPT-2 probability classes are analysis classes, not replay "
-                "or verification partitions"
-            ),
-        )
-
-    replay_access = replay
-
-    def execution_access(self) -> Unsupported:
-        return _unsupported(
-            capability=Capability.EXECUTE,
-            plugin_id=self.plugin_id,
-            artifact_kind=self.artifact_kind,
-            reason_code="NO_EXECUTABLE_RELATIONS",
-            detail=(
-                "the indexed projection has structural adjacency but no ordered "
-                "operands, trusted value codec, or executable local relations"
-            ),
-        )
-
-    def execute(self, *_args: object, **_kwargs: object) -> Unsupported:
-        return self.execution_access()
-
-    def verification_access(self) -> Unsupported:
-        return _unsupported(
-            capability=Capability.VERIFY,
-            plugin_id=self.plugin_id,
-            artifact_kind=self.artifact_kind,
-            reason_code="NO_EXECUTABLE_RELATIONS",
-            detail="structural GPT-2 metadata cannot produce a protocol transcript",
-        )
-
-    def verify(self, *_args: object, **_kwargs: object) -> Unsupported:
-        return self.verification_access()
-
-
-@dataclass(frozen=True, slots=True)
-class AggregateBoundArtifact:
-    """Counted profile and self-cut provider; deliberately not a circuit."""
-
-    architecture_id: ArchitectureId
-    plugin_id: str
-    plugin_version: str
-    identity: ArchitectureArtifactIdentity
-    capabilities: CapabilityReport
-    execution_shape: GreedyTextExecutionShape
-    profile: ModelCapacityProfile
-    weighted_partition: WeightedGateClassPartition
-    bound_provider: AggregateProfileBoundProvider
-    trace_binding: TraceBinding
-    trace_digest: Digest | None
-    assumptions: tuple[AssumptionRecord, ...]
-    evidence: tuple[EvidenceRecord, ...]
-    runtime_validated: bool = False
-    artifact_kind: ArtifactKind = field(
-        init=False,
-        default=ArtifactKind.CAPACITY_PROFILE,
-    )
-
-    @property
-    def kind(self) -> ArtifactKind:
-        return self.artifact_kind
-
-    @property
-    def shape(self) -> GreedyTextExecutionShape:
-        return self.execution_shape
-
-    @property
-    def regions(self) -> tuple[CapacityRegion, ...]:
-        return self.profile.regions
-
-    @property
-    def total_gate_count(self) -> int:
-        return self.profile.total_gate_count
-
-    @property
-    def gate_count(self) -> int:
-        return self.profile.total_gate_count
-
-    @property
-    def output_frontier(self) -> LogCardinality:
-        return self.weighted_partition.output_frontier
-
-    @property
-    def assumption_texts(self) -> tuple[str, ...]:
-        return tuple(record.statement for record in self.assumptions)
-
-    def replay(self) -> Unsupported:
-        return _unsupported(
-            capability=Capability.STATIC_PARTITION,
-            plugin_id=self.plugin_id,
-            artifact_kind=self.artifact_kind,
-            reason_code="NO_PROTOCOL_REPLAY_PARTITION",
-            detail=(
-                "counted probability classes have no concrete gate members, "
-                "interiors, cross-unit reads, or replay boundary"
-            ),
-        )
-
-    replay_access = replay
-
-    def execution_access(self) -> Unsupported:
-        return _unsupported(
-            capability=Capability.EXECUTE,
-            plugin_id=self.plugin_id,
-            artifact_kind=self.artifact_kind,
-            reason_code="NO_INDEXED_WIRING_OR_EXECUTABLE_RELATIONS",
-            detail="the aggregate profile has neither scalar wiring nor local relations",
-        )
-
-    def execute(self, *_args: object, **_kwargs: object) -> Unsupported:
-        return self.execution_access()
-
-    def verification_access(self) -> Unsupported:
-        return _unsupported(
-            capability=Capability.VERIFY,
-            plugin_id=self.plugin_id,
-            artifact_kind=self.artifact_kind,
-            reason_code="NO_INDEXED_WIRING_OR_EXECUTABLE_RELATIONS",
-            detail="an aggregate capacity profile cannot be verified as a circuit",
-        )
-
-    def verify(self, *_args: object, **_kwargs: object) -> Unsupported:
-        return self.verification_access()
-
-
-type CompileResult = Compiled | IndexedStructureArtifact | AggregateBoundArtifact
+type CompileResult = Compiled | Unsupported
 
 
 @runtime_checkable
@@ -613,3 +118,49 @@ class ArchitecturePlugin(Protocol):
 
 
 type ArchitectureRegistry = Mapping[ArchitectureId, ArchitecturePlugin]
+
+NO_CONSTRUCTOR = "NO_CONSTRUCTOR"
+
+
+@dataclass(frozen=True, slots=True)
+class ConfiguredPlugin[RequestT]:
+    """A plug-in that holds a model configuration but cannot compile it yet.
+
+    ``compile`` validates the request and returns ``Unsupported``; the
+    request type is where the dimensions live for a future constructor.
+    """
+
+    architecture_id: ArchitectureId
+    plugin_id: str
+    plugin_version: str
+    request_type: type[RequestT]
+
+    def default_request(self) -> RequestT:
+        return self.request_type()
+
+    def compile(self, request: object | None = None) -> Unsupported:
+        if request is not None and not isinstance(request, self.request_type):
+            raise TypeError(
+                f"{self.architecture_id.value} requires {self.request_type.__name__}"
+            )
+        return Unsupported(
+            capability=Capability.STATIC_COMPILE,
+            plugin_id=self.plugin_id,
+            reason_code=NO_CONSTRUCTOR,
+            detail=(
+                f"{self.architecture_id.value} has a model configuration but no "
+                "description constructor yet"
+            ),
+        )
+
+
+__all__ = [
+    "NO_CONSTRUCTOR",
+    "ArchitectureId",
+    "ArchitecturePlugin",
+    "ArchitectureRegistry",
+    "CompileResult",
+    "ConfiguredPlugin",
+    "DecodingMode",
+    "GreedyTextExecutionShape",
+]

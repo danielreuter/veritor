@@ -1,103 +1,105 @@
+from decimal import Decimal, getcontext
 from fractions import Fraction
 
 import pytest
 
 from veritor.analysis import (
-    PositionErrorSet,
-    VerificationUnitErrorSet,
-    survival_probability,
-    survives_strict_threshold,
+    admissible,
+    budget,
+    saturation_cost,
+    survival,
+    survival_factor,
+    unit_cost,
 )
 from veritor.core import VerificationPolicy
 
+getcontext().prec = 60
+
+
+def exact_ln(value: Fraction) -> Decimal:
+    return (Decimal(value.numerator) / Decimal(value.denominator)).ln()
+
 
 @pytest.mark.parametrize(
-    ("q", "s", "expected"),
+    ("q", "s", "errors", "expected"),
     [
-        (0, Fraction(3, 5), Fraction(1)),
-        (Fraction(2, 3), 0, Fraction(1)),
-        (1, 1, Fraction(0)),
-        (1, Fraction(1, 2), Fraction(1, 4)),
+        (0, Fraction(3, 5), 2, Fraction(1)),
+        (Fraction(2, 3), 0, 2, Fraction(1)),
+        (1, 1, 1, Fraction(0)),
+        (1, 1, 0, Fraction(1)),
+        (1, Fraction(1, 2), 2, Fraction(1, 4)),
+        (Fraction(1, 2), Fraction(1, 2), 1, Fraction(3, 4)),
     ],
 )
-def test_survival_probability_handles_q_s_endpoints(
-    make_index,
-    q,
-    s,
-    expected,
-):
-    index = make_index((2,))
-    policy = VerificationPolicy(q, s, 0)
-
-    assert (
-        survival_probability(
-            index,
-            policy,
-            VerificationUnitErrorSet((0, 1)),
-        )
-        == expected
-    )
+def test_survival_factor_is_exact_at_the_endpoints(q, s, errors, expected):
+    assert survival_factor(VerificationPolicy(q, s, 0), errors) == expected
 
 
-def test_strict_equality_at_eta_is_not_admissible(make_index):
-    index = make_index((1,))
-    policy = VerificationPolicy(1, Fraction(1, 2), Fraction(1, 2))
-    survival = survival_probability(index, policy, (0,))
-
-    assert survival == policy.eta
-    assert not survives_strict_threshold(survival, policy)
-
-
-def test_replay_correlation_is_not_independent_scalar_sampling(make_index):
-    index = make_index((2, 1))
+def test_survival_multiplies_over_replay_units_and_ignores_positions():
     policy = VerificationPolicy(Fraction(1, 2), Fraction(1, 2), 0)
 
-    same_replay = survival_probability(index, policy, (0, 1))
-    across_replays = survival_probability(index, policy, (0, 2))
-    independent_scalar = (1 - policy.q * policy.s) ** 2
-
-    assert same_replay == Fraction(5, 8)
-    assert across_replays == Fraction(9, 16)
-    assert same_replay > independent_scalar
-    assert across_replays == independent_scalar
+    assert survival(policy, (2, 0)) == Fraction(5, 8)
+    assert survival(policy, (1, 1)) == Fraction(9, 16)
+    assert survival(policy, ()) == 1
+    assert survival(policy, (2, 0)) > survival(policy, (1, 1))
 
 
-def test_position_and_unit_error_sets_are_explicit_and_equivalent(make_index):
-    index = make_index((2, 1))
-    policy = VerificationPolicy(Fraction(1, 3), Fraction(2, 5), 0)
+def test_admissibility_is_strict_at_eta():
+    policy = VerificationPolicy(1, Fraction(1, 2), Fraction(1, 2))
 
-    by_units = survival_probability(
-        index,
-        policy,
-        VerificationUnitErrorSet((0, 2)),
-    )
-    addresses = tuple(index.verification_unit(unit).interval[0] for unit in (0, 2))
-    by_positions = survival_probability(index, policy, PositionErrorSet(addresses))
-    keyword_positions = survival_probability(
-        index, policy, addresses, attack_kind="positions"
-    )
-
-    assert by_units == by_positions == keyword_positions
+    assert survival(policy, (1,)) == policy.eta
+    assert not admissible(policy, (1,))
+    assert admissible(policy, (0,))
+    assert admissible(VerificationPolicy(1, Fraction(1, 2), Fraction(1, 4)), (1,))
 
 
-def test_survival_is_monotone_under_attack_inclusion(make_index):
-    index = make_index((3, 2))
-    policy = VerificationPolicy(Fraction(2, 3), Fraction(1, 4), 0)
-    nested_attacks = ((), (0,), (0, 1), (0, 1, 3), (0, 1, 2, 3, 4))
-    probabilities = [
-        survival_probability(index, policy, attack) for attack in nested_attacks
-    ]
-
-    assert probabilities == sorted(probabilities, reverse=True)
-
-
-def test_error_sets_reject_booleans_and_unknown_members(make_index):
-    index = make_index((1,))
+def test_error_counts_must_be_nonnegative_integers():
     policy = VerificationPolicy(1, 1, 0)
+    with pytest.raises(ValueError, match="nonnegative integer"):
+        survival_factor(policy, -1)
+    with pytest.raises(ValueError, match="nonnegative integer"):
+        survival(policy, (True,))
 
-    with pytest.raises(ValueError, match="nonnegative integers"):
-        survival_probability(index, policy, (True,))
-    with pytest.raises(ValueError, match="unknown verification unit"):
-        survival_probability(index, policy, (1,))
-    with pytest.raises(ValueError, match="outside every unit"):
-        survival_probability(index, policy, PositionErrorSet((999,)))
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        VerificationPolicy(Fraction(1, 2), Fraction(1, 2), Fraction(1, 4)),
+        VerificationPolicy(Fraction(1, 3), Fraction(1, 7), Fraction(1, 10**9)),
+        VerificationPolicy(Fraction(999, 1000), Fraction(1, 1000), Fraction(1, 10**30)),
+        VerificationPolicy(1, Fraction(1, 2), Fraction(1, 8)),
+    ],
+)
+def test_costs_round_down_and_the_budget_rounds_up(policy):
+    exact_budget = -exact_ln(policy.eta)
+    assert Decimal(budget(policy)) >= exact_budget
+    assert Decimal(budget(policy)) - exact_budget < Decimal(2) ** -30
+    previous = 0.0
+    for errors in range(40):
+        exact = -exact_ln(survival_factor(policy, errors))
+        cost = unit_cost(policy, errors)
+        assert Decimal(cost) <= exact
+        assert exact - Decimal(cost) < Decimal(2) ** -30
+        assert cost >= previous
+        previous = cost
+    if policy.q < 1:
+        assert previous <= saturation_cost(policy)
+        assert survival_factor(policy, 10**6) > 1 - policy.q
+
+
+def test_costs_at_the_endpoints():
+    assert unit_cost(VerificationPolicy(1, 1, 0), 1) == float("inf")
+    assert unit_cost(VerificationPolicy(1, 1, 0), 0) == 0.0
+    assert unit_cost(VerificationPolicy(0, 1, 0), 5) == 0.0
+    assert budget(VerificationPolicy(1, 1, 0)) == float("inf")
+    assert saturation_cost(VerificationPolicy(1, 1, 0)) == float("inf")
+    assert saturation_cost(VerificationPolicy(Fraction(1, 2), 1, 0)) == pytest.approx(0.6931471805599453)
+
+
+def test_costs_stay_finite_far_below_the_float_range():
+    policy = VerificationPolicy(1, Fraction(1, 2), Fraction(1, 2) ** 2000)
+
+    assert unit_cost(policy, 1500) == pytest.approx(1500 * 0.6931471805599453, rel=1e-9)
+    assert budget(policy) == pytest.approx(2000 * 0.6931471805599453, rel=1e-9)
+    assert admissible(policy, (1999,))
+    assert not admissible(policy, (2000,))
