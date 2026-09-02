@@ -29,7 +29,14 @@ from .call_dag import (
     definition_digest,
     make_word_kernel,
 )
-from .compiler import compile_call_dag
+from .compiler import Compiler, compile_call_dag
+from .description import (
+    CompileError,
+    Description,
+    canonical_description,
+    description_digest,
+    parse_description,
+)
 from .matmul import (
     MATMUL_REPLAY_PARTITION_ALGORITHM_ID,
     MATMUL_VERIFICATION_PARTITION_ALGORITHM_ID,
@@ -69,7 +76,10 @@ __all__ = [
     "VERIFICATION_PARTITION_ALGORITHM_ID",
     "CallDagCircuit",
     "CompilationLimits",
+    "CompileError",
+    "Compiler",
     "Construction",
+    "Description",
     "FlatCircuit",
     "FlatGate",
     "Kernel",
@@ -91,17 +101,20 @@ __all__ = [
     "Wire",
     "WordMatrix",
     "canonical_call_dag_json",
+    "canonical_description",
     "compile_call_dag",
     "compile_matmul_workload",
     "compile_partitions",
     "compile_partitions_for_policies",
     "construct",
     "definition_digest",
+    "description_digest",
     "expected_matmul_outputs",
     "make_word_kernel",
     "matmul_replay_occurrence_paths",
     "matmul_verification_occurrence_paths",
     "occurrence_paths_for_policy",
+    "parse_description",
     "replay_partition_from_occurrences",
     "verification_partition_from_occurrences",
 ]

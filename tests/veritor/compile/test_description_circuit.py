@@ -44,52 +44,8 @@ def assert_same_circuit(helpers, lazy: DescriptionCircuit, flat) -> None:
         assert lazy.Cost(frame, "proof") == flat.Cost(frame.interval, "proof")
 
 
-def matmul_payload(helpers, k: int, cols: int, rows: int = 1) -> bytes:
-    """``rows`` copies of ``x_i W`` for a ``k x cols`` matrix ``W``."""
-
-    h = helpers
-    doc = h.Document()
-    mul = doc.add(h.body(2, [h.gate("mul", h.rng(IN, 0, 2, 1))], [h.rng(LOC, 0)]))
-    add = doc.add(h.body(2, [h.gate("add", h.rng(IN, 0, 2, 1))], [h.rng(LOC, 0)]))
-    dot = doc.add(
-        h.body(
-            2 * k,
-            [
-                h.repeat(k, mul, h.jrng(IN, 0, 1, 0, 1), h.jrng(IN, k, 1, 0, 1)),
-                h.repeat(k // 2, add, h.jrng(LOC, 0, 2, 1, 2)),
-                h.gate("add", h.rng(LOC, k, 2, 1)),
-            ],
-            [h.rng(LOC, k + k // 2)],
-            role="verification",
-        )
-    )
-    row = doc.add(
-        h.body(
-            k + k * cols,
-            [h.repeat(cols, dot, h.jrng(IN, 0, k, 1, 0), h.jrng(IN, k, k, cols, 1))],
-            [h.rng(LOC, 0, cols, 1)],
-            role="replay",
-        )
-    )
-    root = doc.add(
-        h.body(
-            rows * k + k * cols,
-            [
-                h.repeat(
-                    rows,
-                    row,
-                    h.jrng(IN, 0, k, 1, k),
-                    h.jrng(IN, rows * k, k * cols, 1, 0),
-                )
-            ],
-            [h.rng(LOC, 0, rows * cols, 1)],
-        )
-    )
-    return doc.serialize(root)
-
-
 def test_lazy_circuit_matches_flat_on_matmul(helpers):
-    lazy, flat = lazy_and_flat(helpers, matmul_payload(helpers, 4, 3, rows=2))
+    lazy, flat = lazy_and_flat(helpers, helpers.matmul_payload(4, 3, rows=2))
 
     assert isinstance(lazy, Circuit)
     assert lazy.n == 2 * 4 + 12 + 2 * 3 * 7
@@ -110,7 +66,7 @@ def test_lazy_circuit_matches_flat_on_matmul(helpers):
 
 def test_interfaces_of_matmul_units_are_resolved_through_the_frame(helpers):
     k, cols, rows = 4, 3, 2
-    lazy, _ = lazy_and_flat(helpers, matmul_payload(helpers, k, cols, rows))
+    lazy, _ = lazy_and_flat(helpers, helpers.matmul_payload(k, cols, rows))
     root = lazy.frame
     n_in = rows * k + k * cols
 
@@ -157,7 +113,7 @@ def test_declared_interface_may_exceed_what_is_read(helpers):
 
 
 def test_lazy_semantics_and_errors(helpers):
-    lazy, _ = lazy_and_flat(helpers, matmul_payload(helpers, 4, 2))
+    lazy, _ = lazy_and_flat(helpers, helpers.matmul_payload(4, 2))
 
     assert lazy.evaluate_gate(lazy.n - 1, (200, 100)) == 44
     assert lazy.check_gate(lazy.n - 1, (200, 100), 44)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from sys import maxsize
@@ -310,6 +310,84 @@ class IntervalDomain:
         for start, stop in self.intervals:
             for item in range(start, stop):
                 yield Position(item)
+
+    def __len__(self) -> int:
+        return self.count
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class IntervalDifferenceDomain:
+    """A half-open interval minus a sorted tuple of excluded members.
+
+    This is the lazy difference an index needs for a unit's interior: the
+    unit's interval minus its (few) boundary addresses.  Rank, unrank and
+    membership cost ``O(log k)`` in the number of excluded members.
+    """
+
+    start: int
+    stop: int
+    excluded: tuple[int, ...]
+    count: int
+    identity_digest: Digest
+
+    def __init__(self, start: int, stop: int, excluded: Iterable[int]) -> None:
+        if type(start) is not int or type(stop) is not int or start < 0:
+            raise InvalidArtifact("interval bounds must be nonnegative integers")
+        if stop < start:
+            raise InvalidArtifact("interval stop must not precede start")
+        members = tuple(excluded)
+        for index, item in enumerate(members):
+            if type(item) is not int or not start <= item < stop:
+                raise InvalidArtifact("excluded members must lie inside the interval")
+            if index and item <= members[index - 1]:
+                raise InvalidArtifact("excluded members must be strictly increasing")
+        object.__setattr__(self, "start", start)
+        object.__setattr__(self, "stop", stop)
+        object.__setattr__(self, "excluded", members)
+        object.__setattr__(self, "count", stop - start - len(members))
+        object.__setattr__(
+            self,
+            "identity_digest",
+            identity_digest(
+                "veritor/indexed-domain/interval-difference/v1",
+                {"excluded": list(members), "start": start, "stop": stop},
+            ),
+        )
+
+    @property
+    def digest(self) -> Digest:
+        return self.identity_digest
+
+    def contains(self, item: int) -> bool:
+        if type(item) is not int or not self.start <= item < self.stop:
+            return False
+        index = bisect_left(self.excluded, item)
+        return index == len(self.excluded) or self.excluded[index] != item
+
+    def __contains__(self, item: object) -> bool:
+        return self.contains(item)  # type: ignore[arg-type]
+
+    def rank(self, item: int) -> int:
+        if not self.contains(item):
+            raise KeyError(item)
+        return item - self.start - bisect_left(self.excluded, item)
+
+    def unrank(self, rank: int) -> Position:
+        checked = _checked_rank(rank, self.count)
+        # ``excluded[m] - start - m`` members precede ``excluded[m]``; find the
+        # first excluded member preceded by more than ``rank`` members.
+        low, high = 0, len(self.excluded)
+        while low < high:
+            middle = (low + high) // 2
+            if self.excluded[middle] - self.start - middle > checked:
+                high = middle
+            else:
+                low = middle + 1
+        return Position(self.start + checked + low)
+
+    def __iter__(self) -> Iterator[Position]:
+        for rank in range(self.count):
+            yield self.unrank(rank)
 
     def __len__(self) -> int:
         return self.count

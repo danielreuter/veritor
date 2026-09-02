@@ -87,7 +87,7 @@ class Circuit(Protocol):
     def inputs(self) -> tuple[int, ...]: ...
 
     @property
-    def outputs(self) -> tuple[int, ...]: ...
+    def outputs(self) -> Sequence[int]: ...
 
     def __getitem__(self, address: int) -> GateRef: ...
 
@@ -249,6 +249,38 @@ class FlatCircuit(_Semantics):
         return tuple(values)
 
 
+class _LazyOutputs(Sequence[int]):
+    """The root's declared outputs as addresses, resolved on demand."""
+
+    __slots__ = ("_frame",)
+
+    def __init__(self, frame: Frame) -> None:
+        self._frame = frame
+
+    def __len__(self) -> int:
+        return self._frame.definition.output_count
+
+    def __getitem__(self, index):  # type: ignore[override]
+        if isinstance(index, slice):
+            return tuple(self[k] for k in range(*index.indices(len(self))))
+        if type(index) is not int:
+            raise TypeError("output ordinals are integers")
+        if index < 0:
+            index += len(self)
+        if not 0 <= index < len(self):
+            raise IndexError(index)
+        return self._frame.output_address(index)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Sequence) and tuple(self) == tuple(other)
+
+    def __hash__(self) -> int:
+        return hash(tuple(self))
+
+    def __repr__(self) -> str:
+        return f"outputs({len(self)})"
+
+
 class DescriptionCircuit(_Semantics):
     """The lazy circuit of a validated description.
 
@@ -268,9 +300,7 @@ class DescriptionCircuit(_Semantics):
         self.gate_set = gate_set
         self.width = widths.pop()
         self.frame = Frame.root(root)
-        self._outputs = tuple(
-            self.frame.output_address(k) for k in range(root.output_count)
-        )
+        self._outputs = _LazyOutputs(self.frame)
 
     @property
     def n(self) -> int:
@@ -285,7 +315,7 @@ class DescriptionCircuit(_Semantics):
         return tuple(range(self.root.input_count))
 
     @property
-    def outputs(self) -> tuple[int, ...]:
+    def outputs(self) -> Sequence[int]:
         return self._outputs
 
     def __getitem__(self, address: int) -> GateRef:

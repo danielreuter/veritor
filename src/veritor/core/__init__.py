@@ -29,6 +29,8 @@ from .circuit import (
 )
 from .compiled import (
     BOUNDARY_OWNER,
+    COMPILED_DIGEST_TAG,
+    Compiled,
     CompiledArtifact,
     derive_replay_boundary,
     validate_replay_boundary,
@@ -82,11 +84,13 @@ from .ids import (
     position,
     unit_index,
 )
+from .index import Index, IndexNode, KindSummary, Units, validate_marks
 from .indexed import (
     ExplicitDomain,
     ExplicitIndexedDomain,
     FiniteIndexedDomain,
     IndexedDomain,
+    IntervalDifferenceDomain,
     IntervalDomain,
     LazyIndexedDomain,
     RangeDomain,
@@ -115,6 +119,7 @@ from .policy import (
 
 __all__ = [
     "BOUNDARY_OWNER",
+    "COMPILED_DIGEST_TAG",
     "COMPILED_RESULT_IDENTITY_TAG",
     "GATE_SET_IDENTITY_TAG",
     "INPUT_OP",
@@ -129,6 +134,7 @@ __all__ = [
     "Circuit",
     "ClaimStatus",
     "CompilationLimits",
+    "Compiled",
     "CompiledArtifact",
     "CompiledResultIdentity",
     "CoreContractError",
@@ -145,11 +151,15 @@ __all__ = [
     "Gate",
     "GateRef",
     "GateSet",
+    "Index",
+    "IndexNode",
     "IndexedDomain",
+    "IntervalDifferenceDomain",
     "IntervalDomain",
     "InvalidArtifact",
     "JSONScalar",
     "JSONValue",
+    "KindSummary",
     "LazyIndexedDomain",
     "OperationId",
     "PartitionIdentity",
@@ -172,6 +182,7 @@ __all__ = [
     "SupportStatus",
     "UnitId",
     "UnitIndex",
+    "Units",
     "Unsupported",
     "UnsupportedCapability",
     "ValueTypeId",
@@ -204,6 +215,7 @@ __all__ = [
     "unit_index",
     "validate_circuit_contract",
     "validate_digest",
+    "validate_marks",
     "validate_replay_boundary",
     "validate_verification_refines_replay",
     "value_byte_length",

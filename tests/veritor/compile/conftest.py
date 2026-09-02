@@ -140,6 +140,50 @@ def frames(frame: Frame):
                 yield from frames(frame.child(index, copy))
 
 
+def matmul_payload(k: int, cols: int, rows: int = 1) -> bytes:
+    """``rows`` copies of ``x_i W`` for a ``k x cols`` matrix ``W`` (``k`` a power of two).
+
+    Each dot product is a verification unit and each row is a replay unit; the
+    description has one repeat per reduction level, so its size is
+    ``O(log k)`` and independent of ``rows`` and ``cols``.
+    """
+
+    if k & (k - 1) or k < 2:
+        raise ValueError("k must be a power of two >= 2")
+    doc = Document()
+    mul = doc.add(body(2, [gate("mul", rng("input", 0, 2, 1))], [rng("local", 0)]))
+    add = doc.add(body(2, [gate("add", rng("input", 0, 2, 1))], [rng("local", 0)]))
+    steps = [repeat(k, mul, jrng("input", 0, 1, 0, 1), jrng("input", k, 1, 0, 1))]
+    start, width = 0, k
+    while width > 1:
+        steps.append(repeat(width // 2, add, jrng("local", start, 2, 1, 2)))
+        start, width = start + width, width // 2
+    dot = doc.add(body(2 * k, steps, [rng("local", start)], role="verification"))
+    row = doc.add(
+        body(
+            k + k * cols,
+            [repeat(cols, dot, jrng("input", 0, k, 1, 0), jrng("input", k, k, cols, 1))],
+            [rng("local", 0, cols, 1)],
+            role="replay",
+        )
+    )
+    root = doc.add(
+        body(
+            rows * k + k * cols,
+            [
+                repeat(
+                    rows,
+                    row,
+                    jrng("input", 0, k, 1, k),
+                    jrng("input", rows * k, k * cols, 1, 0),
+                )
+            ],
+            [rng("local", 0, rows * cols, 1)],
+        )
+    )
+    return doc.serialize(root)
+
+
 @pytest.fixture
 def helpers() -> ModuleType:
     """The helper functions of this module, as a namespace."""
