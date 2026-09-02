@@ -28,6 +28,9 @@ at the same point in the interaction.
   *kind*. The marked nodes form two antichains: the replay units tile the
   gates and the verification units refine them. `I.boundary()` is
   `inputs ∪ ⋃_r Out(R_r)`; `I.interior(r)` is `R_r` minus its interface.
+  `In` and `Out` of a unit are its *declared* interfaces, held per kind as
+  arithmetic runs of addresses, so the per-kind table, the boundary and the
+  interiors cost by the number of runs, never by the addresses they span.
 - **Compiled** `(C, I, digest)`: what `Compile` returns and everything else
   consumes. The digest binds the description, its marks and the gate set.
 - **Policy** `θ = (q, s)`: the client's proposed sampling rates, as exact
@@ -112,7 +115,9 @@ description = tracer.serialize(batch)
 
 Python loops unroll; `tracer.repeat` is what keeps the description small.
 Weights must be inputs, not constants: copies are the same kind only when
-their values flow in as arguments.
+their values flow in as arguments. A definition's declared outputs must be
+distinct gates: `Compile` rejects a definition whose output ranges resolve
+to the same gate twice.
 
 ## Verify
 
