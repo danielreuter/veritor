@@ -3,10 +3,11 @@
 ``output_reach`` is one of the top-down passes behind ``Index.kinds()`` (with
 ``transient_ports``); it bounds, per definition, the circuit output bits a
 copy can reach, through a per-definition transitive closure over the steps
-as bitmasks.  The sweeps separate the shapes of a definition's step graph:
-a chain of dependent call steps (each reads the previous one), independent
-call steps, many distinct definitions, deep ``repeat`` nesting, and the toy
-cluster descriptions.  ``parse_s`` (``parse_description``) and ``kinds_s``
+kept as intervals of steps and swept with a segment tree.  The sweeps
+separate the shapes of a definition's step graph: a chain of dependent call
+steps (each reads the previous one), independent call steps all reading one
+step, many distinct definitions, deep ``repeat`` nesting, and the toy cluster
+descriptions.  ``parse_s`` (``parse_description``) and ``kinds_s``
 (``Index.kinds()``, which includes the reach) are recorded next to it.
 """
 
@@ -80,9 +81,10 @@ def run(scale: Scale) -> Benchmark:
         "root steps",
         fit_columns=COLUMNS,
         note="A root with `S` sequential `call` steps of one 3-gate RU, each reading the previous step's "
-        "output (a decode chain).  The closure `Down(j)` is every later step, so the bit-iteration in "
-        "`_step_reach` visits `Θ(S²)` bits, each on an `S`-bit integer: `Θ(S³ / w)` word operations, "
-        "against `Θ(S)` for the parse.",
+        "output (a decode chain).  The closure `Down(j)` is every later step, one interval `[j, S)` in "
+        "the sweep of `_step_reach`: `O(S log S)` (two range additions and one extraction on the segment "
+        "tree per step), against `Θ(S)` for the parse.  The bitmask closure this replaced was `Θ(S³ / w)` "
+        "here (14.3 s at `S = 8192`).",
     )
     for count in steps:
         series.points.append(_point(chain_steps(count), count, scale))
@@ -92,8 +94,10 @@ def run(scale: Scale) -> Benchmark:
         "independent_vs_steps",
         "root steps",
         fit_columns=COLUMNS,
-        note="A root with `S` independent `call` steps of one RU (every step reads the input).  "
-        "`Down(j) = {j}`, so the pass is linear.",
+        note="A root with `S` independent `call` steps of one RU, every step reading the input step "
+        "(siblings over one broadcast step, as requests over a weights step).  `Down(j) = {j}` and "
+        "`Down(input) = [0, S + 1)`, so the pass is `O(S log S)`; the bitmask closure ORed `S` masks of "
+        "`S` bits here, `Θ(S² / w)`.",
     )
     for count in steps:
         series.points.append(_point(unrolled_units(count), count, scale))

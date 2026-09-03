@@ -623,7 +623,7 @@ Fitted exponents: evaluate ∝ x^0.00 (R² 1.00, 4 pts); P commit ∂ ∝ x^-0.0
 
 #### `chain_vs_steps`
 
-A root with `S` sequential `call` steps of one 3-gate RU, each reading the previous step's output (a decode chain).  The closure `Down(j)` is every later step, so the bit-iteration in `_step_reach` visits `Θ(S²)` bits, each on an `S`-bit integer: `Θ(S³ / w)` word operations, against `Θ(S)` for the parse.
+A root with `S` sequential `call` steps of one 3-gate RU, each reading the previous step's output (a decode chain).  The closure `Down(j)` is every later step.  *This table was measured before the interval sweep replaced the bitmask closure in `_step_reach`*: the bit-iteration it shows visited `Θ(S²)` bits, each on an `S`-bit integer, `Θ(S³ / w)` word operations against `Θ(S)` for the parse; the sweep is `O(S log S)` here (70 ms at `S = 8192`, see *Bottlenecks* and *Performance bugs*).
 
 | root steps | time | peak mem | description | definitions | root steps | n | `transient_ports` | `kinds()` | `parse_description` |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -637,7 +637,7 @@ Fitted exponents: `kinds()` ∝ x^2.27 (R² 0.99, 5 pts); `parse_description` �
 
 #### `independent_vs_steps`
 
-A root with `S` independent `call` steps of one RU (every step reads the input).  `Down(j) = {j}`, so the pass is linear.
+A root with `S` independent `call` steps of one RU (every step reads the input).  `Down(j) = {j}`, so the pass is linear.  *Measured before the interval sweep*: the input step's `readers` mask was the OR of `S` masks of `S` bits, the `Θ(S² / w)` behind the peak-memory exponent; the sweep keeps `Down(input) = [0, S + 1)` as one interval (see *Bottlenecks*).
 
 | root steps | time | peak mem | description | definitions | root steps | n | `transient_ports` | `kinds()` | `parse_description` |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -753,16 +753,29 @@ What limits each component asymptotically, the constant this CPython prototype m
 
 ### `output_reach`
 
-- **Super-quadratic in the steps of one definition when the steps form a chain.**  `output_reach` on a root with 8,192 sequential `call` steps takes 14.3 s and 13.5 MB (∝ steps^2.35 in time, ∝ steps^1.53 in memory over the sweep, steepening as the bigint terms take over) against 86.9 ms for the parse and 12.5 ms for `transient_ports`.  `Index.kinds()` inherits it (16.5 s).  See *Performance bugs* below.
-- The same number of independent steps costs 14.3 ms (∝ steps^1.17), many distinct definitions 11.2 ms for 4,096 (∝ ^1.08), and `repeat` nesting is flat in n: the pass is linear in the description everywhere except along a dependency chain inside one definition.
+- **Fixed: linear up to a logarithm in the steps of one definition, whatever their dependency structure.**  The closure `Down(j)` is now kept as intervals of steps and swept with a segment tree (`_step_reach`; the comment above `_segment_bits` in `src/veritor/core/index.py` describes it), so the chain of 8,192 sequential `call` steps that took 14.3 s and 13.5 MB in the tables above takes 70 ms and 3.2 MB (the parse of the same description is 86.9 ms); 10^5 chained steps take 1.0 s and 35 MB (parse 1.2 s), and 10^6, the `max_steps_per_definition` limit, 11.5 s (parse 12.4 s) where the bitmask closure extrapolated to ~35 days.  `N` independent steps reading one broadcast step (requests over a weights step), Θ(N² / w) for the bitmask, take 0.17 s at N = 10^5 (1.16 s before) and 1.4 s at 10^6.  The section 8 tables predate the fix; *Performance bugs* below has the before/after numbers.
+- Independent steps cost 12 ms at 8,192 (14.3 ms before), many distinct definitions 11.2 ms for 4,096 (∝ ^1.08), and `repeat` nesting is flat in n: the pass is now linear in the description, up to a logarithm of the longest step list, everywhere.
 
 ## Performance bugs
 
-### `output_reach` is Θ(S²) Python iterations on Θ(S)-bit integers for a chain of S steps
+### Fixed: `output_reach` was Θ(S²) Python iterations on Θ(S)-bit integers for a chain of S steps
 
-- **Where**: `src/veritor/core/index.py`, `_step_reach` (the loop `for j in reversed(range(count))`, in particular the inner `while rest and bits < total:` bit-iteration), called from `output_reach`, called from `Index.kinds()`, hence from `Index.kind_table()`, `Compile` (research API) and the verifier's admission.
-- **What**: `Down(j)` is kept as a bitmask over the steps of the definition.  For a chain (step `k` reads step `k - 1`) `Down(j)` is every later step, so `mask` has `S - j` bits and the inner loop pops them one at a time; each pop (`rest & -rest`, `bit_length`, `rest ^= low`) is an O(S / w) big-integer operation.  The early exit `bits < total` never fires when the outputs sit in the last step, because `out[i]` is zero for every other step.  Total: Θ(S²) iterations and Θ(S³ / w) word operations, plus Θ(S² / 8) bytes for the `down` masks.
-- **Measured** (`benchmarks/reach.py`, `chain_vs_steps`): S = 64: 189 µs, S = 256: 2.39 ms, S = 1,024: 59.1 ms, S = 4,096: 2.43 s, S = 8,192: 14.3 s; fitted exponent 2.35, local exponent 2.56 between the last two sizes.  `parse_description` on the same descriptions is linear (86.9 ms at S = 8,192).
-- **Reproduction**: `python -c 'from benchmarks._synthetic import chain_steps, GATE_SET; from veritor.compile.description import parse_description; from veritor.core.index import output_reach; import time; root = parse_description(chain_steps(8192), GATE_SET).root; t = time.perf_counter(); output_reach(root); print(time.perf_counter() - t)'`.
-- **Impact**: `CompilationLimits.max_steps_per_definition` is 10^6.  Extrapolating with the local exponent, a root with 10^6 chained steps (a decode loop written as calls rather than a `repeat`, or a long unrolled schedule) would take ~35.5 days in `Index.kinds()` and ~116 GB of bitmasks, while parsing it takes seconds.  `ClusterG` roots have tens of steps, so the toy constructors do not hit it; a real schedule with thousands of decode steps in one definition does (S = 8192 is already the dominant cost of admission).
-- **Not fixed here** (`src/veritor` is read-only for this task).  A fix that keeps the semantics: iterate only over the steps that hold output bits (`rest & holders`, with `holders` the OR of `1 << i` for `out[i] > 0`), or accumulate `reach[j]` from the readers' already-final `reach` when the closure is a union (it is, up to the `min(bits, total)` cap).
+- **Where**: `src/veritor/core/index.py`, `_step_reach`, called from `output_reach`, called from `Index.kinds()`, hence from `Index.kind_table()`, `Compile` (research API) and the verifier's admission.
+- **What it was**: `Down(j)` was kept as a bitmask over the steps of the definition.  For a chain (step `k` reads step `k - 1`) `Down(j)` is every later step, so the mask had `S - j` bits and the inner loop popped them one at a time, each pop an O(S / w) big-integer operation: Θ(S²) iterations and Θ(S³ / w) word operations, plus Θ(S² / 8) bytes of masks.  `N` independent steps reading one step ORed `N` masks of `N` bits into that step's `readers`: Θ(N² / w).
+- **Measured before** (`benchmarks/reach.py`, `chain_vs_steps`): S = 64: 189 µs, S = 256: 2.39 ms, S = 1,024: 59.1 ms, S = 4,096: 2.43 s, S = 8,192: 14.3 s; fitted exponent 2.35, local exponent 2.56 between the last two sizes, extrapolating to ~35 days and ~116 GB at the 10^6-step limit.
+- **The fix**: reads are recorded on the reader's side as ranges of steps (two bisections on `step_slot` per argument run; a strided run over more than 64 steps is recorded as its hull, a superset), the steps are swept last to first, and a segment tree over the step positions counts, per position, the active readers whose `Down` contains it: the bits a step reaches are read off the root and its `Down` comes out as maximal intervals by descent, at most 64 of them before the hull `[j, max Down(j) + 1)` stands in.  Both approximations only enlarge a closure, so every reach stays a downstream cut, and both are exact on every definition of at most 64 steps (`tests/veritor/core/test_reach.py` checks the sweep against the bitmask closure on random definitions).  `O((S + R) · log S)` for `R` recorded ranges on the chain and sibling shapes, `O((S + R) · 64 · log S)` at worst.
+- **Measured after**: the table below, same machine (`output_reach(root)` on the parsed root, best of 3; the "before" column re-measured on the bitmask closure for the comparison).  Peak memory of the pass: 3.2 MB at S = 8,192 (13.5 MB before), 35 MB at 10^5, so ~350 MB at 10^6 against ~116 GB of bitmasks.  Below a few thousand steps the two are within a factor of two of each other either way (the segment tree costs ~10 µs per step, the bitmasks are cheap while they fit in a few words); `tests/veritor/perf/test_asymptotics.py` asserts the ratio between 256 and 1,024 steps stays under `4 * 3` for both shapes.
+- **What is looser**: the sweep over-approximates only where it takes a hull, and never below the bitmask closure: a strided argument run whose stride skips a step, spanning more than 64 steps (a `repeat` reading every other one of 200 unrolled steps charges the steps it skips too), and a closure of more than 64 maximal intervals (the head of one of two interleaved chains of 100 links is charged the other chain's links).  Chains, KV-cache chains and broadcasts are single-interval closures and stay exact at any length.
+
+| shape | S | before | after |
+|---|---:|---:|---:|
+| chain (`chain_steps`) | 256 | 2.5 ms | 1.4 ms |
+| chain | 1,024 | 60.8 ms | 6.4 ms |
+| chain | 8,192 | 14.2 s | 70 ms |
+| chain | 10^5 | ~2.4 h (extrapolated, exponent 2.56) | 1.0 s |
+| chain | 10^6 | ~35 days (extrapolated) | 11.5 s |
+| siblings + broadcast (`unrolled_units`) | 256 | 0.2 ms | 0.3 ms |
+| siblings + broadcast | 1,024 | 0.8 ms | 1.3 ms |
+| siblings + broadcast | 8,192 | 14.6 ms | 12.1 ms |
+| siblings + broadcast | 10^5 | 1.16 s | 0.17 s |
+| siblings + broadcast | 10^6 | ~1-2 min (extrapolated, quadratic) | 1.4 s |
