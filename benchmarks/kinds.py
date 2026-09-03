@@ -50,14 +50,19 @@ def _address_set_point(compiled, x: float, scale: Scale, extra: dict) -> Point:
             "boundary_unrank_s": per_call(boundary.unrank, ranks, scale),
             "boundary_contains_s": per_call(boundary.contains, addresses, scale),
             "interior_build_s": per_call(index.interior, unit_ranks, scale),
+            # an RU whose one VU declares exactly the RU's outputs (the unrolled layout) has no interior
             "interior_unrank_s": per_call(
                 lambda pair: pair[0].unrank(pair[1]), interior_ranks, scale
-            ),
+            )
+            if interior_ranks
+            else None,
             "interior_contains_s": per_call(
                 lambda pair: pair[0].contains(pair[0].interval.start + pair[1]),
                 interior_ranks,
                 scale,
-            ),
+            )
+            if interior_ranks
+            else None,
             "unit_s": per_call(index.replay_units.unit, unit_ranks, scale),
             "owner_s": per_call(index.replay_units.owner, addresses, scale),
             "verification_unit_s": per_call(index.verification_unit, vu_ranks, scale),
