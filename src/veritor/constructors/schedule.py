@@ -56,12 +56,15 @@ class Request:
     when the model samples (:attr:`~veritor.constructors.lm.LMShape.sampling`);
     it is empty for a model that takes the argmax.  It is part of ``x``: the
     server publishes it, so it is a public input, not a covert degree of
-    freedom.
+    freedom.  ``banned`` is the request's constrained-decoding list: token
+    ids the head may not emit, public too (they enter the circuit as ``in``
+    gates and become a mask before the argmax or the sampler).
     """
 
     prompt: tuple[int, ...]
     max_new: int
     randomness: tuple[int, ...] = ()
+    banned: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.prompt) is not tuple or not self.prompt:
@@ -76,6 +79,12 @@ class Request:
             raise ScheduleError("randomness must be a tuple of nonnegative integers")
         if self.randomness and len(self.randomness) != self.max_new:
             raise ScheduleError("randomness must hold one word per generated position")
+        if type(self.banned) is not tuple or any(
+            type(token) is not int or token < 0 for token in self.banned
+        ):
+            raise ScheduleError("banned must be a tuple of nonnegative token ids")
+        if len(set(self.banned)) != len(self.banned):
+            raise ScheduleError("banned tokens must be distinct")
 
 
 @dataclass(frozen=True, slots=True, order=True)

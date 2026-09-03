@@ -39,6 +39,20 @@ Marks.  "Replay decode step ``t`` of pod ``p``" is the unit a server can be
 asked for and explain, so ``step`` is the replay unit (with ``weights``, the
 one unit of source gates); the verification units are the row-sized kinds
 of :class:`~veritor.constructors.lm.ToyLM`.
+
+A heterogeneous fleet.  With ``arches`` (one architecture name per pod) the
+gate set is the union of one namespaced copy of the toy ISA per
+architecture (:func:`~veritor.core.gates.union_gate_set`), each pod's steps
+are traced with its architecture's gates, and a step's kind carries the
+architecture: the same occupants on two architectures are two kinds.  The
+weights, the caches and the tokens are shared as before -- ``in`` and
+``weight`` gates are one environment -- so a request may be prefilled on
+one architecture and decoded on another.
+
+Constrained decoding (:attr:`Request.banned`) is served by
+:class:`~veritor.constructors.requests.RequestsG` only: a step would have to
+declare each occupant's mask as outputs and read it back through ports,
+which the step kinds do not carry.
 """
 
 from __future__ import annotations
@@ -46,12 +60,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from veritor.compile import constructor_digest
-from veritor.core import Digest, JSONValue
+from veritor.core import Digest, JSONValue, make_isa_gate_set
 from veritor.core.description import REPLAY
+from veritor.core.gates import union_gate_set
 
 from .lm import LMShape, ToyLM, wires
 from .schedule import Join, Occupant, Request, Schedule, ScheduleError
-from .tracer import TracedDefinition, TracerError, Wire, Wires
+from .tracer import TracedDefinition, Tracer, TracerError, Wire, Wires
+
+FLEET_GATE_SET = ("veritor.toy-isa-fleet", "1")
+"""Name and version of the union gate set of a heterogeneous cluster."""
 
 PREFILL = "prefill"
 CHUNK = "chunk"
@@ -107,14 +125,24 @@ class ClusterG:
     """``G(x, a)`` for a cluster run: ``x`` the requests, ``a`` the encoded schedule.
 
     A :class:`veritor.compile.Constructor`: ``digest`` names the class, its
-    version and ``(shape, pods, slots, steps)``; ``G(x, a)`` returns the
-    description bytes and the public inputs -- the prompt tokens and, for a
-    sampling shape, the random words -- as the ``in`` gates consume them.
+    version and ``(shape, pods, slots, steps)`` (and ``arches`` for a
+    fleet); ``G(x, a)`` returns the description bytes and the public inputs
+    -- the prompt tokens and, for a sampling shape, the random words -- as
+    the ``in`` gates consume them.  ``gate_set`` is the Σ its descriptions
+    are written over.
     """
 
     VERSION = "3"
 
-    def __init__(self, shape: LMShape, pods: int, slots: int, steps: int) -> None:
+    def __init__(
+        self,
+        shape: LMShape,
+        pods: int,
+        slots: int,
+        steps: int,
+        *,
+        arches: tuple[str, ...] | None = None,
+    ) -> None:
         if not isinstance(shape, LMShape):
             raise TypeError("shape must be an LMShape")
         for name, value in (("pods", pods), ("slots", slots), ("steps", steps)):
@@ -122,12 +150,31 @@ class ClusterG:
                 raise ValueError(f"{name} must be a positive integer")
         self.shape = shape
         self.pods, self.slots, self.steps = pods, slots, steps
-        self.lm = ToyLM(shape)
+        self.arches = arches
+        if arches is None:
+            self.lm = ToyLM(shape)
+            self.models: dict[str | None, ToyLM] = {None: self.lm}
+        else:
+            if type(arches) is not tuple or len(arches) != pods or not all(type(a) is str for a in arches):
+                raise ValueError("arches must name one architecture per pod")
+            members = {arch: make_isa_gate_set(shape.width) for arch in sorted(set(arches))}
+            tracer = Tracer(union_gate_set(members, name=FLEET_GATE_SET[0], version=FLEET_GATE_SET[1]))
+            self.models = {arch: ToyLM(shape, tracer=tracer, namespace=arch) for arch in members}
+            self.lm = self.models[arches[0]]
+        self.gate_set = self.lm.tracer.gate_set
         self.digest: Digest = constructor_digest(type(self).__name__, self.VERSION, self.manifest)
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
-        return {"pods": self.pods, "shape": self.shape.manifest, "slots": self.slots, "steps": self.steps}
+        manifest: dict[str, JSONValue] = {
+            "pods": self.pods,
+            "shape": self.shape.manifest,
+            "slots": self.slots,
+            "steps": self.steps,
+        }
+        if self.arches is not None:
+            manifest["arches"] = list(self.arches)
+        return manifest
 
     # -- validation -----------------------------------------------------------------
 
@@ -137,6 +184,10 @@ class ClusterG:
         for index, request in enumerate(x):
             if any(token >= self.shape.vocab for token in request.prompt):
                 raise TracerError(f"request {index} has a prompt token outside the vocabulary")
+            if request.banned:
+                raise TracerError(
+                    f"request {index} bans tokens: ClusterG steps carry no mask; use RequestsG"
+                )
             try:
                 self.shape.check_randomness(request)
             except ValueError as error:
@@ -219,20 +270,22 @@ class ClusterG:
         kind, positions, _ = occupant
         return self.shape.state_size(positions) + (0 if kind == CHUNK else 1)
 
-    def step(self, shapes: tuple[OccupantShape, ...]) -> TracedDefinition:
+    def step(self, shapes: tuple[OccupantShape, ...], arch: str | None = None) -> TracedDefinition:
         """One decode step of one pod: its occupants over the shared weights.
 
         Ports: the weights, then per occupant its cache (a decode's token
         first).  Outputs: each occupant's new cache entries and token, in
-        slot order.
+        slot order.  ``arch`` is the pod's architecture in a fleet.
         """
 
         if not shapes:
             raise TracerError("a step needs at least one occupant")
+        model = self.models[arch]
         weights = self.shape.weight_count
         extra = sum(self._ports(occupant) for occupant in shapes)
+        key = ("step", shapes) if arch is None else ("step", arch, shapes)
 
-        @self.lm.tracer.definition(input_count=weights + extra, key=("step", shapes), role=REPLAY)
+        @model.tracer.definition(input_count=weights + extra, key=key, role=REPLAY)
         def step(v: Wires) -> object:
             w, cursor, outputs = v[:weights], weights, []
             for occupant in shapes:
@@ -241,11 +294,11 @@ class ClusterG:
                 args = (w, v[cursor : cursor + ports]) if ports else (w,)
                 cursor += ports
                 if kind == PREFILL:
-                    outputs.append(self.lm.prefill(positions, cached)(*args))
+                    outputs.append(model.prefill(positions, cached)(*args))
                 elif kind == CHUNK:
-                    outputs.append(self.lm.chunk(positions, cached)(*args))
+                    outputs.append(model.chunk(positions, cached)(*args))
                 else:
-                    outputs.append(self.lm.decode(cached + 1)(*args))
+                    outputs.append(model.decode(cached + 1)(*args))
             return outputs
 
         return step
@@ -283,7 +336,8 @@ class ClusterG:
                     for layer in range(layers):
                         args.extend(slot.keys[layer])
                         args.extend(slot.values[layer])
-                outputs = wires(self.step(tuple(shapes))(*args))
+                arch = None if self.arches is None else self.arches[pod]
+                outputs = wires(self.step(tuple(shapes), arch)(*args))
                 cursor = 0
                 for occupant, occupant_shape in zip(occupants, shapes, strict=True):
                     kind, positions, _ = occupant_shape
@@ -316,4 +370,4 @@ class ClusterG:
         return description, self.flatten_inputs(plan.requests, plan.schedule)
 
 
-__all__ = ["CHUNK", "DECODE", "PREFILL", "ClusterG", "OccupantShape"]
+__all__ = ["CHUNK", "DECODE", "FLEET_GATE_SET", "PREFILL", "ClusterG", "OccupantShape"]
