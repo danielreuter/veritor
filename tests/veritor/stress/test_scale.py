@@ -87,9 +87,13 @@ def test_s2_the_default_run_limit_is_exceeded_by_shapes_not_by_requests(
 
 
 def _under(seconds: float) -> str:
-    """``seconds`` rounded up to a decade: ``"< 0.1 s"``, ``"< 1 s"``, ``"< 10 s"`` ..."""
+    """``seconds`` rounded up to a decade: ``"< 1 s"``, ``"< 10 s"``, ``"< 100 s"`` ...
 
-    bucket = 0.001
+    The finest bucket is a second: a sub-second timing is machine noise, not a
+    claim, so the recorded row does not change between a laptop and a loaded VM.
+    """
+
+    bucket = 1.0
     while bucket < seconds:
         bucket *= 10
     return f"< {bucket:g} s"
