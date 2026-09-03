@@ -160,11 +160,15 @@ def test_a_corrupted_interior_value_is_rejected_when_everything_is_sampled(deplo
     """
 
     index = deployment.compiled.index
-    step = index.replay_units.unit(3)  # pod 0, step 2: decodes
+    step = index.replay_units.unit(3)  # steps are laid out by step then pod: pod 0, step 1, a decode
     interior = index.interior(3)
-    address = int(interior.unrank(interior.count // 2))
+    outputs = set(deployment.circuit.outputs)
+    address = next(
+        int(interior.unrank(rank))
+        for rank in range(interior.count // 2, interior.count)
+        if deployment.circuit[int(interior.unrank(rank))].op == "add" and int(interior.unrank(rank)) not in outputs
+    )
     assert step.interval.start <= address < step.interval.stop
-    assert address not in set(deployment.circuit.outputs) and deployment.circuit[address].op == "add"
     corrupted = dict(deployment.values)
     corrupted[address] = (corrupted[address] + 1) % (1 << SHAPE.width)
 

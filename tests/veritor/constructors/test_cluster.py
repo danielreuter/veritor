@@ -167,6 +167,61 @@ def test_a_restarted_request_streams_the_reference_and_keeps_its_aborted_steps()
         constructor(requests, Schedule(2, 2, 7, (*joins[:3], Join(1, 1, 1, 0, 4))).encode())
 
 
+def test_a_resumed_attempt_reads_the_cache_it_left_across_a_gap_and_across_pods() -> None:
+    """Request 0 decodes two tokens on pod 0, is swapped out for two steps, and resumes on pod 1 at step 4.
+
+    The resumed steps are decode steps over the cache pod 0's steps declared;
+    no prompt is re-entered and nothing is recomputed.  The outputs are
+    exactly the reference.
+    """
+
+    requests = (Request((1, 2), 4), Request((5,), 2), Request((7, 0, 3), 2))
+    joins = (Join(0, 0, 0, 0, 2), Join(0, 0, 1, 1, 2), Join(1, 0, 0, 2, 2), Join(1, 4, 0, 0, 2, resume=True))
+    schedule = Schedule(2, 2, 7, joins)
+    constructor = ClusterG(SHAPE, pods=2, slots=2, steps=7)
+    compiled = compile_run(constructor, requests, schedule)
+    parameters = random_parameters(SHAPE, seed=9)
+
+    assert schedule.streamed_before(requests) == (0, 0, 0, 2)
+    assert schedule.active_steps(requests) == {0: 4, 1: 2, 2: 2}
+    assert generated(constructor, compiled, requests, schedule, parameters) == reference_generate(
+        SHAPE, parameters, requests
+    )
+    assert constructor.flatten_inputs(requests, schedule) == (1, 2, 5, 7, 0, 3)  # the prompt enters once
+    # the weights; steps 0-1 of both pods; pod 1's steps 4-5 -- laid out by step, then pod
+    index = compiled.index
+    assert index.replay_units.count == 1 + 4 + 2
+    resumed = index.replay_units.unit(5)
+    reads = set(compiled.circuit.In(resumed)) - set(compiled.circuit.weights)
+    assert {index.replay_units.owner(address) for address in reads} == {1, 3}  # pod 0's steps 0 and 1
+    assert len(compiled.circuit.outputs) == 4 + 2 + 2
+
+
+def test_a_chunked_prefill_spreads_a_prompt_over_steps_and_computes_the_reference() -> None:
+    """Request 0's three-token prompt enters two tokens per step; the second chunk generates the first token."""
+
+    requests = (Request((1, 2, 3), 3), Request((5,), 2))
+    schedule = Schedule(1, 2, 5, (Join(0, 0, 0, 0, 4, chunk=2), Join(0, 0, 1, 1, 2)))
+    constructor = ClusterG(SHAPE, pods=1, slots=2, steps=5)
+    compiled = compile_run(constructor, requests, schedule)
+    parameters = random_parameters(SHAPE, seed=4)
+
+    assert schedule.active_steps(requests) == {0: 3, 1: 2}
+    assert generated(constructor, compiled, requests, schedule, parameters) == reference_generate(
+        SHAPE, parameters, requests
+    )
+    assert constructor.flatten_inputs(requests, schedule) == (1, 2, 5, 3)  # chunk 0 and request 1, then chunk 1
+    assert compiled.index.replay_units.count == 1 + 4
+    # the same requests prefilled in one step: another description (other step kinds), the same tokens
+    plain_schedule = Schedule(1, 2, 5, (Join(0, 0, 0, 0, 3), Join(0, 0, 1, 1, 2)))
+    plain = compile_run(constructor, requests, plain_schedule)
+    assert plain.digest != compiled.digest
+    assert generated(constructor, plain, requests, plain_schedule, parameters) == generated(
+        constructor, compiled, requests, schedule, parameters
+    )
+    assert compiled.index.replay_units.count == plain.index.replay_units.count + 1
+
+
 def test_two_layers_and_a_different_fcfs_shape() -> None:
     requests = (Request((3, 1), 4), Request((0,), 3), Request((6, 6, 6), 2), Request((2, 5), 1), Request((4,), 2))
     constructor = ClusterG(DEEP, pods=2, slots=2, steps=5)
@@ -242,19 +297,21 @@ def test_marks_tile_every_gate_once_and_the_kv_cache_is_the_step_interface(fcfs)
     assert covered == list(range(circuit.n))
     assert all(index.replay_units.owner(a) == r for r in range(8) for a in index.replay_units.unit(r).interval)
     inputs = set(circuit.inputs)
-    for r, key in enumerate(sorted(occupancy), start=1):
+    time_order = sorted(occupancy, key=lambda key: (key[1], key[0]))  # steps are laid out by step, then pod
+    for r, key in enumerate(time_order, start=1):
         unit = index.replay_units.unit(r)
         occupants = occupancy[key]
+        prefills = [o for o in occupants if o.prefilled == 0]  # a fresh join prefills its whole prompt
         produced = sum(
-            SHAPE.state_size(len(REQUESTS[o.request].prompt) if o.generated == 0 else 1) + 1 for o in occupants
+            SHAPE.state_size(len(REQUESTS[o.request].prompt) if o in prefills else 1) + 1 for o in occupants
         )
         assert unit.role == "replay" and len(circuit.Out(unit)) == produced
-        prompts = sum(len(REQUESTS[o.request].prompt) for o in occupants if o.generated == 0)
+        prompts = sum(len(REQUESTS[o.request].prompt) for o in prefills)
         assert len(inputs & set(unit.interval)) == prompts
         reads = set(circuit.In(unit))
         assert set(circuit.weights) <= reads  # every step reads the whole model through ports
         for other in reads - set(circuit.weights):
-            assert index.replay_units.owner(other) < r  # and only earlier steps of its pod
+            assert index.replay_units.owner(other) < r  # and only earlier steps
     verification = sum(index.verification_units(r).count for r in range(8))
     assert verification == index.verification_unit_count == 1065
     assert set(circuit.outputs) <= set(index.boundary())

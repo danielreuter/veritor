@@ -26,13 +26,14 @@ from __future__ import annotations
 import contextvars
 from collections.abc import Callable, Hashable, Iterator, Sequence
 from dataclasses import dataclass, replace
+from typing import cast, overload
 
 from veritor.compile.description import (
     FORMAT_VERSION,
     canonical_description,
     definition_digest,
 )
-from veritor.core import INPUT_SOURCE, WEIGHT_SOURCE, Gate, GateSet
+from veritor.core import INPUT_SOURCE, WEIGHT_SOURCE, Gate, GateSet, JSONValue
 from veritor.core.description import INPUT, LOCAL, ROLES, VERIFICATION
 
 
@@ -71,6 +72,12 @@ class Wires:
     def __iter__(self) -> Iterator[Wire]:
         for k in range(self.count):
             yield Wire(self.trace, self.space, self.start + k * self.stride)
+
+    @overload
+    def __getitem__(self, item: int) -> Wire: ...
+
+    @overload
+    def __getitem__(self, item: slice) -> Wires: ...
 
     def __getitem__(self, item: int | slice) -> Wire | Wires:
         if isinstance(item, slice):
@@ -391,7 +398,7 @@ class Tracer:
             {
                 "version": FORMAT_VERSION,
                 "definitions": [
-                    {"digest": digest, "body": self._bodies[digest]} for digest in ordered
+                    {"digest": digest, "body": cast(JSONValue, self._bodies[digest])} for digest in ordered
                 ],
                 "root": root.digest,
             }

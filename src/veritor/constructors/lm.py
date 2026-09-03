@@ -748,8 +748,22 @@ class ToyLM:
             state += [k, v]
         return state, x
 
-    def prefill(self, n: int) -> TracedDefinition:
-        """An ``n``-token prompt: ports are the weights; the tokens are ``in`` gates inside.
+    def _caches(self, v: Wires, start: int, cached: int) -> list[tuple[Wires, Wires] | None]:
+        """Per layer the cached ``(K, V)`` ports of ``cached`` positions from ``v[start:]``, or ``None``."""
+
+        if cached == 0:
+            return [None] * self.shape.layers
+        width = cached * self.shape.d_model
+        return [
+            (v[start + layer * 2 * width : start + layer * 2 * width + width],
+             v[start + layer * 2 * width + width : start + (layer + 1) * 2 * width])
+            for layer in range(self.shape.layers)
+        ]
+
+    def prefill(self, n: int, cached: int = 0) -> TracedDefinition:
+        """``n`` prompt tokens, the last of the prompt: ports are the weights, then, when
+        ``cached > 0``, per layer the ``K`` and ``V`` of the ``cached`` prompt positions
+        earlier chunks processed; the tokens are ``in`` gates inside.
 
         Outputs: per layer ``K`` then ``V`` for the ``n`` positions
         (``state_size(n)`` values, position-major), then the first generated
@@ -760,20 +774,49 @@ class ToyLM:
 
         if type(n) is not int or n <= 0:
             raise TracerError("prompt length must be positive")
+        if type(cached) is not int or cached < 0:
+            raise TracerError("cached positions must be nonnegative")
         shape = self.shape
-        d, vocab = shape.d_model, shape.vocab
+        d, vocab, weights = shape.d_model, shape.vocab, shape.weight_count
+        key = ("prefill", n) if cached == 0 else ("prefill", n, cached)
 
-        @self.tracer.definition(input_count=shape.weight_count, key=("prefill", n))
+        @self.tracer.definition(input_count=weights + shape.state_size(cached), key=key)
         def prefill(v: Wires) -> object:
             ports = self.ports(v)
+            caches = self._caches(v, weights, cached)
             tokens = self.tracer.inputs(n)
             r = self.randomness()
             x = self.tracer.repeat(n, self.embed_row(), tokens[0].by(1), ports.constants, ports.embedding)
-            state, x = self.forward(ports, x, n, [None] * shape.layers)
+            state, x = self.forward(ports, x, n, caches)
             logits = self.matvec(d, vocab)(x[(n - 1) * d : n * d], ports.unembedding)
             return [*state, self.head(logits, ports, r)]
 
         return prefill
+
+    def chunk(self, n: int, cached: int) -> TracedDefinition:
+        """``n`` prompt tokens that do not end the prompt (chunked prefill): like
+        :meth:`prefill` without the head, so no token and no random word.
+
+        Outputs: per layer ``K`` then ``V`` for the ``n`` positions.
+        """
+
+        if type(n) is not int or n <= 0:
+            raise TracerError("chunk length must be positive")
+        if type(cached) is not int or cached < 0:
+            raise TracerError("cached positions must be nonnegative")
+        shape = self.shape
+        weights = shape.weight_count
+
+        @self.tracer.definition(input_count=weights + shape.state_size(cached), key=("chunk", n, cached))
+        def chunk(v: Wires) -> object:
+            ports = self.ports(v)
+            caches = self._caches(v, weights, cached)
+            tokens = self.tracer.inputs(n)
+            x = self.tracer.repeat(n, self.embed_row(), tokens[0].by(1), ports.constants, ports.embedding)
+            state, _ = self.forward(ports, x, n, caches)
+            return state
+
+        return chunk
 
     def decode(self, c: int) -> TracedDefinition:
         """One token at context ``c``: ports are the weights, the token, then per layer
@@ -788,16 +831,12 @@ class ToyLM:
             raise TracerError("a decode step needs at least one cached position")
         shape = self.shape
         d, vocab, weights = shape.d_model, shape.vocab, shape.weight_count
-        cached = (c - 1) * d
 
-        @self.tracer.definition(input_count=weights + 1 + shape.layers * 2 * cached, key=("decode", c))
+        @self.tracer.definition(input_count=weights + 1 + shape.state_size(c - 1), key=("decode", c))
         def decode(v: Wires) -> object:
             ports = self.ports(v)
             token = v[weights]
-            caches = []
-            for layer in range(shape.layers):
-                start = weights + 1 + layer * 2 * cached
-                caches.append((v[start : start + cached], v[start + cached : start + 2 * cached]))
+            caches = self._caches(v, weights + 1, c - 1)
             r = self.randomness()
             x = wires(self.embed_row()(token, ports.constants, ports.embedding))
             state, x = self.forward(ports, x, 1, caches)

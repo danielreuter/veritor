@@ -155,7 +155,7 @@ def test_the_advice_is_charged_at_the_encoded_schedule(config, summary):
     """``a`` is ``Schedule.encode()``: a header and five words per join; a shorter ``A`` rejects the run."""
 
     w = summary.workload
-    assert w.advice_bytes == 20 + 16 + 20 * w.joins
+    assert w.advice_bytes == 20 + 16 + 28 * w.joins
     assert w.advice_bits == 8 * w.advice_bytes == summary.compile.advice_bytes * 8
     shape, workload = config.shape, config.workload
     parameters = random_parameters(shape, config.parameters_seed)

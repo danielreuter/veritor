@@ -9,36 +9,36 @@ that ``x`` does not fix follows from it.  A bad schedule is the client's
 fault: it fails to trace (:class:`TracerError`), so it never compiles.
 
 Structure.  The root has no ports.  It calls the ``weights`` unit once, then
-one ``step`` per ``(pod, step)`` with occupants, in that order.  A step is a
-replay unit holding its occupants: a *prefill* (the request's prompt tokens
-are ``in`` gates inside the step, the first token comes out) or a *decode*
-(the previous token and the KV cache come in through ports from earlier
-steps' declared outputs, the next token comes out).  The number of occupants
-varies from step to step -- that is continual batching -- and two steps with
-the same tuple of occupant shapes are the same kind.  Steps of one pod are
-chained through the tokens and the KV cache they declare; pods share
-nothing but the weights.  For a sampling shape each occupant also reads its
-position's public random word, an ``in`` gate inside the step.
+one ``step`` per ``(pod, step)`` with occupants, in time order (step, then
+pod: the cluster is synchronous, and a step may read what any earlier step
+of any pod declared).  A step is a replay unit holding its occupants, each
+one of three shapes: a *prefill* (the prompt tokens are ``in`` gates inside
+the step, the first token comes out), a *chunk* (some prompt tokens, no
+token out: chunked prefill) or a *decode* (the previous token and the KV
+cache come in through ports from earlier steps' declared outputs, the next
+token comes out).  The number of occupants varies from step to step -- that
+is continual batching -- and two steps with the same tuple of occupant
+shapes are the same kind.  For a sampling shape each occupant that
+generates a token also reads its position's public random word, an ``in``
+gate inside the step.
 
-Restarts.  A request may join more than once (a pod failed under it): each
-attempt is a fresh prefill and its own chain of steps, and the run's outputs
-for the request are its first ``max(length)`` positions, each taken from the
-attempt that streamed it first (:meth:`Schedule.streamed_before`).  An
-attempt's recomputation of positions already streamed is in the circuit --
-the server executed it -- but declares no circuit output.
+Attempts.  A request's steps are chained through the tokens and the KV cache
+they declare, on whichever pods the schedule puts them: a fresh join starts
+from its prompt, a resumed join (:attr:`Join.resume`) continues the cache of
+the request's latest attempt -- declared by steps possibly many steps
+earlier and on another pod, as after a preemption that swapped the cache
+out or a prefill on one pod decoded on another.  A request the schedule
+joins afresh more than once (a pod failed under it) is prefilled again and
+recomputes the positions already streamed; they stay in the circuit,
+declared like every token, but the circuit's outputs for the request are
+its positions ``0 .. max(end) - 1``, each taken from the attempt that
+streamed it (:meth:`~veritor.constructors.schedule.Schedule.streamed_before`).
+An aborted attempt's steps stay in the circuit: their tokens were observed.
 
 Marks.  "Replay decode step ``t`` of pod ``p``" is the unit a server can be
 asked for and explain, so ``step`` is the replay unit (with ``weights``, the
 one unit of source gates); the verification units are the row-sized kinds
 of :class:`~veritor.constructors.lm.ToyLM`.
-
-Restarts.  A request the schedule joins more than once (a pod failed under
-it) is prefilled again by its later attempt; the attempt recomputes the
-positions already streamed -- they stay inside the pod's chain of steps,
-declared like every token -- and the circuit's outputs for the request are
-its positions ``0 .. max(length) - 1``, each taken from the attempt that
-streamed it (:meth:`~veritor.constructors.schedule.Schedule.streamed_before`).
-The aborted attempt's steps stay in the circuit: their tokens were observed.
 """
 
 from __future__ import annotations
@@ -50,14 +50,18 @@ from veritor.core import Digest, JSONValue
 from veritor.core.description import REPLAY
 
 from .lm import LMShape, ToyLM, wires
-from .schedule import Request, Schedule, ScheduleError
+from .schedule import Join, Occupant, Request, Schedule, ScheduleError
 from .tracer import TracedDefinition, TracerError, Wire, Wires
 
 PREFILL = "prefill"
+CHUNK = "chunk"
 DECODE = "decode"
 
-type OccupantShape = tuple[str, int]
-"""``("prefill", prompt length)`` or ``("decode", context length)``."""
+type OccupantShape = tuple[str, int, int]
+"""``(kind, positions, cached)``: ``("prefill", n, c)`` completes a prompt with ``n``
+tokens over ``c`` cached prompt positions and generates the first token;
+``("chunk", n, c)`` processes ``n`` prompt tokens over ``c`` without generating;
+``("decode", 1, c)`` generates the next token over a cache of ``c`` positions."""
 
 
 @dataclass(slots=True)
@@ -81,10 +85,22 @@ class _Plan:
     requests: tuple[Request, ...]
     schedule: Schedule
     active: dict[int, int] = field(compare=False)
-    """Per request, the positions the run streams (its outputs): the longest of its attempts."""
+    """Per request, the positions the run streams (its outputs): the furthest any attempt reaches."""
     streamed_before: tuple[int, ...] = field(compare=False)
     """Per join, the positions earlier attempts of its request already streamed."""
-    occupancy: dict[tuple[int, int], tuple] = field(compare=False)
+    occupancy: dict[tuple[int, int], tuple[Occupant, ...]] = field(compare=False)
+    order: tuple[tuple[int, int], ...] = field(compare=False)
+    """The ``(pod, step)`` keys of ``occupancy`` in time order: by step, then pod."""
+
+    def shape_of(self, occupant: Occupant) -> OccupantShape:
+        """What the occupant's step computes for it, from its progress and its join."""
+
+        prompt, join = len(self.requests[occupant.request].prompt), self.schedule.joins[occupant.join]
+        if occupant.prefilled < prompt:
+            left = prompt - occupant.prefilled
+            positions = left if join.chunk == 0 else min(join.chunk, left)
+            return (PREFILL if positions == left else CHUNK, positions, occupant.prefilled)
+        return (DECODE, 1, prompt + occupant.generated - 1)
 
 
 class ClusterG:
@@ -96,7 +112,7 @@ class ClusterG:
     sampling shape, the random words -- as the ``in`` gates consume them.
     """
 
-    VERSION = "2"
+    VERSION = "3"
 
     def __init__(self, shape: LMShape, pods: int, slots: int, steps: int) -> None:
         if not isinstance(shape, LMShape):
@@ -144,7 +160,9 @@ class ClusterG:
                     f"request {index} needs {len(request.prompt) + active[index]} positions; "
                     f"the context is {self.shape.context}"
                 )
-        return _Plan(requests, schedule, active, before, schedule.occupancy(requests))
+        occupancy = schedule.occupancy(requests)
+        order = tuple(sorted(occupancy, key=lambda key: (key[1], key[0])))
+        return _Plan(requests, schedule, active, before, occupancy, order)
 
     def _decode_advice(self, a: object) -> Schedule:
         if type(a) is not bytes:
@@ -167,106 +185,127 @@ class ClusterG:
         return tuple((r, g) for r in range(len(plan.requests)) for g in range(plan.active[r]))
 
     def flatten_inputs(self, x: object, schedule: Schedule) -> tuple[int, ...]:
-        """The public inputs in ``in``-gate address order: by ``(pod, step)``, then slot.
+        """The public inputs in ``in``-gate address order: by step, then pod, then slot.
 
-        A prefill occupant contributes its prompt tokens (then, for a sampling
-        shape, the random word of position ``0``); a decode occupant at
-        position ``g`` contributes the random word of position ``g``.
+        A prefill or chunk occupant contributes the prompt tokens it
+        processes; every occupant that generates a token (a prefill or a
+        decode at position ``g``) then contributes, for a sampling shape, the
+        random word of position ``g``.
         """
 
         plan = self._plan(x, schedule)
         values: list[int] = []
-        for key in sorted(plan.occupancy):
+        for key in plan.order:
             for occupant in plan.occupancy[key]:
                 request = plan.requests[occupant.request]
-                if occupant.generated == 0:
-                    values.extend(request.prompt)
-                if self.shape.sampling:
+                kind, positions, cached = plan.shape_of(occupant)
+                if kind != DECODE:
+                    values.extend(request.prompt[cached : cached + positions])
+                if self.shape.sampling and kind != CHUNK:
                     values.append(request.randomness[occupant.generated])
         return tuple(values)
 
     # -- kinds -----------------------------------------------------------------------
 
-    def _decode_ports(self, c: int) -> int:
-        """Ports a decode occupant adds to its step: the token and the cache of ``c - 1``."""
+    def _ports(self, occupant: OccupantShape) -> int:
+        """Ports an occupant adds to its step: its cache, and for a decode its token."""
 
-        return 1 + self.shape.state_size(c - 1)
+        kind, _, cached = occupant
+        return self.shape.state_size(cached) + (1 if kind == DECODE else 0)
+
+    def _produced(self, occupant: OccupantShape) -> int:
+        """Outputs an occupant adds to its step: its new cache entries, and a token unless it is a chunk."""
+
+        kind, positions, _ = occupant
+        return self.shape.state_size(positions) + (0 if kind == CHUNK else 1)
 
     def step(self, shapes: tuple[OccupantShape, ...]) -> TracedDefinition:
         """One decode step of one pod: its occupants over the shared weights.
 
-        Ports: the weights, then per decode occupant its token and cache.
-        Outputs: each occupant's new cache entries and token, in slot order.
+        Ports: the weights, then per occupant its cache (a decode's token
+        first).  Outputs: each occupant's new cache entries and token, in
+        slot order.
         """
 
         if not shapes:
             raise TracerError("a step needs at least one occupant")
         weights = self.shape.weight_count
-        extra = sum(self._decode_ports(size) for kind, size in shapes if kind == DECODE)
+        extra = sum(self._ports(occupant) for occupant in shapes)
 
         @self.lm.tracer.definition(input_count=weights + extra, key=("step", shapes), role=REPLAY)
         def step(v: Wires) -> object:
             w, cursor, outputs = v[:weights], weights, []
-            for kind, size in shapes:
+            for occupant in shapes:
+                kind, positions, cached = occupant
+                ports = self._ports(occupant)
+                args = (w, v[cursor : cursor + ports]) if ports else (w,)
+                cursor += ports
                 if kind == PREFILL:
-                    outputs.append(self.lm.prefill(size)(w))
+                    outputs.append(self.lm.prefill(positions, cached)(*args))
+                elif kind == CHUNK:
+                    outputs.append(self.lm.chunk(positions, cached)(*args))
                 else:
-                    ports = self._decode_ports(size)
-                    outputs.append(self.lm.decode(size)(w, v[cursor : cursor + ports]))
-                    cursor += ports
+                    outputs.append(self.lm.decode(cached + 1)(*args))
             return outputs
 
         return step
 
     def root(self, plan: _Plan) -> TracedDefinition:
-        """The run: the weights, then every step of every pod in order, wired through the caches."""
+        """The run: the weights, then every step in time order, wired through the caches."""
 
-        shape, layers, d = self.shape, self.shape.layers, self.shape.d_model
-        requests, occupancy, before = plan.requests, plan.occupancy, plan.streamed_before
+        layers, d = self.shape.layers, self.shape.d_model
+        requests, occupancy, before, joins = plan.requests, plan.occupancy, plan.streamed_before, plan.schedule.joins
 
         @self.lm.tracer.definition(input_count=0)
         def root(_v: Wires) -> object:
             w = wires(self.lm.weights_unit()())
             slots: dict[tuple[int, int], _Slot] = {}
+            parked: dict[int, _Slot] = {}  # request -> the cache its latest attempt left
             tokens: dict[tuple[int, int], Wire] = {}
-            for key in sorted(occupancy):
-                pod, occupants = key[0], occupancy[key]
+            for key in plan.order:
+                pod, step_index = key
+                occupants = occupancy[key]
                 shapes: list[OccupantShape] = []
                 args: list[Wire | Wires] = [w]
                 for occupant in occupants:
-                    prompt = len(requests[occupant.request].prompt)
-                    if occupant.generated == 0:
-                        shapes.append((PREFILL, prompt))
-                        continue
-                    slot = slots[(pod, occupant.slot)]
-                    assert slot.request == occupant.request and slot.token is not None
-                    shapes.append((DECODE, prompt + occupant.generated))
-                    args.append(slot.token)
+                    join: Join = joins[occupant.join]
+                    if step_index == join.step:  # the attempt's first step
+                        slot = parked.pop(occupant.request) if join.resume else _Slot.fresh(occupant.request, layers)
+                        slots[(pod, occupant.slot)] = slot
+                    else:
+                        slot = slots[(pod, occupant.slot)]
+                    assert slot.request == occupant.request
+                    occupant_shape = plan.shape_of(occupant)
+                    shapes.append(occupant_shape)
+                    if occupant_shape[0] == DECODE:
+                        assert slot.token is not None
+                        args.append(slot.token)
                     for layer in range(layers):
                         args.extend(slot.keys[layer])
                         args.extend(slot.values[layer])
                 outputs = wires(self.step(tuple(shapes))(*args))
                 cursor = 0
-                for occupant, (kind, size) in zip(occupants, shapes, strict=True):
-                    positions = size if kind == PREFILL else 1
-                    produced = shape.state_size(positions) + 1
+                for occupant, occupant_shape in zip(occupants, shapes, strict=True):
+                    kind, positions, _ = occupant_shape
+                    produced = self._produced(occupant_shape)
                     block = outputs[cursor : cursor + produced]
                     cursor += produced
-                    if kind == PREFILL:
-                        slot = slots[(pod, occupant.slot)] = _Slot.fresh(occupant.request, layers)
-                    else:
-                        slot = slots[(pod, occupant.slot)]
+                    slot = slots[(pod, occupant.slot)]
                     for layer in range(layers):
                         start = 2 * layer * positions * d
                         slot.keys[layer].append(block[start : start + positions * d])
                         slot.values[layer].append(block[start + positions * d : start + 2 * positions * d])
-                    token = block[-1]
-                    assert isinstance(token, Wire)
-                    slot.token = token
-                    if occupant.generated >= before[occupant.join]:  # streamed by this attempt
-                        key = (occupant.request, occupant.generated)
-                        assert key not in tokens, "a position is streamed by one attempt only"
-                        tokens[key] = token
+                    if kind != CHUNK:
+                        token = block[-1]
+                        assert isinstance(token, Wire)
+                        slot.token = token
+                        if occupant.generated >= before[occupant.join]:  # streamed by this attempt
+                            streamed = (occupant.request, occupant.generated)
+                            assert streamed not in tokens, "a position is streamed by one attempt only"
+                            tokens[streamed] = token
+                    join = joins[occupant.join]
+                    if step_index == join.step + join.length - 1:  # the attempt's last step
+                        parked[occupant.request] = slots.pop((pod, occupant.slot))
             return [tokens[key] for key in self.output_layout(requests, plan.schedule)]
 
         return root
@@ -277,4 +316,4 @@ class ClusterG:
         return description, self.flatten_inputs(plan.requests, plan.schedule)
 
 
-__all__ = ["DECODE", "PREFILL", "ClusterG", "OccupantShape"]
+__all__ = ["CHUNK", "DECODE", "PREFILL", "ClusterG", "OccupantShape"]
