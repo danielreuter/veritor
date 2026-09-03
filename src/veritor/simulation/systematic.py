@@ -30,6 +30,21 @@ The counts are per *run*: the compiled circuit is one run's worth of
 requests or cluster steps, and a per-cell count is the number of VUs of that
 run reading the cell.  :func:`pod_scope` scales a run to the fleet and the
 hour a systematic fault lasts.
+
+The reader count is what the prover declares only if it recorded every VU's
+output.  What an honest prover must declare depends on its recording policy
+(``docs/honest-prover.md``, sections 3 and 9; the model is
+``veritor.simulation.honest`` on the honest-sim branch): it replays an
+opened RU from the values it recorded, pins the recorded values, and
+declares the VUs whose recorded output disagrees with the recomputation.
+With every VU output recorded (``VU_OUTPUTS``) a systematic fault pins every
+reader of the cell whose output changed; with the committed positions only
+(``BOUNDARY``: tokens under request RUs, KV and tokens under step RUs) it
+pins the recorded outputs that came out wrong, and a weight fault costs the
+tokens it flipped, not the readers.  :func:`perturbed_run` produces the
+production assignment of a run with a faulty pod (its RUs misread a cell,
+or store what a wrong kernel path computes) and :func:`pinned_units` is the
+pinned replay over a recording, so both counts are measured on the toy.
 """
 
 from __future__ import annotations
@@ -37,7 +52,7 @@ from __future__ import annotations
 import math
 from bisect import bisect_right
 from collections import Counter
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 
@@ -56,8 +71,10 @@ from veritor.core.description import (
     _pieces,
     _split,
 )
+from veritor.core.indexed import iter_members
 
 __all__ = [
+    "Declarations",
     "PodScope",
     "Progression",
     "Readers",
@@ -66,13 +83,19 @@ __all__ = [
     "histogram",
     "kv_consumers",
     "late_lowering_bits",
+    "perturbed_run",
+    "pinned_units",
     "pod_scope",
     "port_pardon_bits",
     "post_challenge_bits",
+    "post_j_unit_bits",
     "price_systematic",
     "reader_count",
     "readers",
+    "recorded_positions",
     "ru_scope_bits",
+    "ru_scope_post_j_bits",
+    "ru_scoped_source_bits",
     "source_pardon_bits",
     "weight_readers",
 ]
@@ -537,56 +560,241 @@ def pod_scope(
     )
 
 
+# -- the honest prover's declarations, measured ----------------------------------------
+
+
+def recorded_positions(compiled: Compiled, *, interiors: bool) -> frozenset[int]:
+    """The addresses a server keeps of a run under one recording policy.
+
+    The boundary and the weights always: they are the committed positions,
+    and the computed ones among them are the streamed tokens under request
+    RUs, the KV entries and tokens that cross steps under step RUs.  With
+    ``interiors`` every RU's interior positions too, every VU's output word
+    (the ``VU_OUTPUTS`` policy); without them the committed positions only
+    (``BOUNDARY``).  A VU's internal gates are recorded under neither.
+    """
+
+    index = compiled.index
+    addresses = set(iter_members(index.boundary())) | set(iter_members(index.weights()))
+    if interiors:
+        for unit in range(index.replay_units.count):
+            addresses.update(iter_members(index.interior(unit)))
+    return frozenset(addresses)
+
+
+def perturbed_run(
+    compiled: Compiled,
+    inputs: Sequence[int],
+    weights: Sequence[int],
+    *,
+    units: Collection[int],
+    misread: Mapping[int, int] | None = None,
+    corrupt: Callable[[int, int], int] | None = None,
+) -> dict[int, int]:
+    """The production assignment of a run whose RUs ``units`` ran on a faulty pod.
+
+    Every gate is evaluated in address order from the true inputs and weights
+    (what the boundary and ``kappa_W`` commit).  A gate of one of ``units``
+    reads each address in ``misread`` as the value given there instead of
+    the stored one -- a weight cell corrupted in the pod's memory, a stale
+    version, a KV word rotted at rest -- and, with ``corrupt``, stores
+    ``corrupt(address, value)`` in place of what it computed -- a wrong
+    kernel path.  Everything downstream is computed from the corrupted
+    values, on the faulty pod and off it, as the datacenter did.
+    """
+
+    circuit, index = compiled.circuit, compiled.index
+    faulty: set[int] = set()
+    for unit in units:
+        faulty.update(index.replay_units.unit(unit).interval)
+    given = {"input": iter(tuple(inputs)), "weight": iter(tuple(weights))}
+    reads = dict(misread or {})
+    values: dict[int, int] = {}
+    for address in range(circuit.n):
+        ref = circuit[address]
+        if ref.is_source:
+            values[address] = next(given[ref.source])  # type: ignore[index]
+            continue
+        inside = address in faulty
+        if inside and reads:
+            arguments = tuple(reads.get(a, values[a]) for a in ref.args)
+        else:
+            arguments = tuple(values[a] for a in ref.args)
+        value = circuit.evaluate_gate(address, arguments)
+        if inside and corrupt is not None:
+            value = corrupt(address, value)
+        values[address] = value
+    return values
+
+
+def pinned_units(
+    compiled: Compiled,
+    values: Mapping[int, int],
+    recorded: Collection[int],
+    units: Iterable[int] | None = None,
+) -> dict[int, tuple[int, ...]]:
+    """Per RU, the VUs the honest prover declares when it replays from its recording.
+
+    The rule is the honest-prover model's pinned replay.  The RU's gates are
+    recomputed in address order from the recorded values (sources and
+    boundary) and the values recomputed so far; at a recorded address the
+    recorded value is what the interior holds and what later gates read, and
+    when it differs from the recomputation the VU owning the address is
+    pinned.  A reader of a pinned value is recomputed from that value, so
+    its relation holds; the pinned VUs are exactly what M6 must declare for
+    the RU to be accepted whatever the s-challenge samples.  ``values`` is
+    the production assignment (:func:`perturbed_run`), ``recorded`` the
+    addresses the server kept (:func:`recorded_positions`): the two policies
+    differ only in ``recorded``.  ``units`` restricts the replay to some RUs
+    (default: every RU of the run).
+    """
+
+    circuit, index = compiled.circuit, compiled.index
+    kept = frozenset(recorded)
+    result: dict[int, tuple[int, ...]] = {}
+    replayed = range(index.replay_units.count) if units is None else units
+    for unit in replayed:
+        interior: dict[int, int] = {}
+        disagreeing: list[int] = []
+        for address in index.replay_units.unit(unit).interval:
+            gate = circuit[address]
+            if gate.is_source:
+                continue
+            arguments: list[int] = []
+            for argument in gate.args:
+                if argument in interior:
+                    arguments.append(interior[argument])
+                elif argument in kept:
+                    arguments.append(values[argument])
+                else:
+                    raise KeyError(
+                        f"replay of unit {unit} needs address {argument}, which is "
+                        "neither recorded nor computed by the unit"
+                    )
+            value = circuit.evaluate_gate(address, tuple(arguments))
+            if address in kept:
+                if values[address] != value:
+                    disagreeing.append(address)
+                value = values[address]
+            interior[address] = value
+        nodes = index.verification_units(unit)
+        result[unit] = tuple(
+            sorted({nodes.first + nodes.owner(a) for a in disagreeing})
+        )
+    return result
+
+
 # -- the prices of the mechanisms -------------------------------------------------------
 #
-# The stage prices are the plan's (docs/honest-prover.md, section 2, from the
-# late-advice ladder): a declaration fixed before the q-challenge costs its own
-# information content, one made after J costs that content times the leverage
-# ``1 / q`` an adaptive prover has (docs/stress-tests.md M6;
-# ``veritor.analysis.faults`` derives the rigorous form, of which ``u / q`` is
-# the small-``s`` summary), and nothing may be declared after the s-challenge.
+# Stage prices as docs/notes/late-advice.md fixes them (docs/honest-prover.md,
+# section 2).  A declaration fixed before the q-challenge costs its message:
+# log2 of the number of things it could have said.  One made after J is
+# adaptive and costs what ``veritor.analysis.faults`` charges; per VU
+# declaration that is ``u_post(1) = rho log2 (1 / (1 - s))``, about
+# ``(u(1) + 1) / q`` at the scattered channel (``post_j_unit_bits``).  Nothing
+# may be declared after the s-challenge.  The kinds of
+# docs/notes/declaration-kinds.md are priced by the same two arguments: a
+# run-wide source-position pardon makes every opened reader of the cell
+# answer to one value, so an adaptive prover cannot mix honest and corrupted
+# RUs under it and its post-J price is its message, without the ``1 / q``
+# leverage (the note states the condition and flags what is not proved); an
+# RU-scoped one has the selective-opening leverage of a VU declaration and is
+# priced like ``declared_bits`` with the pardon's message in place of ``u(1)``.
 # A structural amendment (a different lowering of an RU) is admitted post-J at
-# its compile-time price ``log2 |V_R|`` only under the plan's seven conditions.
+# its compile-time price ``log2 |V_R|`` only under the note's conditions.
+
+
+def post_j_unit_bits(rho: float, s: Fraction | float) -> float:
+    """``u_post(1) = rho log2 (1 / (1 - s))``: what one VU declaration made after ``J`` adds to ``U``.
+
+    Bound (i) of :mod:`veritor.analysis.faults` read off the fold's slope
+    ``rho`` (:attr:`~veritor.analysis.bound.BoundResult.rho`): the note's
+    price of a post-J declaration, ``145.6`` bits at the simulation policy
+    and ``6.1e9`` at the headline.
+    """
+
+    if rho < 0 or not 0 <= s < 1:
+        raise ValueError("rho must be nonnegative and s in [0, 1)")
+    return rho * math.log2(1 / (1 - float(s)))
 
 
 def post_challenge_bits(
     content_bits: float, q: Fraction | float, count: int = 1
 ) -> float:
-    """``count`` declarations of ``content_bits`` each, made after ``J``: ``count * content / q``."""
+    """``count`` declarations of ``content_bits`` each, made after ``J``: ``count * content / q``,
+    the small-``s`` summary of the post-J price (``u_post(1) ~ (u(1) + 1) / q``)."""
 
     if content_bits < 0 or count < 0 or not 0 < q <= 1:
         raise ValueError("content and count must be nonnegative, q in (0, 1]")
     return count * content_bits / float(q)
 
 
-def source_pardon_bits(width: int, positions: int, pods: int = 1) -> float:
-    """The content of one source-position pardon: the value ``v'`` (``width`` bits),
-    the cell among ``positions`` pardonable ones and the pod among ``pods``.
+def source_pardon_bits(width: int, positions: int, scopes: int = 1) -> float:
+    """The message of one source-position pardon: ``log2 (1 + scopes * positions * 2**width)``.
 
-    The adaptive count behind it is ``(1 + positions * pods)**f`` choices of
-    the pardoned set for ``f`` pardons, each worth ``2**width`` values.
+    It names the scope among ``scopes`` (the run, or one of the run's pods),
+    the cell among ``positions`` pardonable ones and the value ``v'`` in
+    ``width`` bits: about ``width + log2 (scopes * positions)``, ``51.9`` at
+    the headline (``16 + log2 n_W``).  It is the pre-J price of the pardon at
+    any scope and the post-J price of a run-wide one where every opened
+    reader must answer to the same value.
     """
 
-    if width < 1 or positions < 1 or pods < 1:
-        raise ValueError("width, positions and pods must be positive")
-    return width + math.log2(1 + positions * pods)
+    if width < 1 or positions < 1 or scopes < 1:
+        raise ValueError("width, positions and scopes must be positive")
+    return math.log2(1 + scopes * positions * 2.0**width)
 
 
-def port_pardon_bits(width: int, boundary: int) -> float:
-    """The content of one port pardon: ``v'`` and the boundary position among ``boundary``."""
+def ru_scoped_source_bits(
+    rho: float,
+    s: Fraction | float,
+    readers: int,
+    content_bits: float,
+    choices_bits: float,
+) -> float:
+    """One RU-scoped source-position pardon made after ``J``, priced like ``declared_bits``.
 
-    if width < 1 or boundary < 1:
-        raise ValueError("width and boundary must be positive")
-    return width + math.log2(1 + boundary)
+    The smaller of bound (i), the ``readers`` errors the pardon can remove
+    from the opened RU (the cell's readers in it) at ``u_post(1)`` each, and
+    bound (ii), the union over the ``2**choices_bits`` pardons it could have
+    been (``rho * choices_bits``, the threshold divided by their number) plus
+    its own message ``content_bits``.  At the headline (1024 readers) bound
+    (i) is the smaller and is ``0.33 U_0``; the note prohibits the kind for
+    want of anything cheaper.
+    """
+
+    if readers < 0 or content_bits < 0 or choices_bits < 0:
+        raise ValueError("readers, content and choices must be nonnegative")
+    return min(readers * post_j_unit_bits(rho, s), rho * choices_bits + content_bits)
+
+
+def port_pardon_bits(width: int, ports: int) -> float:
+    """The message of one port pardon: ``v'`` and the port among ``ports`` (``n_RU * n_ports``)."""
+
+    if width < 1 or ports < 1:
+        raise ValueError("width and ports must be positive")
+    return math.log2(1 + ports * 2.0**width)
 
 
 def ru_scope_bits(out_bits: int, replay_units: int) -> float:
-    """The content of one RU-scope pardon: the RU among ``replay_units`` and its
-    ``out_bits`` of now-free outputs."""
+    """The message of one RU-scope pardon, its pre-J price: the RU among ``replay_units``
+    and its ``out_bits`` of now-free outputs."""
 
     if out_bits < 0 or replay_units < 1:
         raise ValueError("out_bits must be nonnegative and replay_units positive")
     return out_bits + math.log2(1 + replay_units)
+
+
+def ru_scope_post_j_bits(
+    rho: float, q: Fraction | float, out_bits: int, replay_units: int
+) -> float:
+    """The note's bound for one RU-scope pardon made after ``J``:
+    ``rho log2 (1 + q n_RU / (1 - q)) + W_R + log2 n_RU`` (``0.47 U_0`` at the headline)."""
+
+    if rho < 0 or not 0 < q < 1:
+        raise ValueError("rho must be nonnegative and q in (0, 1)")
+    shift = math.log2(1 + float(q) * replay_units / (1 - float(q)))
+    return rho * shift + ru_scope_bits(out_bits, replay_units)
 
 
 def late_lowering_bits(replay_units: int, variants: int) -> float:
@@ -599,89 +807,101 @@ def late_lowering_bits(replay_units: int, variants: int) -> float:
 
 
 @dataclass(frozen=True, slots=True)
+class Declarations:
+    """What M6 costs the honest prover for one systematic fault under one recording policy."""
+
+    faulty: int
+    """VUs whose recorded output the fault changed over the window: what pinned replay pins."""
+    opened: int
+    """``ceil(q * faulty)``: the declarations P1 makes, those in opened RUs."""
+    f_max: int
+    bits: float
+    """``opened * u_post(1)``: the linearised post-J charge, before the interface cap."""
+
+    @property
+    def admissible(self) -> bool:
+        return self.opened <= self.f_max
+
+
+@dataclass(frozen=True, slots=True)
 class SystematicPricing:
     """One systematic scenario priced under every mechanism of section 6.
 
-    ``faulty_units`` is the number of VUs the fault corrupts over its window,
-    ``p1_declarations`` how many of them P1 must declare (those in opened
-    RUs, ``q`` of them in expectation) against ``f_max``, and each ``*_bits``
-    the charge of one mechanism, ``None`` where the mechanism does not apply
-    to the scenario.  ``reserve_fraction`` is the share of the window's
-    production computation that rejection would re-serve.
+    ``readers`` is M6 under the ``VU_OUTPUTS`` recording (every reader whose
+    output changed), ``flipped`` M6 under ``BOUNDARY`` (every recorded output
+    that came out wrong); each ``*_bits`` is the charge of one alternative,
+    ``None`` where it does not apply to the scenario: ``source_bits`` the
+    run-wide source-position pardons (one message each), ``ru_scoped_source_bits``
+    one RU-scoped pardon per opened affected RU at the ``declared_bits``-like
+    price, ``ru_scope_bits`` the pre-J price of withdrawing every affected RU
+    (post-J the kind is prohibited), ``lowering_bits`` a late lowering at its
+    compile-time price, ``configuration_bits`` a public per-pod configuration
+    (M2/M8).  ``reserve_fraction`` is the share of the window's production
+    computation that rejection would re-serve.
     """
 
-    faulty_units: int
-    p1_declarations: int
-    f_max: int
-    p1_bits: float
-    source_pardons: int | None
+    readers: Declarations
+    flipped: Declarations
     source_bits: float | None
-    port_pardons: int | None
-    port_bits: float | None
-    ru_scope_pardons: int
+    ru_scoped_source_bits: float | None
     ru_scope_bits: float
     lowering_bits: float | None
     configuration_bits: float | None
     reserve_fraction: float
 
-    @property
-    def p1_admissible(self) -> bool:
-        return self.p1_declarations <= self.f_max
-
 
 def price_systematic(
     *,
-    faulty_units: int,
+    readers: int,
+    flipped: int,
     q: Fraction | float,
     f_max: int,
-    unit_bits: float,
+    unit_post_bits: float,
     affected_replay_units: int,
     replay_units: int,
     out_bits: int,
     reserve_fraction: float,
     source_pardons: int | None = None,
     source_content_bits: float | None = None,
-    port_pardons: int | None = None,
-    port_content_bits: float | None = None,
+    ru_scoped_bits_each: float | None = None,
     lowering_variants: int | None = None,
     configurable: bool = False,
 ) -> SystematicPricing:
     """Price one systematic scenario.
 
-    P1 declares the ``q * faulty_units`` corrupted VUs that lie in opened RUs
-    at ``unit_bits / q`` each; source-position and port pardons cost their
-    content times ``1 / q`` each; an RU-scope pardon withdraws every affected
-    RU (``out_bits`` each); a late lowering costs ``log2(variants)`` per
-    affected RU at the compile-time price when admissible; a public per-pod
-    configuration (M2/M8) costs nothing when the constructor can carry it.
+    P1 declares the ``q * readers`` (or ``q * flipped``) pinned VUs that lie
+    in opened RUs at ``unit_post_bits`` each; ``source_pardons`` run-wide
+    source-position pardons cost their message ``source_content_bits`` each;
+    RU-scoped pardons cost ``ru_scoped_bits_each`` for each opened affected
+    RU; withdrawing every affected RU costs ``ru_scope_bits`` each before
+    ``J``; a late lowering costs ``log2 (variants)`` per affected RU; a public
+    per-pod configuration costs nothing when the constructor can carry it.
     """
 
-    if faulty_units < 0 or affected_replay_units < 0 or replay_units < 1:
+    if readers < 0 or flipped < 0 or affected_replay_units < 0 or replay_units < 1:
         raise ValueError("counts must be nonnegative and replay_units positive")
     if not 0 <= reserve_fraction <= 1:
         raise ValueError("reserve_fraction is a fraction of the window")
-    declarations = math.ceil(faulty_units * float(q))
+    if unit_post_bits < 0 or not 0 < q <= 1:
+        raise ValueError("unit_post_bits must be nonnegative and q in (0, 1]")
+
+    def declarations(faulty: int) -> Declarations:
+        opened = math.ceil(faulty * float(q))
+        return Declarations(faulty, opened, f_max, opened * unit_post_bits)
+
+    opened_units = math.ceil(affected_replay_units * float(q))
     return SystematicPricing(
-        faulty_units=faulty_units,
-        p1_declarations=declarations,
-        f_max=f_max,
-        p1_bits=post_challenge_bits(unit_bits, q, declarations),
-        source_pardons=source_pardons,
+        readers=declarations(readers),
+        flipped=declarations(flipped),
         source_bits=(
             None
             if source_pardons is None or source_content_bits is None
-            else post_challenge_bits(source_content_bits, q, source_pardons)
+            else source_pardons * source_content_bits
         ),
-        port_pardons=port_pardons,
-        port_bits=(
-            None
-            if port_pardons is None or port_content_bits is None
-            else post_challenge_bits(port_content_bits, q, port_pardons)
+        ru_scoped_source_bits=(
+            None if ru_scoped_bits_each is None else opened_units * ru_scoped_bits_each
         ),
-        ru_scope_pardons=affected_replay_units,
-        ru_scope_bits=post_challenge_bits(
-            ru_scope_bits(out_bits, replay_units), q, affected_replay_units
-        ),
+        ru_scope_bits=affected_replay_units * ru_scope_bits(out_bits, replay_units),
         lowering_bits=(
             None
             if lowering_variants is None
