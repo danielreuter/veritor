@@ -9,7 +9,7 @@ has.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from secrets import token_bytes
@@ -18,6 +18,7 @@ from veritor.analysis import bound
 from veritor.compile import Compilation
 from veritor.core import (
     Compiled,
+    Digest,
     ResourceLimit,
     VerificationLimits,
     VerificationPolicy,
@@ -36,6 +37,7 @@ from .domains import (
 )
 from .merkle import CommitmentDomain, MerkleTree, validate_commitment, verify_opening
 from .messages import (
+    TRANSPARENT_BACKEND,
     BoundaryMessage,
     Commitment,
     EvidenceMessage,
@@ -53,6 +55,20 @@ from .messages import (
 )
 from .parameters import VerifierParameters, expected_work, positions_per_unit
 from .phases import boundary_phase, interior_phase, replay_phase, sample_phase
+from .proofs import (
+    BatchPlan,
+    KindProgram,
+    Obligation,
+    ProofBackend,
+    Witness,
+    check_coverage,
+    derive_obligations,
+    encode_witness,
+    make_statement,
+    prove_plan,
+    resolve_backend,
+    statement_width,
+)
 
 type Values = Mapping[int, object]
 type Replay = Callable[[int, Values], Values]
@@ -71,12 +87,13 @@ class Expectation:
     the verifier encodes them with the circuit's canonical codec.
     ``weights`` is the model's ``kappa_W``, required exactly when the circuit
     has weight gates.  Both seeds are mandatory so a verifier can never
-    accidentally let the prover choose them.
+    accidentally let the prover choose them.  ``backend`` names the proof
+    backend the reveal step runs through (default: transparent openings).
     """
 
     session_id: bytes
-    compiled_digest: str
-    constructor: str
+    compiled_digest: Digest
+    constructor: Digest
     advice: bytes
     policy: VerificationPolicy
     parameters: VerifierParameters
@@ -85,6 +102,7 @@ class Expectation:
     q_seed: bytes
     s_seed: bytes
     weights: Weights | None = None
+    backend: str = TRANSPARENT_BACKEND
 
     def __post_init__(self) -> None:
         for name in ("q_seed", "s_seed"):
@@ -111,6 +129,7 @@ def make_expectation(
     session_id: bytes | None = None,
     q_seed: bytes | None = None,
     s_seed: bytes | None = None,
+    backend: str = TRANSPARENT_BACKEND,
 ) -> Expectation:
     """The verifier's expectation for one ``Compile(G, x, a)`` and the claimed ``y*``.
 
@@ -118,7 +137,8 @@ def make_expectation(
     the circuit consumes them and the advice; the client's proposed ``theta``
     is admitted under the verifier's ``parameters``, which are never
     defaulted: the verifier states ``eta``, ``U_max``, ``A`` and ``W_max``.
-    Fresh seeds are drawn unless given.
+    Fresh seeds are drawn unless given.  ``backend`` is the proof backend id
+    bound into the header.
     """
 
     if not isinstance(compilation, Compilation):
@@ -138,6 +158,7 @@ def make_expectation(
         q_seed=token_bytes(32) if q_seed is None else q_seed,
         s_seed=token_bytes(32) if s_seed is None else s_seed,
         weights=weights,
+        backend=backend,
     )
 
 
@@ -256,7 +277,9 @@ class ProverSession:
 
     When the header binds weights, ``weight_tree`` is the model's tree from
     :func:`commit_weights`; a sampled weight gate is opened at its rank in
-    that tree, which is never rebuilt.
+    that tree, which is never rebuilt.  ``backend`` is the proof backend the
+    header names (defaulted for the transparent one) and ``plan`` how the
+    sampled VUs' obligations are grouped into proofs (default: one proof).
     """
 
     def __init__(
@@ -268,6 +291,8 @@ class ProverSession:
         replay: Replay | None = None,
         limits: VerificationLimits | None = None,
         weight_tree: MerkleTree | None = None,
+        backend: ProofBackend | None = None,
+        plan: BatchPlan | None = None,
     ) -> None:
         self._layout = _Layout(compiled)
         if header.compiled_digest != compiled.digest:
@@ -276,6 +301,8 @@ class ProverSession:
         self._values = values
         self._replay = replay
         self._limits = VerificationLimits() if limits is None else limits
+        self._backend = resolve_backend(backend, header.backend, compiled, self._limits)
+        self._plan = plan
         self._trees: dict[int, MerkleTree] = {}
         if header.weights is None:
             if weight_tree is not None:
@@ -348,18 +375,39 @@ class ProverSession:
         return message
 
     def evidence(self, challenge: SampleChallenge) -> EvidenceMessage:
+        """The reveal step: derive the sampled VUs' obligations, open their
+        positions, and either hand over the openings (transparent backend) or
+        prove the batches of the plan through the backend."""
+
         self._expect("evidence")
         sample_phase(self._interior_phase, challenge)
+        commitments = {owner: (tree.domain, tree.commitment) for owner, tree in self._trees.items()}
+        obligations, kinds = derive_obligations(
+            self._layout, self.header, commitments, challenge.selected
+        )
         batches: list[tuple[Opening, ...]] = []
-        for unit in challenge.selected:
-            openings: list[Opening] = []
-            for owner, address in self._layout.required(unit):
-                tree = self._trees.get(owner)
-                if tree is None:
-                    raise ProtocolError(f"sampled unit {unit} needs uncommitted owner {owner}")
-                openings.append(tree.open(self._layout.position(owner, address)))
-            batches.append(tuple(openings))
-        message = EvidenceMessage(tuple(batches))
+        for obligation in obligations:
+            batches.append(
+                tuple(
+                    self._trees[obligation.commitments[ref.commitment].owner].open(ref.position)
+                    for ref in obligation.positions
+                )
+            )
+        if self._backend.backend_id == TRANSPARENT_BACKEND:
+            message = EvidenceMessage(tuple(batches))
+        else:
+            gate_set = self._layout.circuit.gate_set
+            proofs = prove_plan(
+                self._backend,
+                BatchPlan.single(len(obligations)) if self._plan is None else self._plan,
+                obligations,
+                [tuple((item.value, item.path) for item in batch) for batch in batches],
+                kinds,
+                gate_set.id,
+                bytes.fromhex(gate_set.digest),
+                statement_width(gate_set),
+            )
+            message = EvidenceMessage((), proofs)
         self._phase = "done"
         self.transcript_parts.extend((challenge, message))
         return message
@@ -387,11 +435,13 @@ class VerifierSession:
         compiled: Compiled,
         *,
         limits: VerificationLimits | None = None,
+        backend: ProofBackend | None = None,
     ) -> None:
         if not isinstance(compiled, Compiled):
             raise ProtocolError("sessions require a Compiled circuit")
         if expectation.compiled_digest != compiled.digest:
             raise ProtocolError("expectation names a different compiled circuit")
+        self._backend = resolve_backend(backend, expectation.backend, compiled, limits)
         weights = expectation.weights
         weight_count = compiled.index.weight_count
         if weights is None and weight_count:
@@ -438,6 +488,7 @@ class VerifierSession:
             inputs,
             outputs,
             weights,
+            expectation.backend,
         )
         self._commitments: dict[int, tuple[CommitmentDomain, Commitment]] = {}
         if weights is not None:
@@ -627,19 +678,54 @@ class VerifierSession:
         return challenge
 
     def receive_evidence(self, message: EvidenceMessage) -> VerificationReport:
+        """The reveal step: derive what every sampled VU obliges the prover to
+        show (from the challenge, the Index and the accepted commitments --
+        never from the prover), then check that the evidence covers exactly
+        those obligations through the header's proof backend.
+        """
+
         self._expect("evidence")
         sampled = self.selected_verification_units
-        if len(message.units) != len(sampled):
+        transparent = self._backend.backend_id == TRANSPARENT_BACKEND
+        if transparent and len(message.units) != len(sampled):
             raise self._reject(
                 VerificationCode.COVERAGE_MISMATCH,
                 f"expected evidence for {len(sampled)} units, got {len(message.units)}",
             )
+        if message.units and not transparent:
+            raise self._reject(
+                VerificationCode.COVERAGE_MISMATCH,
+                f"backend {self._backend.backend_id!r} takes proofs, not openings",
+            )
+        if message.proofs and transparent:
+            raise self._reject(
+                VerificationCode.COVERAGE_MISMATCH, "the transparent backend takes openings"
+            )
         with self._rejecting_limits():
-            opened_total = 0
-            for unit, batch in zip(sampled, message.units, strict=True):
-                opened_total += len(batch)
-                self._limits.enforce("max_openings", opened_total)
-                self._check_unit(unit, batch)
+            demanded, kinds = derive_obligations(
+                self._layout, self.header, self._commitments, sampled
+            )
+            gate_set = self._layout.circuit.gate_set
+            gate_set_digest = bytes.fromhex(gate_set.digest)
+            width = statement_width(gate_set)
+            try:
+                if transparent:
+                    self._check_openings(demanded, kinds, gate_set_digest, width, message)
+                else:
+                    check_coverage(
+                        demanded,
+                        kinds,
+                        gate_set.id,
+                        gate_set_digest,
+                        width,
+                        message.proofs,
+                        self._backend.verify,
+                        on_proof=lambda _n, proof, _s: self._limits.enforce(
+                            "max_proof_bytes", len(proof.proof) + len(proof.foreign)
+                        ),
+                    )
+            except Reject as rejection:
+                raise self._reject(rejection.code, rejection.detail) from None
         self._phase = "done"
         self.transcript_parts.append(message)
         return VerificationReport(
@@ -648,58 +734,36 @@ class VerifierSession:
             sampled_verification_units=sampled,
         )
 
-    def _check_unit(self, unit: int, batch: tuple[Opening, ...]) -> None:
-        """Open every value a sampled unit touches and check each of its gates.
+    def _check_openings(
+        self,
+        demanded: tuple[Obligation, ...],
+        kinds: Sequence[KindProgram],
+        gate_set_digest: bytes,
+        width: int,
+        message: EvidenceMessage,
+    ) -> None:
+        """Transparent evidence: one opening batch per sampled VU, exactly its
+        required positions in order, checked as a one-obligation proof."""
 
-        An input gate must hold the header's public input of its rank; a
-        weight gate is checked by its opening under ``kappa_W`` alone, at its
-        rank; every other gate by its relation.
-        """
-
-        layout = self._layout
-        circuit = layout.circuit
-        required = layout.required(unit)
-        positions = tuple(layout.position(owner, address) for owner, address in required)
-        if tuple(item.position for item in batch) != positions:
-            raise self._reject(
-                VerificationCode.COVERAGE_MISMATCH,
-                f"evidence for unit {unit} must open exactly its required positions",
-            )
-        payloads: dict[int, bytes] = {}
-        values: dict[int, int] = {}
-        for (owner, address), opening in zip(required, batch, strict=True):
-            payload = payloads[address] = self._open(owner, opening, address)
-            try:
-                values[address] = circuit.decode(address, payload)
-            except Exception as error:
-                raise self._reject(
-                    VerificationCode.INVALID_VALUE,
-                    f"value at address {address} is not canonical: {error}",
-                ) from error
-        for member in layout.index.verification_unit(unit).interval:
-            gate = circuit[member]
-            if gate.is_input:
-                if payloads[member] != self.header.public_inputs[circuit.input_rank(member)]:
-                    raise self._reject(
-                        VerificationCode.PUBLIC_IO_MISMATCH,
-                        f"input at address {member} differs from the public input",
-                    )
-                continue
-            if gate.is_weight:
-                continue
-            try:
-                satisfied = circuit.check_gate(
-                    member, tuple(values[item] for item in gate.args), values[member]
+        gate_set = self._layout.circuit.gate_set
+        opened_total = 0
+        for unit, obligation, batch in zip(
+            self.selected_verification_units, demanded, message.units, strict=True
+        ):
+            opened_total += len(batch)
+            self._limits.enforce("max_openings", opened_total)
+            if tuple(item.position for item in batch) != tuple(
+                ref.position for ref in obligation.positions
+            ):
+                raise Reject(
+                    VerificationCode.COVERAGE_MISMATCH,
+                    f"evidence for unit {unit} must open exactly its required positions",
                 )
-            except Exception as error:
-                raise self._reject(
-                    VerificationCode.TRUSTED_SERVICE_FAILURE,
-                    f"gate {gate.op} raised at address {member}: {error}",
-                ) from error
-            if not satisfied:
-                raise self._reject(
-                    VerificationCode.RELATION_REJECTED,
-                    f"gate at address {member} violates {gate.op}",
+            statement = make_statement(gate_set.id, gate_set_digest, width, kinds, (obligation,))
+            witness = Witness((tuple((item.value, item.path) for item in batch),))
+            if not self._backend.verify(statement, encode_witness(witness)):
+                raise Reject(
+                    VerificationCode.PROOF_REJECTED, f"openings for unit {unit} do not verify"
                 )
 
     @property
@@ -723,6 +787,8 @@ def run_protocol(
     replay: Replay | None = None,
     limits: VerificationLimits | None = None,
     weight_tree: MerkleTree | None = None,
+    backend: ProofBackend | None = None,
+    plan: BatchPlan | None = None,
 ) -> ProtocolRun:
     """Run prover and verifier against each other in one process.
 
@@ -732,10 +798,12 @@ def run_protocol(
     commits a dishonest interior, pass ``replay=assignment_replay(values)``.
     When the expectation binds weights and no ``weight_tree`` is given, the
     prover commits the weights in ``values`` (an honest prover's tree).
+    ``backend`` (shared by both parties) and ``plan`` (the prover's batching)
+    route the reveal step through a proof backend other than the default.
     """
 
     try:
-        verifier = VerifierSession(expectation, compiled, limits=limits)
+        verifier = VerifierSession(expectation, compiled, limits=limits, backend=backend)
     except Reject as rejection:
         return ProtocolRun(rejection_report(rejection, None), None)
     if expectation.weights is not None and weight_tree is None:
@@ -751,6 +819,8 @@ def run_protocol(
         replay=replay,
         limits=limits,
         weight_tree=weight_tree,
+        backend=backend,
+        plan=plan,
     )
     try:
         replay_challenge = verifier.receive_boundary(prover.boundary())

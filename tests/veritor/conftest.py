@@ -6,9 +6,6 @@ prefix sums; on a small circuit every one of them can be compared with the
 definition they stand for: the declared outputs of every copy, resolved
 address by address through the frame, and the source gates found by scanning
 ``C[i]``.
-
-The `slow` marker is registered here (not in `pyproject.toml`) for the perf
-and stress suites; slow tests are skipped unless selected with `-m slow`.
 """
 
 from __future__ import annotations
@@ -18,21 +15,6 @@ from collections.abc import Callable, Iterator
 import pytest
 
 from veritor.core import DescriptionCircuit, FlatCircuit, Index, IndexNode, iter_domain
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    config.addinivalue_line(
-        "markers", "slow: larger sizes; run with `pytest -m slow tests/veritor/perf tests/veritor/stress`"
-    )
-
-
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if "slow" in (config.getoption("-m") or ""):
-        return
-    skip = pytest.mark.skip(reason="slow: select with -m slow")
-    for item in items:
-        if "slow" in item.keywords:
-            item.add_marker(skip)
 
 
 def nodes_below(node: IndexNode) -> Iterator[IndexNode]:

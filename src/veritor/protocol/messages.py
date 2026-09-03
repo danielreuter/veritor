@@ -34,6 +34,8 @@ from veritor.core import (
 )
 
 PROTOCOL_VERSION = "veritor/protocol/v6"
+TRANSPARENT_BACKEND = "transparent"
+"""The default proof backend: openings as the proof, relations recomputed by the verifier."""
 
 
 class ProtocolError(InvalidArtifact):
@@ -60,6 +62,7 @@ class VerificationCode(StrEnum):
     NONCANONICAL_TRANSCRIPT = "noncanonical_transcript"
     RESOURCE_LIMIT = "resource_limit"
     TRUSTED_SERVICE_FAILURE = "trusted_service_failure"
+    PROOF_REJECTED = "proof_rejected"
 
 
 class Reject(ProtocolError):
@@ -191,9 +194,12 @@ class Header:
     ``G`` that produced it and ``advice`` the ``a`` it was run on, so a
     transcript is bound to one ``Compile(G, x, a)``.  ``policy`` is the
     client's ``theta = (q, s)`` and ``eta`` the verifier's acceptance
-    threshold.  ``public_inputs`` are the encoded values of the circuit's
+    threshold.      ``public_inputs`` are the encoded values of the circuit's
     ``in`` gates by rank (address order); the weight gates are under
-    ``weights``.
+    ``weights``.  ``backend`` names the proof backend the reveal step runs
+    through (:mod:`veritor.protocol.proofs`); the default, ``"transparent"``,
+    is the openings-as-proof protocol and leaves the header's manifest and
+    digest exactly as they were before backends were pluggable.
     """
 
     session_id: bytes
@@ -205,6 +211,7 @@ class Header:
     public_inputs: tuple[bytes, ...]
     claimed_outputs: tuple[bytes, ...]
     weights: Weights | None
+    backend: str = TRANSPARENT_BACKEND
     digest: bytes = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -226,25 +233,23 @@ class Header:
         _bytes_tuple(self.claimed_outputs, "claimed_outputs")
         if self.weights is not None and not isinstance(self.weights, Weights):
             raise ProtocolError("weights must be Weights or None")
-        object.__setattr__(
-            self,
-            "digest",
-            raw_digest(
-                "veritor/protocol/header/v6",
-                {
-                    "advice": self.advice.hex(),
-                    "claimed_outputs": [item.hex() for item in self.claimed_outputs],
-                    "compiled_digest": self.compiled_digest,
-                    "constructor": self.constructor,
-                    "eta": rational_manifest(self.eta),
-                    "policy": self.policy.manifest,
-                    "protocol_version": PROTOCOL_VERSION,
-                    "public_inputs": [item.hex() for item in self.public_inputs],
-                    "session_id": self.session_id.hex(),
-                    "weights": None if self.weights is None else self.weights.manifest,
-                },
-            ),
-        )
+        if type(self.backend) is not str or not self.backend:
+            raise ProtocolError("backend must be a nonempty backend id")
+        manifest: dict[str, JSONValue] = {
+            "advice": self.advice.hex(),
+            "claimed_outputs": [item.hex() for item in self.claimed_outputs],
+            "compiled_digest": self.compiled_digest,
+            "constructor": self.constructor,
+            "eta": rational_manifest(self.eta),
+            "policy": self.policy.manifest,
+            "protocol_version": PROTOCOL_VERSION,
+            "public_inputs": [item.hex() for item in self.public_inputs],
+            "session_id": self.session_id.hex(),
+            "weights": None if self.weights is None else self.weights.manifest,
+        }
+        if self.backend != TRANSPARENT_BACKEND:
+            manifest["backend"] = self.backend
+        object.__setattr__(self, "digest", raw_digest("veritor/protocol/header/v6", manifest))
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,10 +319,44 @@ class SampleChallenge:
 
 
 @dataclass(frozen=True, slots=True)
+class ProofMessage:
+    """One proof from a non-transparent backend and which sampled VUs it covers.
+
+    ``units`` are indices into ``T`` (the sample challenge's selection), sorted
+    and unique; ``proof`` is the backend's opaque proof; ``foreign`` is the
+    canonical statement of any other sessions' obligations proved in the same
+    batch (empty when the batch is this session's alone).
+    """
+
+    units: tuple[int, ...]
+    proof: bytes
+    foreign: bytes = b""
+
+    def __post_init__(self) -> None:
+        _sorted_unique(self.units, "covered units")
+        if not self.units:
+            raise ProtocolError("a proof must cover at least one sampled unit")
+        if type(self.proof) is not bytes or type(self.foreign) is not bytes:
+            raise ProtocolError("proof and foreign statement must be bytes")
+
+    @property
+    def manifest(self) -> dict[str, JSONValue]:
+        manifest: dict[str, JSONValue] = {"proof": self.proof.hex(), "units": list(self.units)}
+        if self.foreign:
+            manifest["foreign"] = self.foreign.hex()
+        return manifest
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceMessage:
-    """One opening batch per sampled verification unit, in ``T`` order."""
+    """The reveal step: under the transparent backend, one opening batch per
+    sampled verification unit in ``T`` order (``units``); under any other
+    backend, the proofs covering ``T`` (``proofs``) and no openings.  Exactly
+    one of the two is nonempty unless nothing was sampled.
+    """
 
     units: tuple[tuple[Opening, ...], ...]
+    proofs: tuple[ProofMessage, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.units) is not tuple or any(
@@ -326,12 +365,21 @@ class EvidenceMessage:
             for batch in self.units
         ):
             raise ProtocolError("evidence must be a tuple of opening tuples")
+        if type(self.proofs) is not tuple or any(
+            not isinstance(item, ProofMessage) for item in self.proofs
+        ):
+            raise ProtocolError("evidence proofs must be a tuple of proof messages")
+        if self.units and self.proofs:
+            raise ProtocolError("evidence carries either openings or proofs, not both")
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
-        return {
+        manifest: dict[str, JSONValue] = {
             "units": [[item.manifest for item in batch] for batch in self.units]
         }
+        if self.proofs:
+            manifest["proofs"] = [item.manifest for item in self.proofs]
+        return manifest
 
 
 @dataclass(frozen=True, slots=True)

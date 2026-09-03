@@ -31,6 +31,16 @@ never enumerates copies (see :func:`output_reach`).  Tracking dataflow
 through the individual outputs of a step -- per slot of a batched decode
 step, say -- would be a further refinement.
 
+The third downstream cut a copy has is the declared interface of any copy
+enclosing it (``ancestor_bits``): a value computed inside a copy of ``D``
+can be read outside that copy, or be a circuit output, only through one of
+``D``'s declared outputs, so ``Out`` of every proper ancestor is a
+downstream cut for the copy.  ``ancestor_bits`` is the narrowest of them,
+maximised over the copies of the kind, computed top-down over the
+definition DAG at step granularity (see :func:`ancestor_interfaces`); the
+bottleneck ``Bound`` charges a RU or VU is
+``min(out_bits, reach_bits, ancestor_bits)`` (:attr:`KindSummary.cut_bits`).
+
 Canonical chunking of long step lists (so a cut can fall inside a definition)
 is a later phase: today a unit is always a whole copy of a definition.
 """
@@ -257,6 +267,15 @@ class KindSummary:
     remaining tokens) and is never above the root's ``out_bits``, which is
     the root's own ``reach_bits``.  It is computed at step granularity and
     is ``0`` for a kind whose copies never reach an output.
+
+    ``ancestor_bits`` is an upper bound, over the copies of the kind, on the
+    narrowest declared interface (``out_bits``) among the copy's *proper*
+    ancestors in the hierarchy (:func:`ancestor_interfaces`).  Every value
+    a copy computes leaves an enclosing copy through that copy's declared
+    outputs, so each ancestor's ``Out`` is a downstream cut for the copy
+    too.  The root has no ancestor and carries its own ``out_bits``, which
+    is also every kind's ceiling.  The three cuts together are the copy's
+    *bottleneck*, :attr:`cut_bits`, what ``Bound`` charges a RU or VU.
     """
 
     kind: str
@@ -269,6 +288,7 @@ class KindSummary:
     out_count: int
     out_bits: int
     reach_bits: int
+    ancestor_bits: int
     source_inputs: int
     source_weights: int
     min_depth: int
@@ -277,6 +297,19 @@ class KindSummary:
     verification_units: int
     verification_kinds: tuple[tuple[str, int], ...]
     closed: bool
+
+    @property
+    def cut_bits(self) -> int:
+        """``kappa`` of a copy of the kind: the narrowest of its three downstream cuts.
+
+        The interface ``Out`` (``out_bits``), the circuit outputs the copy
+        can reach (``reach_bits``) and the narrowest interface of a copy
+        enclosing it (``ancestor_bits``) are all downstream cuts for every
+        gate of the copy, so ``Bound`` may charge any of them; it charges the
+        smallest.
+        """
+
+        return min(self.out_bits, self.reach_bits, self.ancestor_bits)
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,14 +340,28 @@ class KindTable:
         total = kinds[self.root].out_bits
         if kinds[self.root].reach_bits != total:
             raise ValueError("the root reaches exactly its own outputs")
+        if kinds[self.root].ancestor_bits != total:
+            raise ValueError("the root has no ancestor and carries its own interface")
         for row in self.rows:
+            # a child's ancestor bound must cover every call site: the caller's own
+            # bound narrowed by the caller's interface (larger is sound, smaller is not)
+            site = min(row.ancestor_bits, row.out_bits)
             for child, _ in row.children:
                 if child not in kinds:
                     raise ValueError(f"kind {row.kind} calls unknown kind {child}")
+                if kinds[child].ancestor_bits < site:
+                    raise ValueError(
+                        f"kind {child} claims ancestors of {kinds[child].ancestor_bits} bits "
+                        f"but is called by {row.kind} through {site}"
+                    )
             if row.input_count == 0 and not row.closed:
                 raise ValueError(f"kind {row.kind} has no ports and must be closed")
             if not 0 <= row.reach_bits <= total:
                 raise ValueError(f"kind {row.kind} reaches {row.reach_bits} bits of a {total}-bit output")
+            if not 0 <= row.ancestor_bits <= total:
+                raise ValueError(
+                    f"kind {row.kind} claims ancestors of {row.ancestor_bits} bits in a {total}-bit output"
+                )
 
 
 class Index:
@@ -416,14 +463,16 @@ class Index:
         definition DAG, so a kind reached through many paths is still visited
         once, and every row is a per-definition summary (declared interfaces
         as runs, never enumerated).  ``closed`` comes from
-        :func:`transient_ports` and ``reach_bits`` from :func:`output_reach`,
-        two more top-down passes over the DAG.
+        :func:`transient_ports`, ``reach_bits`` from :func:`output_reach`
+        and ``ancestor_bits`` from :func:`ancestor_interfaces`, three more
+        top-down passes over the DAG.
         """
 
         root = self._frame.definition
         parents_first = _reachable(root)[::-1]
         transient = transient_ports(root)
         reach = output_reach(root)
+        ancestor = ancestor_interfaces(root)
         copies: dict[str, int] = {root.digest: 1}
         min_depth: dict[str, int] = {root.digest: 0}
         max_depth: dict[str, int] = {root.digest: 0}
@@ -456,6 +505,7 @@ class Index:
                 out_count=definition.out_count,
                 out_bits=definition.out_bits,
                 reach_bits=reach[definition.digest],
+                ancestor_bits=ancestor[definition.digest],
                 source_inputs=definition.input_total,
                 source_weights=definition.weight_total,
                 min_depth=min_depth[definition.digest],
@@ -972,6 +1022,47 @@ def output_reach(root: Definition) -> dict[str, int]:
                 child = step.child.digest
                 reach[child] = max(reach.get(child, 0), per_step[index])
     return reach
+
+
+# -- ancestor interfaces ------------------------------------------------------------
+#
+# A copy of ``D`` exposes its values only through its declared outputs: the
+# grammar lets a step read the slots of earlier steps of the same definition,
+# and a call's slots are the child's declared outputs, so a value computed
+# inside the copy is read outside it, or is a circuit output, only through
+# ``Out(D)`` (a pinned declared output is a source gate, never in error, and is
+# not in ``Out``).  For a copy ``x``, then, ``Out`` of every proper ancestor of
+# ``x`` is a downstream cut, and the narrowest of them bounds ``x``'s capacity
+# beside its own interface and its reach.
+#
+# Copies of a kind are paths from the root in the definition DAG.  The minimum
+# over the ancestors of a copy is the minimum of ``out_bits`` along its path
+# (the root's own interface at the top, the whole output), and a kind's value
+# is the maximum over its copies, which is the maximum over paths: since
+# ``min(max_p f(p), c) = max_p min(f(p), c)``, the recursion ``anc(child at a
+# step of D) = min(anc(D), out_bits(D))``, maximised over call sites, computes
+# that maximum exactly without enumerating a copy.
+
+
+def ancestor_interfaces(root: Definition) -> dict[str, int]:
+    """Per reachable definition, the widest, over its copies, of the narrowest enclosing interface.
+
+    The root, having no ancestor, carries its own ``out_bits``.  Top-down
+    over the DAG in reverse post-order, so a definition's value is final
+    when its call steps are processed: a child called from ``D`` receives
+    ``min(anc(D), out_bits(D))`` and keeps the maximum over its call sites,
+    which is exactly the maximum over its copies (see the comment above).
+    ``O(|description|)``.
+    """
+
+    ancestor: dict[str, int] = {root.digest: root.out_bits}
+    for definition in _reachable(root)[::-1]:
+        site = min(ancestor[definition.digest], definition.out_bits)
+        for step in definition.steps:
+            if isinstance(step, CallStep):
+                child = step.child.digest
+                ancestor[child] = max(ancestor.get(child, 0), site)
+    return ancestor
 
 
 def _short(definition: Definition) -> str:

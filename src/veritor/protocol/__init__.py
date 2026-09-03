@@ -18,12 +18,14 @@ from .domains import (
 from .merkle import CommitmentDomain, MerkleTree, validate_commitment, verify_opening
 from .messages import (
     PROTOCOL_VERSION,
+    TRANSPARENT_BACKEND,
     BoundaryMessage,
     Commitment,
     EvidenceMessage,
     Header,
     InteriorMessage,
     Opening,
+    ProofMessage,
     ProtocolError,
     Reject,
     ReplayChallenge,
@@ -57,6 +59,7 @@ from .wire import (
 __all__ = [
     "BOUNDARY_OWNER",
     "PROTOCOL_VERSION",
+    "TRANSPARENT_BACKEND",
     "WEIGHT_OWNER",
     "BoundaryMessage",
     "Commitment",
@@ -69,6 +72,7 @@ __all__ = [
     "MerkleTree",
     "NoncanonicalTranscript",
     "Opening",
+    "ProofMessage",
     "ProtocolError",
     "ProtocolRun",
     "ProverSession",

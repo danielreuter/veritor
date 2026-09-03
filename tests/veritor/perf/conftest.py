@@ -1,9 +1,9 @@
 """Asymptotic shape tests: ratios between sizes, never absolute constants.
 
-The `slow` marker is registered in ``tests/veritor/conftest.py``; slow tests
-are skipped unless selected with `-m slow`.  The synthetic descriptions come
-from the `benchmarks` package at the repository root, which is put on
-`sys.path` because pytest's importlib mode does not add the root itself.
+Larger sizes carry the suite-wide `slow` marker (see `tests/conftest.py`).
+The synthetic descriptions come from the `benchmarks` package at the
+repository root, which is put on `sys.path` because pytest's importlib mode
+does not add the root itself.
 """
 
 from __future__ import annotations

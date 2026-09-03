@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["common", "guest", "host"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+veritor-zk-common = { path = "common" }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10.9"
+
+# The SP1 SHA-256 precompile, exactly as in sp1-op-bench: a workspace-wide
+# patch, so the same `sha2` crate is the precompile in the guest and pure Rust
+# on the host (where the patched crate degrades gracefully).
+[patch.crates-io]
+sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.9-sp1-6.2.0" }

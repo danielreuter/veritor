@@ -294,7 +294,7 @@ class ClusterG:
                 args = (w, v[cursor : cursor + ports]) if ports else (w,)
                 cursor += ports
                 if kind == PREFILL:
-                    outputs.append(model.prefill(positions, cached)(*args))
+                    outputs.append(model.prefill(positions, cached=cached)(*args))
                 elif kind == CHUNK:
                     outputs.append(model.chunk(positions, cached)(*args))
                 else:

@@ -1,0 +1,36 @@
+{
+ "dtype": "bf16",
+ "pipeline": "ada_bf16_m16n8k16",
+ "families": {
+  "uniform_bits": {
+   "tiles": 25000,
+   "elements": 3200000,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.12023186683654785,
+   "model_seconds": 5.110562086105347,
+   "first_mismatches": []
+  },
+  "mixed_magnitude": {
+   "tiles": 12500,
+   "elements": 1600000,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.0039038658142089844,
+   "model_seconds": 3.0062880516052246,
+   "first_mismatches": []
+  },
+  "near_overflow": {
+   "tiles": 6250,
+   "elements": 800000,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.002399444580078125,
+   "model_seconds": 1.632378339767456,
+   "first_mismatches": []
+  }
+ },
+ "seconds": 11.417909622192383,
+ "total_elements": 5600000,
+ "total_mismatches_vs_model": 0
+}

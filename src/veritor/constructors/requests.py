@@ -36,20 +36,34 @@ computes its ``vocab`` allowed flags once (``allowed_row`` units over the
 banned ids, public ``in`` gates) and its steps decide with the masked head.
 Tensor parallelism (``tensor_parallel``) changes the model's dot kinds and
 nothing else; see :class:`~veritor.constructors.lm.ToyLM`.
+
+Mixture of experts.  For a shape with ``experts > 0`` the ``routing`` picks
+how the data-dependent route enters the circuit.  ``"padded"`` (the
+default) keeps ``a`` empty: every position runs every expert and the route
+is computed and applied in-circuit.  ``"advice"`` takes the routes as ``a``
+(:mod:`veritor.constructors.moe`), runs only the chosen experts, and makes
+each request output one more word first: ``ok``, the product of every
+position's ``route_check``, which the verifier requires to be ``1``.  A
+request's kind then depends on its routes, so the description grows with
+the advice, and the requests of a group are separate calls (in the group's
+order still, which depends on ``x`` alone).
 """
 
 from __future__ import annotations
+
+from collections.abc import Hashable
 
 from veritor.compile import constructor_digest
 from veritor.core import Digest, JSONValue
 from veritor.core.description import REPLAY
 
-from .lm import LMShape, ToyLM, wires
+from .lm import ADVICE, PADDED, LMShape, Parameters, Routes, ToyLM, wires
+from .moe import RequestRoutes, decode_routes, encode_routes, reference_routes
 from .schedule import Request
 from .tracer import TracedDefinition, TracerError, Wire, Wires
 
 RequestKind = tuple[int, int, int]
-"""``(prompt length, max_new, banned length)``: what decides a request's kind."""
+"""``(prompt length, max_new, banned length)``: what decides a request's kind, from ``x`` alone."""
 
 
 class RequestsG:
@@ -57,17 +71,29 @@ class RequestsG:
 
     VERSION = "2"
 
-    def __init__(self, shape: LMShape, *, tensor_parallel: int = 1) -> None:
+    def __init__(self, shape: LMShape, routing: str = PADDED, *, tensor_parallel: int = 1) -> None:
         if not isinstance(shape, LMShape):
             raise TypeError("shape must be an LMShape")
+        if routing not in (PADDED, ADVICE):
+            raise ValueError(f"routing must be {PADDED!r} or {ADVICE!r}")
+        if routing == ADVICE and not shape.experts:
+            raise ValueError("a dense shape has no route to advise")
         self.shape = shape
+        self.routing = routing
         self.lm = ToyLM(shape, tensor_parallel=tensor_parallel)
         self.gate_set = self.lm.tracer.gate_set
         self.digest: Digest = constructor_digest(type(self).__name__, self.VERSION, self.manifest)
 
     @property
+    def advised(self) -> bool:
+        return self.routing == ADVICE
+
+    @property
     def manifest(self) -> dict[str, JSONValue]:
-        return {"shape": self.shape.manifest, **self.lm.manifest}
+        manifest: dict[str, JSONValue] = {"shape": self.shape.manifest, **self.lm.manifest}
+        if self.shape.experts:
+            manifest["routing"] = self.routing
+        return manifest
 
     # -- validation -----------------------------------------------------------------
 
@@ -109,10 +135,15 @@ class RequestsG:
         return tuple(index for _, members in self.groups(x) for index in members)
 
     def output_layout(self, x: object) -> tuple[tuple[int, int], ...]:
-        """``(request, generated position)`` of every circuit output, in output order."""
+        """``(request, generated position)`` of every circuit output, in output order.
+
+        With advised routes a request's first output is its ``ok`` word, laid
+        out at position ``-1``.
+        """
 
         requests = self.requests(x)
-        return tuple((r, g) for r in self.order(requests) for g in range(requests[r].max_new))
+        checks = (-1,) if self.advised else ()
+        return tuple((r, g) for r in self.order(requests) for g in (*checks, *range(requests[r].max_new)))
 
     def flatten_inputs(self, x: object) -> tuple[int, ...]:
         """The public inputs in ``in``-gate address order: request by request in circuit
@@ -126,61 +157,98 @@ class RequestsG:
             for value in (*requests[r].banned, *requests[r].prompt, *requests[r].randomness)
         )
 
+    def advice(self, x: object, parameters: Parameters) -> bytes:
+        """The honest advice for ``x``: the routes the reference decoder takes, encoded; empty unless advised."""
+
+        requests = self.requests(x)
+        if not self.advised:
+            return b""
+        return encode_routes(self.shape, reference_routes(self.shape, parameters, requests))
+
     # -- kinds -----------------------------------------------------------------------
 
-    def request(self, prompt: int, max_new: int, banned: int = 0) -> TracedDefinition:
+    def request(
+        self, prompt: int, max_new: int, banned: int = 0, routes: RequestRoutes | None = None
+    ) -> TracedDefinition:
         """One request: its prefill, then a decode step per further token, over its own cache.
 
-        Ports: the weights.  Outputs: the ``max_new`` generated tokens.  With
-        ``banned > 0`` the request's allowed flags are computed first and
-        every step decides with the masked head.
+        Ports: the weights.  Outputs: the ``max_new`` generated tokens; with
+        ``routes`` (the request's routes, step by step) the ``ok`` word comes
+        first.  With ``banned > 0`` the request's allowed flags are computed
+        first and every step decides with the masked head.
         """
 
         shape, layers, d = self.shape, self.shape.layers, self.shape.d_model
-        key = ("request", prompt, max_new) if banned == 0 else ("request", prompt, max_new, banned)
+        if (routes is None) == self.advised:
+            raise TracerError("advised routing needs the request's routes; padded routing takes none")
+        if routes is not None and len(routes) != max_new:
+            raise TracerError(f"a request of {max_new} tokens has {max_new} steps of routes")
+        key: tuple[Hashable, ...] = ("request", prompt, max_new)
+        if banned:
+            key = (*key, banned)
+        if routes is not None:
+            key = (*key, routes)
+        masked = bool(banned)
 
         @self.lm.tracer.definition(input_count=shape.weight_count, key=key, role=REPLAY)
         def request(w: Wires) -> object:
             keys: list[list[Wires]] = [[] for _ in range(layers)]
             values: list[list[Wires]] = [[] for _ in range(layers)]
+            ports = self.lm.ports(w)
+            ok: Wire | None = ports.constants[1] if routes is not None else None
 
             def remember(block: Wires, positions: int) -> Wire:
+                nonlocal ok
                 for layer in range(layers):
                     start = 2 * layer * positions * d
                     keys[layer].append(block[start : start + positions * d])
                     values[layer].append(block[start + positions * d : start + 2 * positions * d])
-                return block[-1]
+                if routes is None:
+                    return block[-1]
+                ok = block[-1]
+                return block[-2]
+
+            def step_routes(step: int) -> Routes | None:
+                return None if routes is None else routes[step]
 
             mask: tuple[Wires, ...] = ()
             if banned:
-                ports = self.lm.ports(w)
                 ids = self.lm.tracer.inputs(banned)
                 mask = (wires(self.lm.allowed(banned)(ports.constants, ids, ports.constants[1])),)
-            masked = bool(banned)
-            token = remember(wires(self.lm.prefill(prompt, masked=masked)(w, *mask)), prompt)
+            check: list[Wire] = [ok] if ok is not None else []
+            prefill = self.lm.prefill(prompt, step_routes(0), masked=masked)
+            token = remember(wires(prefill(w, *mask, *check)), prompt)
             tokens = [token]
             for step in range(1, max_new):
                 args: list[Wire | Wires] = [w, token]
                 for layer in range(layers):
                     args.extend(keys[layer])
                     args.extend(values[layer])
-                token = remember(wires(self.lm.decode(prompt + step, masked=masked)(*args, *mask)), 1)
+                args.extend(mask)
+                if ok is not None:
+                    args.append(ok)
+                decode = self.lm.decode(prompt + step, step_routes(step), masked=masked)
+                token = remember(wires(decode(*args)), 1)
                 tokens.append(token)
-            return tokens
+            return [ok, *tokens] if ok is not None else tokens
 
         return request
 
-    def root(self, requests: tuple[Request, ...]) -> TracedDefinition:
+    def root(self, requests: tuple[Request, ...], routes: tuple[RequestRoutes, ...] | None) -> TracedDefinition:
+        if (routes is None) == self.advised:
+            raise TracerError("advised routing needs every request's routes; padded routing takes none")
+
         @self.lm.tracer.definition(input_count=0)
         def root(_v: Wires) -> object:
             w = wires(self.lm.weights_unit()())
             outputs: list[Wire | Wires] = []
             for kind, members in self.groups(requests):
-                definition = self.request(*kind)
-                if len(members) == 1:
-                    outputs.append(definition(w))
+                if routes is not None:  # a kind per request: its routes are its own
+                    outputs.extend(self.request(*kind, routes[index])(w) for index in members)
+                elif len(members) == 1:
+                    outputs.append(self.request(*kind)(w))
                 else:
-                    outputs.append(self.lm.tracer.repeat(len(members), definition, w))
+                    outputs.append(self.lm.tracer.repeat(len(members), self.request(*kind), w))
             return outputs
 
         return root
@@ -188,10 +256,13 @@ class RequestsG:
     def __call__(self, x: object, a: bytes) -> tuple[bytes, tuple[int, ...]]:
         if type(a) is not bytes:
             raise TracerError("advice must be bytes")
-        if a:
-            raise TracerError("RequestsG takes no advice")
         requests = self.requests(x)
-        return self.lm.tracer.serialize(self.root(requests)), self.flatten_inputs(requests)
+        if not self.advised:
+            if a:
+                raise TracerError("RequestsG takes no advice unless the routes are advised")
+            return self.lm.tracer.serialize(self.root(requests, None)), self.flatten_inputs(requests)
+        routes = decode_routes(self.shape, requests, a)
+        return self.lm.tracer.serialize(self.root(requests, routes)), self.flatten_inputs(requests)
 
 
 __all__ = ["RequestKind", "RequestsG"]

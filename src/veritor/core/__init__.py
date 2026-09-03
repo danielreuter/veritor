@@ -124,3 +124,20 @@ __all__ = [
     "validate_marks",
     "value_byte_length",
 ]
+from .silicon import (
+    ADA_BF16_M16N8K16,
+    ADA_E4M3_M16N8K32,
+    AMPERE_BF16_M16N8K16,
+    HAWKEYE_AMPERE_GROUPSUM_E4M3_V0,
+    HOPPER_BF16_M16N8K16,
+    HOPPER_E4M3_K32,
+    PIPELINES,
+    Pipeline,
+    Term,
+    group_sum,
+    make_tensor_core_gate_set,
+    tc_dot,
+    tc_dot_chain,
+)
+
+__all__ += ["ADA_BF16_M16N8K16", "ADA_E4M3_M16N8K32", "AMPERE_BF16_M16N8K16", "HAWKEYE_AMPERE_GROUPSUM_E4M3_V0", "HOPPER_BF16_M16N8K16", "HOPPER_E4M3_K32", "PIPELINES", "Pipeline", "Term", "group_sum", "make_tensor_core_gate_set", "tc_dot", "tc_dot_chain"]

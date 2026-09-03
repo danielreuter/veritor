@@ -17,12 +17,16 @@ from .demo_g import (
 )
 from .gpt2 import GPT2, GPT2G, GPT2Shape, gate_budget
 from .lm import (
+    ADVICE,
+    PADDED,
+    ExpertParameters,
     LayerParameters,
     LMShape,
     Parameters,
     ToyLM,
     random_parameters,
     reference_generate,
+    top_k_route,
 )
 from .matmul import (
     MatmulCompileRequest,
@@ -43,6 +47,7 @@ from .schedule import (
     ScheduleError,
     schedule_fcfs,
 )
+from .speculative import SpeculativeG, SpeculativeTrace, reference_speculative
 from .tracer import (
     TracedDefinition,
     Tracer,
@@ -53,12 +58,15 @@ from .tracer import (
 )
 
 __all__ = [
+    "ADVICE",
     "GPT2", "GPT2G",
+    "PADDED",
     "BatchInput",
     "ClusterG",
     "DemoG",
     "DemoGCompileRequest",
     "DotRequest",
+    "ExpertParameters",
     "GPT2Shape",
     "Join",
     "LMShape",
@@ -73,6 +81,8 @@ __all__ = [
     "RequestsG",
     "Schedule",
     "ScheduleError",
+    "SpeculativeG",
+    "SpeculativeTrace",
     "ToyLM",
     "TracedDefinition",
     "Tracer",
@@ -90,5 +100,7 @@ __all__ = [
     "matmul_expected_matrices",
     "random_parameters",
     "reference_generate",
+    "reference_speculative",
     "schedule_fcfs",
+    "top_k_route",
 ]

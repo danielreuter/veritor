@@ -152,7 +152,7 @@ class PrefixG:
                     values[layer].append(produced[start + positions * d : start + 2 * positions * d])
                 return produced[-1]
 
-            token = remember(wires(self.lm.prefill(length, prefix)(w, kv)), length)
+            token = remember(wires(self.lm.prefill(length, cached=prefix)(w, kv)), length)
             tokens = [token]
             for step in range(1, max_new):
                 args: list[Wire | Wires] = [w, token]

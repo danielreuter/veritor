@@ -1,0 +1,90 @@
+{
+ "dtype": "bf16",
+ "pipeline": "ada_bf16_m16n8k16",
+ "families": {
+  "randn_zero_acc": {
+   "tiles": 100000,
+   "elements": 12800000,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.25122570991516113,
+   "model_seconds": 25.43968391418457,
+   "first_mismatches": []
+  },
+  "randn_random_acc": {
+   "tiles": 25000,
+   "elements": 3200000,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.033113718032836914,
+   "model_seconds": 8.463428258895874,
+   "first_mismatches": []
+  },
+  "uniform_bits": {
+   "tiles": 25000,
+   "elements": 3200000,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.00609898567199707,
+   "model_seconds": 6.726257801055908,
+   "first_mismatches": []
+  },
+  "subnormal": {
+   "tiles": 12500,
+   "elements": 1600000,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.003656625747680664,
+   "model_seconds": 5.2378880977630615,
+   "first_mismatches": []
+  },
+  "cancellation": {
+   "tiles": 12500,
+   "elements": 1600000,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.005467414855957031,
+   "model_seconds": 5.3659210205078125,
+   "first_mismatches": []
+  },
+  "mixed_magnitude": {
+   "tiles": 12500,
+   "elements": 1600000,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.004637002944946289,
+   "model_seconds": 4.228753089904785,
+   "first_mismatches": []
+  },
+  "near_overflow": {
+   "tiles": 6250,
+   "elements": 800000,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.0023534297943115234,
+   "model_seconds": 2.834686517715454,
+   "first_mismatches": []
+  },
+  "signed_zero": {
+   "tiles": 256,
+   "elements": 32768,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.0006124973297119141,
+   "model_seconds": 2.0089223384857178,
+   "first_mismatches": []
+  },
+  "tiny_acc_zero_products": {
+   "tiles": 512,
+   "elements": 65536,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.0007548332214355469,
+   "model_seconds": 2.0762767791748047,
+   "first_mismatches": []
+  }
+ },
+ "seconds": 64.7173798084259,
+ "total_elements": 24898304,
+ "total_mismatches_vs_model": 0
+}

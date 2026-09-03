@@ -1,0 +1,10 @@
+randn_zero_acc {'tiles': 100000, 'elements': 12800000, 'mismatches_vs_model': 0, 'model_domain_errors': 0, 'gpu_seconds': 0.2503516674041748, 'model_seconds': 26.55393695831299, 'hawkeye': {'simulator': 'Ampere_simulator', 'tiles': 100000, 'elements': 12800000, 'mismatches_vs_gpu': 0, 'seconds': 715.4057965278625, 'first_mismatches': []}}
+randn_random_acc {'tiles': 25000, 'elements': 3200000, 'mismatches_vs_model': 0, 'model_domain_errors': 0, 'gpu_seconds': 0.029015302658081055, 'model_seconds': 9.02401089668274}
+uniform_bits {'tiles': 25000, 'elements': 3200000, 'mismatches_vs_model': 352221, 'model_domain_errors': 0, 'gpu_seconds': 0.009572744369506836, 'model_seconds': 9.14399766921997}
+subnormal {'tiles': 12500, 'elements': 1600000, 'mismatches_vs_model': 0, 'model_domain_errors': 0, 'gpu_seconds': 0.003640413284301758, 'model_seconds': 5.7383153438568115}
+cancellation {'tiles': 12500, 'elements': 1600000, 'mismatches_vs_model': 0, 'model_domain_errors': 0, 'gpu_seconds': 0.003833770751953125, 'model_seconds': 5.885200023651123}
+mixed_magnitude {'tiles': 12500, 'elements': 1600000, 'mismatches_vs_model': 176747, 'model_domain_errors': 0, 'gpu_seconds': 0.0038411617279052734, 'model_seconds': 5.740119457244873}
+near_overflow {'tiles': 6250, 'elements': 800000, 'mismatches_vs_model': 199965, 'model_domain_errors': 0, 'gpu_seconds': 0.002389192581176758, 'model_seconds': 4.1260926723480225}
+signed_zero {'tiles': 256, 'elements': 32768, 'mismatches_vs_model': 0, 'model_domain_errors': 0, 'gpu_seconds': 0.0009088516235351562, 'model_seconds': 2.453378915786743}
+tiny_acc_zero_products {'tiles': 512, 'elements': 65536, 'mismatches_vs_model': 0, 'model_domain_errors': 0, 'gpu_seconds': 0.0006639957427978516, 'model_seconds': 2.4023048877716064}
+TOTAL 24898304 mismatches 728933 in 788.7 s

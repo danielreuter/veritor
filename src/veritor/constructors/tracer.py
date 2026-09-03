@@ -398,7 +398,7 @@ class Tracer:
             {
                 "version": FORMAT_VERSION,
                 "definitions": [
-                    {"digest": digest, "body": cast(JSONValue, self._bodies[digest])} for digest in ordered
+                    {"digest": digest, "body": cast("JSONValue", self._bodies[digest])} for digest in ordered
                 ],
                 "root": root.digest,
             }

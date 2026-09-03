@@ -54,6 +54,7 @@ def rows_of(table: KindTable) -> list[tuple[object, ...]]:
             row.out_count,
             row.out_bits,
             row.reach_bits,
+            row.ancestor_bits,
             row.input_count,
             row.verification_units,
             row.replay_cost,
