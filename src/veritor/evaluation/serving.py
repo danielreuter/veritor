@@ -245,6 +245,10 @@ class _Row:
     reaches: dict[str, int] = field(default_factory=dict)
     verification_units: int = 0
     verification_kinds: dict[str, int] = field(default_factory=dict)
+    vu_outputs: int = 0
+    """Declared outputs of the verification units inside one copy (its own, for a verification kind)."""
+    interior_count: int = 0
+    """Interior positions inside one copy: per replay unit inside, its ``vu_outputs`` less its ``out_count``."""
 
     @property
     def input_count(self) -> int:
@@ -341,9 +345,19 @@ class _Builder:
                 row.verification_units += count * sub.verification_units
                 for kind, inner in sub.verification_kinds.items():
                     row.verification_kinds[kind] = row.verification_kinds.get(kind, 0) + count * inner
+                row.vu_outputs += count * sub.vu_outputs
+                row.interior_count += count * sub.interior_count
         if role == VERIFICATION:
             row.verification_units = 1
             row.verification_kinds = {name: 1}
+            row.vu_outputs = outputs
+            row.interior_count = 0
+        elif role == REPLAY:
+            if row.vu_outputs < outputs:
+                raise ValueError(
+                    f"{name} declares {outputs} outputs but its verification units declare {row.vu_outputs}"
+                )
+            row.interior_count = row.vu_outputs - outputs
         self.rows[name] = row
         return name
 
@@ -791,6 +805,7 @@ class _Builder:
                 input_count=row.input_count,
                 out_count=row.out_count,
                 out_bits=row.out_count * width,
+                interior_count=row.interior_count,
                 reach_bits=reach[row.key],
                 ancestor_bits=ancestor[row.key],
                 source_inputs=row.source_inputs,

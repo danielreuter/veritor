@@ -106,14 +106,15 @@ class VerifierParameters:
 def positions_per_unit(kind: KindSummary) -> int:
     """The most positions the verifier handles for one copy of ``kind``.
 
-    A sampled verification unit is opened at its gates and at the outside
-    addresses it reads, at most its declared inputs; a replay unit's interior
-    commitment covers at most its gates.
+    A sampled verification unit is opened at its declared outputs and at the
+    outside addresses it reads, at most its declared inputs; a replay unit's
+    interior commitment covers the outputs of the verification units inside
+    it that are not its own (:attr:`KindSummary.interior_count`).
     """
 
     if kind.role == VERIFICATION:
-        return kind.size + kind.input_count
-    return kind.size
+        return kind.out_count + kind.input_count
+    return kind.interior_count
 
 
 def expected_work(
@@ -126,13 +127,15 @@ def expected_work(
 
         W = (|IO| + q s A) (1 + d) + q s S + 1 + q R
 
-    with ``R`` replay units, ``A = sum_k m_k (size_k + in_k)`` and ``S = sum_k
+    with ``R`` replay units, ``A = sum_k m_k (out_k + in_k)`` and ``S = sum_k
     m_k size_k`` over the verification kinds (``m_k`` copies of ``size_k``
-    gates with ``in_k`` declared inputs, which bound the outside addresses a
-    copy reads; a copy is sampled with probability ``q s``), and ``d =
-    merkle_depth(n)`` bounding every path length.  Evaluated in ``O(#kinds)``
-    from the per-kind table alone: nothing here enumerates an interface, so
-    a client cannot make admission cost depend on the size of its inputs.
+    gates with ``out_k`` declared outputs and ``in_k`` declared inputs, which
+    bound the outside addresses a copy reads; a copy is sampled with
+    probability ``q s`` and its gates are recomputed from the opened inputs),
+    and ``d = merkle_depth(n)`` bounding every path length.  Evaluated in
+    ``O(#kinds)`` from the per-kind table alone: nothing here enumerates an
+    interface, so a client cannot make admission cost depend on the size of
+    its inputs.
     """
 
     table = as_kind_table(target)
@@ -140,7 +143,7 @@ def expected_work(
     gates = 0
     for kind in table.rows:
         if kind.role == VERIFICATION:
-            openings += kind.copies * (kind.size + kind.input_count)
+            openings += kind.copies * (kind.out_count + kind.input_count)
             gates += kind.copies * kind.size
     sampled = policy.q * policy.s
     depth = merkle_depth(table.n)
