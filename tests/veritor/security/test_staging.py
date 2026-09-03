@@ -176,7 +176,8 @@ def test_reused_seeds_let_the_prover_predict_and_evade_both_selections(model, se
     stage, cell = model.stages - 1, 0
     mul, add = model.cell_addresses(stage, cell)
     false_output = (model.outputs[0] + 1) % (1 << model.width)
-    unit, replay = model.cell_unit(stage, cell), model.replay_unit_of(stage)
+    prod_unit, unit = model.cell_units(stage, cell)
+    replay = model.replay_unit_of(stage)
     claimed = (false_output, *model.outputs[1:])
     second = model.expectation(
         policy, claimed_outputs=claimed, session_id=b"session-2", q_seed=q_seed, s_seed=s_seed
@@ -187,6 +188,15 @@ def test_reused_seeds_let_the_prover_predict_and_evade_both_selections(model, se
     for free in range(1 << model.width):  # grind the interior value the false unit may hold
         values, outputs = model.corrupt({mul: free, add: false_output})
         assert outputs == claimed
+        # the product is wrong unless honest; the sum is wrong unless it adds up to the claim
+        circuit = model.circuit
+        wrong = {
+            which
+            for which, address in ((prod_unit, mul), (unit, add))
+            if circuit.evaluate_gate(address, tuple(values[a] for a in circuit[address].args))
+            != values[address]
+        }
+        assert wrong
         prover = ProverSession(
             model.compiled, header, values, replay=assignment_replay(values), weight_tree=model.tree
         )
@@ -198,7 +208,7 @@ def test_reused_seeds_let_the_prover_predict_and_evade_both_selections(model, se
         challenge = ReplayChallenge(q_seed, j)
         interiors = prover.interiors(challenge)
         t = sec.sample_selection(second, header, boundary, challenge, interiors, model.compiled)
-        if unit not in t:
+        if not wrong & set(t):
             chosen, predicted = values, (j, t)
             break
     assert chosen is not None, "grinding never fails for long with known seeds"

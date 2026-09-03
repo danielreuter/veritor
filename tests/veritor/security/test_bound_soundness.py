@@ -146,14 +146,18 @@ def unit_cover_sum(compiled, policy, eta, *, source_only_units: bool) -> float:
     return math.log2(total)
 
 
-def test_source_only_units_contribute_no_error_terms(model, sec):
+def test_source_only_units_contribute_no_error_terms(sec):
     """Kinds with no non-source gate enter the knapsack with ``l = 0`` only.
 
     The chain's source unit holds four one-gate source cells.  Counting their
     subsets would multiply every term by the number of admissible subsets of
-    four units that can never be in error (up to 16).
+    four units that can never be in error (up to 16).  The chain with whole
+    cells: there a stage's interface is the sum of its cells', so the fold's
+    per-kind cover is exactly ``unit_cover_sum`` (with split cells the stage
+    covers a cell's two units more cheaply than they cover themselves).
     """
 
+    model = sec.Model(2, 2, split_cells=False)
     compiled = model.compiled
     policy, eta = sec.HALVES, Fraction(1, 4)
     result = bound(compiled, policy, eta)
