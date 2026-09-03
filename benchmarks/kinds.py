@@ -201,7 +201,7 @@ def run(scale: Scale) -> Benchmark:
         )
     bench.series.append(series)
 
-    units = scale.pick([100, 1000, 10_000], [100, 1000, 10_000, 100_000])
+    units = scale.pick([100, 1000, 10_000], [100, 1000, 10_000, 50_000])
     series = Series(
         "address_sets_vs_units_unrolled",
         "replay units",
@@ -215,7 +215,8 @@ def run(scale: Scale) -> Benchmark:
             "verification_unit_s",
         ),
         note="A root of `U` separate `call` steps of one RU: descent bisects the root's step list, `O(log U)`; "
-        "the description itself is `O(U)`.  `time_s` is `boundary.rank`.",
+        "the description itself is `O(U)` (about 120 bytes per step, so 10^5 unrolled steps exceed "
+        "`max_description_bytes = 10 MB`; the sweep stops at 50,000).  `time_s` is `boundary.rank`.",
     )
     for count in units:
         compiled = compiler.compile(unrolled_units(count), INPUT)

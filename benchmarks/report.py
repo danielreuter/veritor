@@ -52,7 +52,13 @@ def fmt_time(seconds: float | None) -> str:
 def fmt_bytes(value: float | None) -> str:
     if value is None:
         return "—"
-    for unit, scale in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
+    for unit, scale in (
+        ("PB", 1 << 50),
+        ("TB", 1 << 40),
+        ("GB", 1 << 30),
+        ("MB", 1 << 20),
+        ("KB", 1 << 10),
+    ):
         if value >= scale:
             return f"{_sig(value / scale)} {unit}"
     return f"{_sig(value)} B"
@@ -68,8 +74,10 @@ def fmt_count(value: Any) -> str:
     if isinstance(value, int) or float(value).is_integer():
         value = int(value)
         return f"{value:,}" if abs(value) < 10**9 else f"{value:.3g}"
-    if abs(value) >= 1000 or abs(value) < 0.01:
+    if abs(value) >= 10**9 or abs(value) < 0.01:
         return f"{value:.3g}"
+    if abs(value) >= 100:
+        return f"{value:,.0f}"
     return _sig(float(value))
 
 
@@ -101,7 +109,7 @@ def fmt_column(name: str, value: Any, x_label: str = "") -> str:
         return fmt_micro(value)
     if name.endswith("_s") and isinstance(value, (int, float)):
         return fmt_time(value)
-    if name.endswith(("_bytes", "_per_leaf")) or name == "peak_bytes":
+    if "bytes" in name or name.endswith("_per_leaf"):
         return fmt_bytes(value)
     return fmt_count(value)
 
@@ -143,10 +151,10 @@ HEADERS = {
     "interior_rank_s": "int. `rank`",
     "interior_unrank_s": "int. `unrank`",
     "interior_contains_s": "int. `contains`",
-    "boundary_count": "|∂|",
-    "interior_count": "|interior|",
+    "boundary_count": "#∂",
+    "interior_count": "#interior",
     "unit_size": "RU size",
-    "out_count": "|Out|",
+    "out_count": "#Out",
     "build_s": "`serving_table`",
     "knapsack_s": "knapsack",
     "knapsack_bits": "knapsack bits",
@@ -165,8 +173,8 @@ HEADERS = {
     "per_selected_s": "per selected",
     "denominator_bits": "denominator bits",
     "sample_s": "`derive_sample_selection`",
-    "selected_replay_units": "|J|",
-    "sampled_verification_units": "|T|",
+    "selected_replay_units": "#J",
+    "sampled_verification_units": "#T",
     "values_per_s": "values/s",
     "hashes_per_s": "hashes/s",
     "bytes_per_leaf": "retained/leaf",
@@ -331,6 +339,8 @@ GROUPS: dict[tuple[str, str], Sequence[Sequence[str]]] = {
 }
 
 MAX_COLUMNS = 9
+HIDDEN = frozenset({"gates", "seeds", "openings_verified"})
+"""Columns recorded for cross-checks but not worth a table column (`gates` duplicates `n`)."""
 
 
 def _groups(bench: str, series: dict[str, Any]) -> list[list[str]]:
@@ -362,8 +372,13 @@ def _header(name: str) -> str:
 
 def render_table(series: dict[str, Any], columns: Sequence[str]) -> list[str]:
     x_label = series["x_label"]
+    points = series["points"]
     columns = [
-        c for c in columns if any(p.get(c) is not None for p in series["points"])
+        c
+        for c in columns
+        if c not in HIDDEN
+        and any(p.get(c) is not None for p in points)
+        and not all(p.get(c) == p["x"] for p in points)  # a copy of the x column
     ]
     if not columns:
         return []
@@ -507,6 +522,15 @@ def _exp(value: float | None) -> str:
 def _fit(series: dict[str, Any], column: str) -> float | None:
     fit = series.get("fits", {}).get(column)
     return fit["exponent"] if fit else None
+
+
+def _last_with(series: dict[str, Any], column: str) -> dict[str, Any] | None:
+    """The largest point of ``series`` that recorded ``column``."""
+
+    for point in reversed(series["points"]):
+        if point.get(column) is not None:
+            return point
+    return None
 
 
 def _ratio(a: float | None, b: float | None) -> str:
@@ -660,20 +684,28 @@ def bottlenecks(document: dict[str, Any]) -> list[str]:
             )
         if synthetic:
             last = synthetic["points"][-1]
+            knap = _last_with(synthetic, "knapsack_s") or last
             out.append(
                 f"- **Linear in the kinds; the knapsack is the constant.**  On synthetic tables the Laplace fold is "
                 f"∝ kinds^{_exp(d.exponent('analysis', 'synthetic_vs_replay_kinds'))} "
                 f"({fmt_time(last['time_s'] / last['x'])} per replay kind at {fmt_count(last['x'])} kinds) and the knapsack "
                 f"∝ kinds^{_exp(d.exponent('analysis', 'synthetic_vs_replay_kinds', 'knapsack_s'))} "
-                f"({fmt_time(last.get('knapsack_s'))} vs {fmt_time(last['time_s'])} at the top, {_ratio(last.get('knapsack_s'), last['time_s'])})."
+                f"({fmt_time(knap.get('knapsack_s'))} vs {fmt_time(knap['time_s'])} at {fmt_count(knap['x'])} kinds, "
+                f"{_ratio(knap.get('knapsack_s'), knap['time_s'])}"
+                + (
+                    f"; not run at {fmt_count(last['x'])} kinds, where it would take about a minute)."
+                    if knap is not last
+                    else ")."
+                )
             )
         if buckets:
             last = buckets["points"][-1]
+            mem = _last_with(buckets, "peak_bytes") or last
             out.append(
                 f"- **Buckets**: `max_buckets` from {fmt_count(buckets['points'][0]['x'])} to {fmt_count(last['x'])} moves the knapsack "
                 f"∝ buckets^{_exp(d.exponent('analysis', 'knapsack_vs_buckets'))} in time and ∝ buckets^"
-                f"{_exp(d.exponent('analysis', 'knapsack_vs_buckets', 'peak_bytes'))} in memory ({fmt_time(last['time_s'])}, "
-                f"{fmt_bytes(last['peak_bytes'])} at the top); the knapsack term goes from "
+                f"{_exp(d.exponent('analysis', 'knapsack_vs_buckets', 'peak_bytes'))} in memory ({fmt_time(last['time_s'])} at the top, "
+                f"{fmt_bytes(mem['peak_bytes'])} at {fmt_count(mem['x'])} buckets); the knapsack term goes from "
                 f"{fmt_count(buckets['points'][0].get('knapsack_bits'))} to {fmt_count(last.get('knapsack_bits'))} bits over that range "
                 f"and the reported bound stays {fmt_count(last.get('bits'))} bits (the Laplace term is the minimum here)."
             )
@@ -754,10 +786,15 @@ def bottlenecks(document: dict[str, Any]) -> list[str]:
                 else "within a decode step at this shape; at the 70B-class shape (`frontier-70B` in the full barrage, ~10^13 "
                 "positions per step) it is hours"
             )
+            shape_note = (
+                f"`{label}`, the 70B-class shape of `docs/frontier-report.md`"
+                if label == "frontier-70B"
+                else f"`{label}`; the full barrage reaches `frontier-70B`, the shape of `docs/frontier-report.md`"
+            )
             out.append(
                 f"- **Deployment.**  Committing the interior of a sampled RU costs one leaf hash per position plus the tree "
                 f"(2 hashes per position).  In this gate model every multiply-add is a position: a `step` RU of the largest "
-                f"serving shape measured (`{label}`; `frontier-70B` is the shape of `docs/frontier-report.md`) has "
+                f"serving shape measured ({shape_note}) has "
                 f"{fmt_count(step)} positions, a `cell` RU {fmt_count(cell)}.  At the measured {fmt_rate(hashes_per_s)} one `step` "
                 f"interior is {fmt_time(2 * step / hashes_per_s) if step else '?'} in this prototype; at {fmt_rate(GPU_HASHES_PER_S)} "
                 f"(a GPU-class SHA-256 rate, taken as 10^9/s here) it is {fmt_time(gpu_step)}, {verdict}; a `cell` interior is "
@@ -795,12 +832,22 @@ def bottlenecks(document: dict[str, Any]) -> list[str]:
             f"({_ratio(last['time_s'], last.get('evaluate_s'))} the evaluation) and the verifier {fmt_time(last.get('verifier_total_s'))} "
             f"({_ratio(last.get('verifier_total_s'), last.get('evaluate_s'))})."
         )
+        first = cluster["points"][0]
+        drift = (
+            f"  The constants drift up along the ladder ({fmt_micro(first.get('replay_us_per_position'))} → "
+            f"{fmt_micro(last.get('replay_us_per_position'))} replay, {fmt_micro(first.get('commit_us_per_position'))} → "
+            f"{fmt_micro(last.get('commit_us_per_position'))} commit) as the per-RU value dictionaries and the transcript strings reach "
+            "hundreds of megabytes: allocator and cache pressure, not an asymptotic term."
+            if first.get("replay_us_per_position")
+            and last.get("replay_us_per_position")
+            else ""
+        )
         out.append(
             f"- **Prover constants** (mean over the ladder): replay {fmt_micro(replay_us)} per interior position "
             f"(`replay_unit`: one lazy frame walk and one gate evaluation per position), interior commitment "
             f"{fmt_micro(commit_us)} per position (value encoding plus the Merkle build), openings {fmt_micro(prove_us)} per opening.  "
             f"Replay + commit together are ~{fmt_micro((replay_us or 0) + (commit_us or 0))} per selected interior position, so the prover's "
-            f"marginal cost is q × (interior size) × that, independent of s."
+            f"marginal cost is q × (interior size) × that, independent of s.{drift}"
         )
         out.append(
             f"- **Verifier constants**: {fmt_micro(vmerkle_us)} per opening for the Merkle path ({fmt_count(last.get('openings'))} openings "
@@ -824,10 +871,16 @@ def bottlenecks(document: dict[str, Any]) -> list[str]:
                 f"the per-position constants are the same ({fmt_micro(d.mean('protocol', 'requests_vs_n', 'replay_us_per_position'))} replay)."
             )
         if vs_q and vs_s:
+            q_last = vs_q["points"][-1]
+            realized = ", ".join(
+                f"{fmt_count(p.get('selected_replay_units'))} at q = {_fraction(p['x'])}"
+                for p in vs_q["points"]
+            )
             out.append(
                 f"- **Along q** the replay and interior-commitment phases scale with the realized |J| (∝ q^"
-                f"{_exp(d.exponent('protocol', 'cluster_vs_q', 'prover_replay_s'))} on the small case, noisy because |J| is a binomial "
-                f"draw over a few dozen RUs); **along s** the openings and the verifier's evidence check scale ∝ s^"
+                f"{_exp(d.exponent('protocol', 'cluster_vs_q', 'prover_replay_s'))} on `{q_last.get('case')}`, "
+                f"{fmt_count(q_last.get('replay_units'))} RUs; sublinear because |J| is a binomial draw, mean over the seeds "
+                f"{realized}, and the fixed costs show at small q); **along s** the openings and the verifier's evidence check scale ∝ s^"
                 f"{_exp(d.exponent('protocol', 'cluster_vs_s', 'prover_prove_s'))} and ∝ s^"
                 f"{_exp(d.exponent('protocol', 'cluster_vs_s', 'verifier_recompute_s'))} while replay stays put "
                 f"(∝ s^{_exp(d.exponent('protocol', 'cluster_vs_s', 'prover_replay_s'))})."

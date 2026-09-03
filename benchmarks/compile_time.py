@@ -88,13 +88,16 @@ def run(scale: Scale) -> Benchmark:
     bench.series.append(series)
 
     # (b) ClusterG: run length (requests through the same slots)
-    counts = scale.pick([2, 8, 32], [2, 8, 32, 128, 512])
+    counts = scale.pick([2, 8, 32], [2, 8, 16, 32, 64])
     series = Series(
         "cluster_requests",
         "requests",
         fit_columns=("time_s", "description_bytes", "n", "trace_s", "advice_bytes"),
         note="ClusterG d_model=8, 1 layer, 2 slots, requests of 3 + 3 tokens; every extra wave adds root steps and "
-        "schedule bytes but no new kinds.",
+        "schedule bytes but no new kinds.  The sweep stops at 64 requests: from 96 on, the root's declared "
+        "outputs (every request's tokens) resolve to more than `CompilationLimits.max_output_runs = 256` runs "
+        "and the description is rejected, a limit of the toy constructor's output layout rather than of the "
+        "compiler.",
     )
     for count in counts:
         case = decoder_case(

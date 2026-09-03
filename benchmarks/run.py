@@ -9,6 +9,7 @@ import platform
 import subprocess
 import sys
 import time
+import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -54,16 +55,28 @@ def manifest(scale: Scale) -> dict[str, object]:
     }
 
 
-def run_all(names: list[str], scale: Scale, log=print) -> list[Benchmark]:
+def run_all(
+    names: list[str], scale: Scale, log=print
+) -> tuple[list[Benchmark], dict[str, str]]:
+    """Run every named benchmark; a failure is recorded and the barrage goes on."""
+
     results: list[Benchmark] = []
+    errors: dict[str, str] = {}
     for name in names:
         module = importlib.import_module(REGISTRY[name])
         log(f"[{name}] running ...")
         started = time.perf_counter()
-        bench = module.run(scale)
+        try:
+            bench = module.run(scale)
+        except Exception:  # noqa: BLE001 - keep the rest of the barrage
+            errors[name] = traceback.format_exc()
+            log(
+                f"[{name}] FAILED after {time.perf_counter() - started:.1f}s\n{errors[name]}"
+            )
+            continue
         log(f"[{name}] done in {time.perf_counter() - started:.1f}s")
         results.append(bench)
-    return results
+    return results, errors
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -89,6 +102,11 @@ def main(argv: list[str] | None = None) -> int:
         default=3,
         help="timed repeats per point (median is reported)",
     )
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="merge into an existing --out file: replace only the benchmarks run now",
+    )
     args = parser.parse_args(argv)
     names = (
         list(REGISTRY)
@@ -102,20 +120,49 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"unknown benchmark(s) {unknown}; choose from {sorted(REGISTRY)}")
     scale = Scale(quick=args.quick, repeats=args.repeats)
     started = time.perf_counter()
-    results = run_all(names, scale)
-    document = {
+    results, errors = run_all(names, scale)
+    out = Path(args.out)
+    document: dict = {
         "manifest": {
             **manifest(scale),
             "seconds": time.perf_counter() - started,
             "benchmarks": names,
+            "errors": errors,
         },
         "benchmarks": {bench.name: bench.as_json() for bench in results},
     }
-    out = Path(args.out)
+    if args.update and out.exists():
+        previous = json.loads(out.read_text())
+        merged_manifest = previous["manifest"]
+        merged_manifest["seconds"] = (
+            merged_manifest.get("seconds", 0.0) + document["manifest"]["seconds"]
+        )
+        merged_manifest["benchmarks"] = sorted(
+            set(merged_manifest.get("benchmarks", [])) | set(names)
+        )
+        merged_manifest["errors"] = {
+            **{
+                k: v
+                for k, v in merged_manifest.get("errors", {}).items()
+                if k not in names
+            },
+            **errors,
+        }
+        merged_manifest.setdefault("updates", []).append(
+            {
+                k: document["manifest"][k]
+                for k in ("git_commit", "git_dirty", "timestamp", "seconds")
+            }
+            | {"benchmarks": names}
+        )
+        document = {
+            "manifest": merged_manifest,
+            "benchmarks": {**previous["benchmarks"], **document["benchmarks"]},
+        }
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(document, indent=1, sort_keys=True) + "\n")
     print(f"wrote {out} ({time.perf_counter() - started:.1f}s)")
-    return 0
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":
