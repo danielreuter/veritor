@@ -69,22 +69,24 @@ server's detector is `self_check` (recompute every gate of an opened RU
 from the values it holds; the VUs whose own gate disagrees are the faults)
 and `honest_declare` wraps it.
 
-*Charge.* Let `D` be the declared set, `E` the error set and `E' = E \ D`
-what stays exposed. The output is a function of the correct computation
-outside `E`, the values at `E'` (which must survive the sampling as before)
-and the values at `D`. Enumerating `D` and its values,
+*Charge of a declaration fixed in advance.* Let `D` be the declared set,
+`E` the error set and `E' = E \ D` what stays exposed. If `D` does not
+depend on the challenges, the output is a function of the correct
+computation outside `E`, the values at `E'` (which must survive the
+sampling as before) and the values at `D`. Enumerating `D` and its values,
 `|Y_eta| <= sum_{|D| <= f} 2^kappa(D) · sum_{E' admissible} 2^kappa(E')
 <= (1 + |S| 2^W_V)^f · 2^U_0`, using `kappa(D) <= sum_{v in D} kappa(v)`
 (the union of downstream cuts is a downstream cut) and
 `sum_{j <= f} C(|S|, j) 2^(j W_V) <= (1 + |S| 2^W_V)^f`. One declared fault
 therefore costs `u(1) = log2(1 + |S| 2^W_V) = W_V + log2(|S| + 2^-W_V)`,
 which is `W_V + log2 |S|` to within `2^-W_V`; `|S|` counts the VUs and
-`W_V` is the widest cut over the VU kinds that have a relation.
-`fault_allowance_bits(target, f_max) = f_max · u(1)` and `bound(...,
-max_faults=f_max)` adds it (capped by the interface). This is value-level
+`W_V` is the widest cut over the VU kinds that have a relation
+(`fault_allowance_bits(target, f_max) = f_max · u(1)`). This is value-level
 advice: compile-time advice names the circuit and is charged by how many
 circuits it can name; a declaration names a VU (`log2 |S|` bits) and its
-contents (`W_V` bits).
+contents (`W_V` bits). It is the price at `q = 1`, where the q-challenge
+reveals nothing and the prover's best declaration is a function of `E`
+alone.
 
 *Numbers.* Small simulation (2 pods × 16 steps, 12 requests, 30 streamed
 tokens, 26,314 gates): `|S| = 3,791`, `W_V = 128` (the `onehot` VU's eight
@@ -99,22 +101,31 @@ statistics and the accumulator-width cells are 32-bit VU outputs, giving
 `|S| = 176.8 M` the figure is `43.4` bits. Either way a fault costs about
 three to four tokens' worth of capacity.
 
-*Adaptivity (for the architect).* The charge prices a `D` fixed before the
-q-challenge (or `q = 1`). The protocol lets the prover choose `D` after
-seeing `J` -- an honest server cannot know its faults before it replays
-the opened RUs -- and an adversary can use that: corrupt one VU in each of
-many RUs and pardon whichever `f` of them were opened. With `N_J`
-corrupted VUs in the opened RUs the acceptance probability is
-`(1 - s)^max(0, N_J - f)` instead of `(1 - s)^N_J`, a factor `1/(1 - s)`
-per declaration, worth about `1/q` extra corrupted VUs when `s` is small.
-Since `sigma_f(E) <= (1 - s)^-f · sigma_0(E)`, the fold at the lowered
-threshold `eta (1 - s)^f` is a rigorous upper bound on the adaptive
-capacity for `s < 1` (`veritor.analysis.faults.adaptive_fault_bound`); it
-coincides with `f · u(1)` in order of magnitude only when `q` is near one.
-`bound()` charges the specified `f · u(1)`; whether to charge the adaptive
-figure instead, or to make the declaration non-adaptive (declare before the
-q-challenge, which an honest server can do only if it self-checks every RU
-it ran), is a decision for the architect.
+*Charge of a declaration chosen after `J` (what `bound` charges).* The
+protocol lets the prover choose `D` after seeing `J` -- an honest server
+cannot know its faults before it replays the opened RUs -- and an adversary
+uses that: corrupt one VU in each of many RUs and pardon whichever `f` of
+them were opened. With `N_J` corrupted VUs in the opened RUs the acceptance
+probability is `sigma_f(E) = E_J[(1 - s)^max(0, N_J - f)]` instead of
+`sigma_0(E) = E_J[(1 - s)^N_J]`. Two rigorous bounds: (i) `sigma_f(E) <=
+(1 - s)^-f · sigma_0(E)`, so `U_f <= U_0(eta (1 - s)^f)` -- the fold at a
+threshold lowered by `f · log2(1/(1 - s))` bits, worth about `1/q` extra
+corrupted VUs per declaration when `s` is small, one when `q = 1`, vacuous
+at `s = 1`; (ii) the best declaration is one of at most `(1 + |S|)^f` sets
+and a maximum is at most a sum, so `sigma_f(E) <= sum_D sigma_0(E \ D)` and
+`U_f <= U_0(eta / (1 + |S|)^f) + f · u(1)`, valid for every `s`.
+`bound(..., max_faults=f)` charges the smaller of the two (and of
+`U_0 + f · u(1)` at `q = 1`), capped by the interface
+(`veritor.analysis.faults.declared_bits`). The adaptive price is far above
+`f · u(1)` whenever `q` is small: the rate `rho` multiplies the lowered
+threshold's `f · log2(1/(1 - s))` bits by about `1/(q s)`. For the headline
+serving policy (`q = 1.6e-8`, `s = 8.9e-3`, `rho = 4.7e11`) one declaration
+costs about `6e9` bits against `U = 1.9e13`, so `f_max = 4` is 0.13% of `U`
+-- affordable, but not `u(1) ~ 100` bits. A protocol that wanted the
+`f · u(1)` price would take declarations *before* the q-challenge, which an
+honest server can do only for faults it detects without replaying (ECC
+events, crashes, NaN checks), not for silent corruption. Which declarations
+to allow where is a decision for the architect.
 
 ## 2. Scenarios
 

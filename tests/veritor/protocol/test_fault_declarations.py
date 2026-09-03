@@ -389,20 +389,27 @@ def test_a_declared_units_openings_are_still_authenticated(compiled, honest_valu
 # -- pricing ------------------------------------------------------------------------------
 
 
-def test_bound_grows_by_exactly_the_fault_allowance(compiled) -> None:
+def test_bound_grows_by_the_fault_allowance_under_full_verification(compiled) -> None:
+    """At ``q = 1`` the q-challenge reveals nothing, so a declaration is priced as one VU,
+    ``u(1)``; at ``s < 1`` the lowered-threshold bound may be tighter still, never looser."""
+
     unit = unit_fault_bits(compiled)
     table = compiled.kind_table()
     assert unit == pytest.approx(8 + 4, abs=1e-3)  # W_V = 8 (one output word), |S| = 16 VUs
-    for policy, eta in ((VerificationPolicy(1, 1), Fraction(1, 2**40)), (VerificationPolicy(1, Fraction(1, 2)), Fraction(1, 4))):
-        base = bound(table, policy, eta)
-        assert not base.capped
-        for max_faults in (1, 2):
-            widened = bound(table, policy, eta, max_faults=max_faults)
-            expected = min(base.bits + fault_allowance_bits(table, max_faults), float(base.out_bits))
-            assert widened.bits == pytest.approx(expected, abs=1e-9)
-            assert fault_allowance_bits(table, max_faults) == max_faults * unit
+    full = VerificationPolicy(1, 1)
+    base = bound(table, full, Fraction(1, 2**40))
+    assert base.bits == 0.0
+    for max_faults in (1, 2):
+        widened = bound(table, full, Fraction(1, 2**40), max_faults=max_faults)
+        assert widened.bits == pytest.approx(max_faults * unit, abs=1e-9)
+        assert fault_allowance_bits(table, max_faults) == max_faults * unit
+    half = VerificationPolicy(1, Fraction(1, 2))
+    loose = bound(table, half, Fraction(1, 4))
+    assert not loose.capped
+    widened = bound(table, half, Fraction(1, 4), max_faults=1)
+    assert loose.bits < widened.bits <= loose.bits + unit
     assert fault_allowance_bits(table, 0) == 0.0
-    assert bound(table, VerificationPolicy(1, 1), 0, max_faults=8).bits == 48.0  # capped at the interface
+    assert bound(table, full, 0, max_faults=8).bits == 48.0  # capped at the interface
 
 
 def test_admission_prices_the_fault_allowance(compiled, honest_values, expect) -> None:

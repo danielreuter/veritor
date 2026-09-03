@@ -6,77 +6,88 @@ VU is committed like any other -- its value is authenticated and every VU
 reading it is checked against that value -- but its own relation is never
 checked, so it is an incorrect VU with zero exposure.  The survival argument
 of :mod:`veritor.analysis.bound` therefore sees it as correct, and the
-counting argument has to pay for it here.
+counting argument has to pay for it here.  ``bound(..., max_faults=f)``
+charges :func:`declared_bits`; the three bounds it takes the minimum of are
+derived below.  Write ``E`` for the error set of a transcript, ``n`` for the
+number of VUs (an upper bound on the declarable ones: a declaration of a VU
+of source gates is rejected), ``W_V`` for the widest bottleneck cut over the
+VU kinds that have a relation, and
 
-**Charge.**  Let ``D`` be the declared set (``|D| <= f_max``), ``E`` the
-error set of the transcript and ``E' = E \\ D`` what remains exposed.  The
-output ``y`` is a function of the correct computation outside ``E``, the
-values at ``E'`` and the values at ``D``; ``E'`` must survive the sampling
-as before.  Enumerating ``D`` and its values,
+    u(1) = log2(1 + n 2**W_V) = W_V + log2(n + 2**-W_V)  ~  W_V + log2 n
+
+for the bits that name one VU and its contents (:func:`unit_fault_bits`).
+
+**A declaration fixed in advance costs ``u(1)``.**  If the declared set ``D``
+(``|D| <= f``) does not depend on the challenges, the output is a function
+of the correct computation outside ``E``, the values at ``E' = E \\ D``
+(which must survive the sampling as before) and the values at ``D``.
+Enumerating ``D`` and its values,
 
     |Y_eta| <= sum_{|D| <= f} 2**kappa(D) * sum_{E' admissible} 2**kappa(E')
-            <= (1 + |S| 2**W_V)**f * 2**U_0,
+            <= (1 + n 2**W_V)**f * 2**U_0 ,
 
-with ``|S|`` the number of VUs and ``W_V = max_kind kappa`` the widest VU
-cut (``kappa(D) <= sum_{v in D} kappa(v)`` because the union of downstream
-cuts is a downstream cut, and ``sum_{j <= f} C(|S|, j) 2**(j W_V) <= (1 +
-|S| 2**W_V)**f``).  So one declared fault costs
+using ``kappa(D) <= sum_{v in D} kappa(v)`` (the union of downstream cuts is
+a downstream cut) and ``sum_{j <= f} C(n, j) 2**(j W_V) <= (1 + n 2**W_V)**f``.
+So ``U_f <= U_0 + f u(1)`` (:func:`fault_allowance_bits`).  This holds when
+``q = 1``: every RU is opened, the q-challenge reveals nothing, and the
+prover's best declaration is a function of ``E`` alone.
 
-    u(1) = log2(1 + |S| 2**W_V) = W_V + log2(|S| + 2**-W_V)  ~  W_V + log2|S|
+**A declaration chosen after ``J`` is adaptive.**  For ``q < 1`` the prover
+sees which RUs were opened before it declares -- the honest server cannot
+know its faults before it replays the opened RUs -- and an adversary uses
+this: it corrupts one VU in each of many RUs and pardons whichever ``f`` of
+them were opened.  With ``N_J`` corrupted VUs in the opened RUs its
+acceptance probability is ``sigma_f(E) = E_J[(1 - s)**max(0, N_J - f)]``
+instead of ``sigma_0(E) = E_J[(1 - s)**N_J]``.  Two bounds on it:
 
-bits and ``fault_allowance_bits(target, f) = f * u(1)``: a value-level advice
-string that names ``f`` VUs (``log2|S|`` each) and their contents (``W_V``
-each).  ``W_V`` ranges over the kinds with a relation only: a VU of source
-gates has nothing to declare and the verifier rejects its declaration.
+* ``(1 - s)**max(0, N_J - f) <= (1 - s)**(N_J - f)``, so ``sigma_f(E) <=
+  (1 - s)**-f sigma_0(E)``: every error set admissible with declarations at
+  threshold ``eta`` is admissible without them at ``eta (1 - s)**f``, and
+  ``U_f <= U_0(eta (1 - s)**f)``.  Rigorous for ``s < 1``; it is the fold at
+  a threshold lowered by ``f log2 (1 / (1 - s))`` bits, worth about ``1 / q``
+  extra corrupted VUs per declaration when ``s`` is small (one when
+  ``q = 1``), and vacuous at ``s = 1``.
+* ``(1 - s)**max(0, N_J - f) = max over D subset E, |D| <= f of
+  (1 - s)**N_J(E \\ D)`` (declare the opened errors), and a maximum is at most
+  the sum, so ``sigma_f(E) <= sum_D sigma_0(E \\ D)``: some ``D`` has
+  ``sigma_0(E \\ D) >= eta / (1 + n)**f`` (there are at most ``(1 + n)**f``
+  choices), ``E \\ D`` is admissible at that threshold and ``D`` is one of
+  the fixed sets above, so ``U_f <= U_0(eta / (1 + n)**f) + f u(1)``.
+  Rigorous for every ``s``, including ``s = 1``.
 
-**Adaptivity.**  The charge above prices a ``D`` fixed before the q-challenge
-(or ``q = 1``, every RU replayed).  The protocol lets the prover choose ``D``
-*after* seeing ``J`` -- the honest server cannot know its faults before it
-replays the opened RUs -- and an adversary uses this: it corrupts one VU in
-each of many RUs and pardons whichever ``f`` of them were opened.  With ``N_J``
-corrupted VUs in the opened RUs its acceptance probability is
-``(1 - s)**max(0, N_J - f)`` instead of ``(1 - s)**N_J``: a factor
-``1 / (1 - s)`` per declaration whenever ``N_J >= f``, which is worth
-``ln(1 / (1 - s)) / (-ln(1 - q s))`` additional corrupted VUs -- about
-``1 / q`` of them when ``s`` is small, one when ``q = 1``.  Since
-``sigma_f(E) <= (1 - s)**-f sigma_0(E)`` for every ``E``, the fold at the
-lowered threshold ``eta (1 - s)**f`` is a rigorous upper bound on the
-adaptive capacity for ``s < 1``; :func:`adaptive_fault_bound` computes it,
-and :func:`adaptive_fault_allowance_bits` is its excess over ``U_0``.  It
-coincides with ``f * u(1)`` in order of magnitude only when ``q`` is near
-one; for the replay rates a serving run uses it is far larger.  ``bound()``
-charges the specified ``f * u(1)``; which of the two the protocol should
-charge is a decision for the architect (see ``docs/stress-tests.md``, M6).
+Both are bounds on ``|Y_eta|`` itself, so :func:`declared_bits` returns the
+smaller (and, at ``q = 1``, the smaller of those and ``U_0 + f u(1)``),
+capped by the interface in ``bound``.  Which is tighter depends on the
+policy: for the replay rates a serving run uses, ``f log2 (1 / (1 - s))``
+is a fraction of a bit of threshold but the rate ``rho`` multiplies it by
+``~ 1 / (q s)``; the second bound's ``f log2 (1 + n)`` bits of threshold
+cost more still.  ``U_f - U_0`` is far larger than ``f u(1)`` whenever
+``q`` is small: declaring after ``J`` is expensive, and a protocol that
+wanted the ``f u(1)`` price would have to take declarations before the
+q-challenge, which an honest server can only do for the faults it detects
+without replaying (``docs/stress-tests.md``, M6).
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import replace
+from fractions import Fraction
 
 from veritor.core import (
     Compiled,
     KindTable,
-    ProbabilityInput,
     VerificationPolicy,
     as_kind_table,
-    exact_fraction,
 )
 from veritor.core.description import VERIFICATION
 
-from .bound import BoundOptions, BoundResult, bound, cut_bits
+from .bound import BoundOptions, bound, cut_bits
 
 
-def unit_fault_bits(target: Compiled | KindTable) -> float:
-    """``u(1) = log2(1 + |S| 2**W_V)``: the capacity of one declared VU.
+def _units(table: KindTable) -> tuple[int, int]:
+    """``(n, W_V)``: the VU copies of the index and the widest cut over the
+    kinds with a relation; ``W_V = -1`` if no kind has one."""
 
-    ``|S|`` counts every VU of the index and ``W_V`` is the widest cut
-    (:func:`~veritor.analysis.bound.cut_bits`) over the VU kinds that have a
-    relation.  ``0.0`` for an index without such a kind: nothing can be
-    declared.
-    """
-
-    table = as_kind_table(target)
     widest = -1
     units = 0
     for row in table.rows:
@@ -85,13 +96,26 @@ def unit_fault_bits(target: Compiled | KindTable) -> float:
         units += row.copies
         if row.size > row.source_inputs + row.source_weights:
             widest = max(widest, cut_bits(row))
+    return units, widest
+
+
+def unit_fault_bits(target: Compiled | KindTable) -> float:
+    """``u(1) = log2(1 + n 2**W_V)``: the capacity of one declared VU.
+
+    ``n`` counts every VU of the index (an upper bound on the declarable
+    ones) and ``W_V`` is the widest cut (:func:`~veritor.analysis.bound.cut_bits`)
+    over the VU kinds that have a relation.  ``0.0`` for an index without
+    such a kind: nothing can be declared.
+    """
+
+    units, widest = _units(as_kind_table(target))
     if widest < 0 or units == 0:
         return 0.0
     return widest + math.log2(units + 2.0**-widest)
 
 
 def fault_allowance_bits(target: Compiled | KindTable, max_faults: int) -> float:
-    """``f_max * u(1)``: the bits ``Bound`` gains for admitting ``max_faults`` declarations."""
+    """``f u(1)``: the price of ``max_faults`` declarations fixed before the challenges."""
 
     if type(max_faults) is not int or max_faults < 0:
         raise ValueError("max_faults must be a nonnegative integer")
@@ -100,51 +124,34 @@ def fault_allowance_bits(target: Compiled | KindTable, max_faults: int) -> float
     return max_faults * unit_fault_bits(target)
 
 
-def adaptive_fault_bound(
-    target: Compiled | KindTable,
+def declared_bits(
+    table: KindTable,
     policy: VerificationPolicy,
-    eta: ProbabilityInput,
+    eta: Fraction,
+    options: BoundOptions,
     max_faults: int,
-    options: BoundOptions | None = None,
-) -> BoundResult:
-    """``Bound`` at threshold ``eta (1 - s)**max_faults``: an upper bound on the
-    capacity when the prover chooses its declarations after seeing ``J``.
-
-    Rigorous for ``s < 1``, where a declaration is worth at most ``1 / (1 -
-    s)`` in acceptance probability; the returned result reports the lowered
-    threshold as its ``eta``.  At ``q = 1`` the q-challenge reveals nothing,
-    so ``f * u(1)`` is rigorous too and the smaller of the two is returned.
-    At ``s = 1`` with ``q < 1`` the relaxation is vacuous and the result is
-    the trivial cap ``out_bits``.
+    base_bits: float,
+) -> float:
+    """The bits ``bound(table, policy, eta)`` becomes when up to ``max_faults``
+    VUs may be declared after the q-challenge; ``base_bits`` is its value
+    without declarations.  The minimum of the rigorous bounds of the module
+    docstring, before the interface cap (``bound`` applies it).
     """
 
     if type(max_faults) is not int or max_faults < 0:
         raise ValueError("max_faults must be a nonnegative integer")
-    if not isinstance(policy, VerificationPolicy):
-        raise TypeError("policy must be a VerificationPolicy")
-    eta = exact_fraction(eta, name="eta")
     if max_faults == 0:
-        return bound(target, policy, eta, options)
+        return base_bits
+    allowance = fault_allowance_bits(table, max_faults)
+    units, widest = _units(table)
+    if widest < 0 or units == 0:
+        return base_bits  # nothing can be declared
+    candidates = [bound(table, policy, eta / (1 + units) ** max_faults, options).bits + allowance]
+    if policy.s < 1:
+        candidates.append(bound(table, policy, eta * (1 - policy.s) ** max_faults, options).bits)
     if policy.q == 1:
-        specified = bound(target, policy, eta, options, max_faults=max_faults)
-        if policy.s == 1:
-            return specified
-        lowered = bound(target, policy, eta * (1 - policy.s) ** max_faults, options)
-        return specified if specified.bits <= lowered.bits else lowered
-    if policy.s == 1:
-        base = bound(target, policy, eta, options)
-        return replace(base, bits=float(base.out_bits), capped=True)
-    return bound(target, policy, eta * (1 - policy.s) ** max_faults, options)
+        candidates.append(base_bits + allowance)
+    return min(candidates)
 
 
-def adaptive_fault_allowance_bits(
-    target: Compiled | KindTable,
-    policy: VerificationPolicy,
-    eta: ProbabilityInput,
-    max_faults: int,
-    options: BoundOptions | None = None,
-) -> float:
-    """The excess of :func:`adaptive_fault_bound` over ``Bound(C, I, theta)`` at ``eta``."""
-
-    base = bound(target, policy, eta, options).bits
-    return adaptive_fault_bound(target, policy, eta, max_faults, options).bits - base
+__all__ = ["declared_bits", "fault_allowance_bits", "unit_fault_bits"]

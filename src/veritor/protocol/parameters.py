@@ -9,7 +9,8 @@ the advice it will accept, so every admitted request has capacity at most
 :func:`expected_work` from counts alone before any commitment is accepted.
 ``f_max = max_faults`` is how many VUs the prover may declare incorrect after
 the q-challenge (fault declarations, mechanism M6); it is bound into the
-header and priced into ``U`` by :func:`veritor.analysis.faults.fault_allowance_bits`.
+header and priced into ``U`` by ``bound(..., max_faults=f_max)``
+(:mod:`veritor.analysis.faults`).
 """
 
 from __future__ import annotations

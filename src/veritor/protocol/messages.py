@@ -23,8 +23,8 @@ other -- its value is authenticated and every VU reading it is checked
 against that value -- but its own relation check is skipped if it is
 sampled, so an honest server that finds a hardware fault when it replays an
 opened RU can own up to it instead of being rejected.  Declaring costs
-capacity, not soundness (``fault_allowance_bits`` in
-:mod:`veritor.analysis.faults`).
+capacity, not soundness: ``bound(..., max_faults=f_max)`` charges a prover
+that declares after seeing ``J`` (:mod:`veritor.analysis.faults`).
 """
 
 from __future__ import annotations
