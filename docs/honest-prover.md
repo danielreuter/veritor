@@ -187,7 +187,7 @@ a corrupted constant costs 2 and 17.
 
 The matrix. "Signal" is what can tell the prover about the fault before it
 streams and before `J`, which is what a pre-J price needs (section 2).
-Toy numbers are the honest model's `H2` rows (two requests, `RequestsG` unless
+Toy numbers are the honest model's `H1` rows (two requests, `RequestsG` unless
 said) and this document's `H4` rows (section 6); `u_post(1)` is the post-J
 price of one VU declaration, `145.6` bits at the simulation policy on the
 note's fixture (`142.6` on the cluster fixture), `6.12e9` at the headline.
