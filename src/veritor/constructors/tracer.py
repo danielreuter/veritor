@@ -68,7 +68,13 @@ class Wires:
     jstride: int = 0
 
     def __new__(  # type: ignore[no-untyped-def]
-        cls, trace: object, space: str, start: int, count: int = 1, stride: int = 0, jstride: int = 0
+        cls,
+        trace: object,
+        space: str,
+        start: int,
+        count: int = 1,
+        stride: int = 0,
+        jstride: int = 0,
     ):
         made = Wire if cls is Wires and count == 1 else cls
         return object.__new__(made)
@@ -84,7 +90,12 @@ class Wires:
 
     def __iter__(self) -> Iterator[Wire]:
         for k in range(self.count):
-            yield Wire(self.trace, self.space, self.start + k * self.stride, jstride=self.jstride)
+            yield Wire(
+                self.trace,
+                self.space,
+                self.start + k * self.stride,
+                jstride=self.jstride,
+            )
 
     @overload
     def __getitem__(self, item: int) -> Wire: ...
@@ -114,7 +125,12 @@ class Wires:
             item += self.count
         if not 0 <= item < self.count:
             raise IndexError(item)
-        return Wire(self.trace, self.space, self.start + item * self.stride, jstride=self.jstride)
+        return Wire(
+            self.trace,
+            self.space,
+            self.start + item * self.stride,
+            jstride=self.jstride,
+        )
 
     def by(self, jstride: int) -> Wires:
         """This range shifted by ``jstride`` per copy of a ``repeat``."""
@@ -199,7 +215,10 @@ class _Run:
     def extend(self, other: _Run) -> bool:
         """Absorb a single wire that continues this run."""
 
-        if other.count != 1 or (self.space, self.jstride) != (other.space, other.jstride):
+        if other.count != 1 or (self.space, self.jstride) != (
+            other.space,
+            other.jstride,
+        ):
             return False
         if self.count == 1 and other.start >= self.start:
             self.count, self.stride = 2, other.start - self.start
@@ -231,7 +250,9 @@ def _ranges(trace: _Trace, args: Sequence[Argument], *, copies: bool) -> list[_R
     return runs
 
 
-def _encode(runs: list[_Run], expected: int, what: str, *, copies: bool) -> list[object]:
+def _encode(
+    runs: list[_Run], expected: int, what: str, *, copies: bool
+) -> list[object]:
     total = sum(run.count for run in runs)
     if total != expected:
         raise TracerError(f"{what} takes {expected} arguments, got {total}")
@@ -248,18 +269,27 @@ def _ordinal(outputs: list[_Run], space: str, index: int) -> int:
             if run.count == 1 or run.stride == 0:
                 if offset == 0:
                     return base
-            elif offset >= 0 and offset % run.stride == 0 and offset // run.stride < run.count:
+            elif (
+                offset >= 0
+                and offset % run.stride == 0
+                and offset // run.stride < run.count
+            ):
                 return base + offset // run.stride
         base += run.count
     raise TracerError("a checked wire must be one of the definition's declared outputs")
 
 
-def _encode_checks(outputs: list[_Run], checks: list[tuple[Wires, int]]) -> list[object]:
+def _encode_checks(
+    outputs: list[_Run], checks: list[tuple[Wires, int]]
+) -> list[object]:
     """``[start, count, stride, value]`` over output ordinals for the checked wires, runs merged."""
 
     encoded: list[list[object]] = []
     for wires, value in checks:
-        ordinals = [_ordinal(outputs, wires.space, wires.start + k * wires.stride) for k in range(wires.count)]
+        ordinals = [
+            _ordinal(outputs, wires.space, wires.start + k * wires.stride)
+            for k in range(wires.count)
+        ]
         held: _Run | None = None
         for ordinal in ordinals:
             single = _Run("", ordinal, 1, 0, 0)
@@ -290,13 +320,17 @@ class _Trace:
         return Wires(self.identity, LOCAL, start, count, 1)
 
     def emit_gate(self, gate: Gate, args: Sequence[Argument]) -> Wire:
-        ranges = _encode(_ranges(self, args, copies=False), gate.arity, gate.name, copies=False)
+        ranges = _encode(
+            _ranges(self, args, copies=False), gate.arity, gate.name, copies=False
+        )
         self.steps.append({"kind": "gate", "gate": gate.name, "args": ranges})
         result = self._outputs(1)
         assert isinstance(result, Wire)
         return result
 
-    def emit_call(self, definition: TracedDefinition, args: Sequence[Argument]) -> Wires:
+    def emit_call(
+        self, definition: TracedDefinition, args: Sequence[Argument]
+    ) -> Wires:
         if definition.tracer is not self.tracer:
             raise TracerError("the definition belongs to another tracer")
         ranges = _encode(
@@ -322,7 +356,12 @@ class _Trace:
             copies=True,
         )
         self.steps.append(
-            {"kind": "repeat", "count": count, "digest": definition.digest, "args": ranges}
+            {
+                "kind": "repeat",
+                "count": count,
+                "digest": definition.digest,
+                "args": ranges,
+            }
         )
         return self._outputs(count * definition.output_count)
 
@@ -380,7 +419,9 @@ class Tracer:
             if key is not None and key in self._by_key:
                 cached = self._by_key[key]
                 if (cached.input_count, cached.role) != (input_count, role):
-                    raise TracerError("a definition key was reused with another signature")
+                    raise TracerError(
+                        "a definition key was reused with another signature"
+                    )
                 return cached
             trace = _Trace(self, input_count)
             token = _ACTIVE.set(trace)
@@ -390,7 +431,9 @@ class Tracer:
                 _ACTIVE.reset(token)
             if isinstance(result, Wires):
                 returned: Sequence[Argument] = (result,)
-            elif isinstance(result, Sequence) and result and not isinstance(result, str):
+            elif (
+                isinstance(result, Sequence) and result and not isinstance(result, str)
+            ):
                 returned = tuple(result)
             else:
                 raise TracerError("a definition must return one or more wires")
@@ -413,7 +456,9 @@ class Tracer:
 
         return decorate
 
-    def repeat(self, count: int, definition: TracedDefinition, *args: Argument) -> Wires:
+    def repeat(
+        self, count: int, definition: TracedDefinition, *args: Argument
+    ) -> Wires:
         """``count`` copies of ``definition``; ``by(j)`` arguments shift per copy."""
 
         return self._active().emit_repeat(count, definition, args)
@@ -441,15 +486,18 @@ class Tracer:
     def source_cell(self, source: str) -> TracedDefinition:
         """The canonical verification unit holding one ``source`` gate (``"input"``/``"weight"``)."""
 
-        names = {INPUT_SOURCE: self.gate_set.input_gates, WEIGHT_SOURCE: self.gate_set.weight_gates}
+        names = {
+            INPUT_SOURCE: self.gate_set.input_gates,
+            WEIGHT_SOURCE: self.gate_set.weight_gates,
+        }
         if source not in names:
             raise TracerError(f"source must be one of {sorted(names)}")
         if not names[source]:
             raise TracerError(f"the gate set has no {source} gate")
         gate = self.gate(names[source][0])
-        return self.definition(input_count=0, key=("veritor.source", source), role=VERIFICATION)(
-            lambda _: gate()
-        )
+        return self.definition(
+            input_count=0, key=("veritor.source", source), role=VERIFICATION
+        )(lambda _: gate())
 
     def sources(self, source: str, count: int) -> Wires:
         """``count`` source gates in the current body: one call or ``repeat`` of the canonical cell."""
@@ -496,7 +544,8 @@ class Tracer:
             {
                 "version": FORMAT_VERSION,
                 "definitions": [
-                    {"digest": digest, "body": cast("JSONValue", self._bodies[digest])} for digest in ordered
+                    {"digest": digest, "body": cast("JSONValue", self._bodies[digest])}
+                    for digest in ordered
                 ],
                 "root": root.digest,
             }

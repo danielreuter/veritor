@@ -33,12 +33,21 @@ from veritor.evaluation.frontier import honest_cost
 GATES = make_word_gate_set(8)
 
 
-def explicit_cost(compiled: Compiled, policy: VerificationPolicy, parameters: CostParameters) -> ExpectedCost:
+def explicit_cost(
+    compiled: Compiled, policy: VerificationPolicy, parameters: CostParameters
+) -> ExpectedCost:
     """The formula evaluated unit by unit over the explicit index, every replay unit taken as closed."""
 
     index, circuit = compiled.index, compiled.circuit
-    h, c0, alpha = parameters.hash_cost, parameters.proof_overhead, parameters.proof_factor
-    recompute = sum(circuit.Cost(index.replay_units.unit(r), "replay") for r in range(index.replay_units.count))
+    h, c0, alpha = (
+        parameters.hash_cost,
+        parameters.proof_overhead,
+        parameters.proof_factor,
+    )
+    recompute = sum(
+        circuit.Cost(index.replay_units.unit(r), "replay")
+        for r in range(index.replay_units.count)
+    )
     interior = sum(h * index.interior(r).count for r in range(index.replay_units.count))
     proof = sum(
         alpha * circuit.Cost(index.verification_unit(v), "proof") + c0
@@ -66,12 +75,16 @@ def all_closed(compiled: Compiled) -> bool:
         VerificationPolicy(0, 1),
     ],
 )
-def test_cost_fold_matches_the_unit_by_unit_sum_over_closed_units(make_compiled, sizes, policy):
+def test_cost_fold_matches_the_unit_by_unit_sum_over_closed_units(
+    make_compiled, sizes, policy
+):
     compiled = make_compiled(sizes)
     parameters = CostParameters(Fraction(3, 2), 5)
 
     assert all_closed(compiled)  # every unit holds its own ``in`` gates
-    assert cost(compiled, policy, parameters) == explicit_cost(compiled, policy, parameters)
+    assert cost(compiled, policy, parameters) == explicit_cost(
+        compiled, policy, parameters
+    )
 
 
 def test_cost_fold_matches_on_nested_closed_indices(make_paper_example):
@@ -80,7 +93,9 @@ def test_cost_fold_matches_on_nested_closed_indices(make_paper_example):
     for compiled in (make_paper_example(2, False), compile_matmul().compiled):
         assert isinstance(compiled, Compiled)
         assert all_closed(compiled)
-        assert cost(compiled, policy, parameters) == explicit_cost(compiled, policy, parameters)
+        assert cost(compiled, policy, parameters) == explicit_cost(
+            compiled, policy, parameters
+        )
 
 
 def test_a_replay_unit_fed_by_another_is_charged_through_the_root(make_paper_example):
@@ -101,7 +116,11 @@ def test_a_replay_unit_fed_by_another_is_charged_through_the_root(make_paper_exa
     actual = cost(compiled, policy, parameters)
     # the root is re-executed when ``rest`` is sampled; ``first`` on its own only when ``rest`` is not
     assert actual.recompute == q * root.replay_cost + (1 - q) * q * first.replay_cost
-    assert actual.recompute > expected.recompute == q * (first.replay_cost + rest.replay_cost)
+    assert (
+        actual.recompute
+        > expected.recompute
+        == q * (first.replay_cost + rest.replay_cost)
+    )
     assert (actual.boundary, actual.commit_interior, actual.proof, actual.weights) == (
         expected.boundary,
         expected.commit_interior,
@@ -117,11 +136,15 @@ def stages(m: int) -> Compiled:
 
     tracer = Tracer(GATES)
     add = tracer.gate("add")
-    double = tracer.definition(input_count=1, key="double", role="verification")(lambda v: add(v[0], v[0]))
+    double = tracer.definition(input_count=1, key="double", role="verification")(
+        lambda v: add(v[0], v[0])
+    )
 
     @tracer.definition(input_count=0, key="feed", role="replay")
     def feed(_v):
-        return double(tracer.inputs(1)[0])  # one verification unit over the input gate: a computed output
+        return double(
+            tracer.inputs(1)[0]
+        )  # one verification unit over the input gate: a computed output
 
     @tracer.definition(input_count=1, key="stage", role="replay")
     def stage(v):
@@ -137,17 +160,25 @@ def stages(m: int) -> Compiled:
 
 @pytest.mark.parametrize("m", [1, 3, 7])
 @pytest.mark.parametrize("q", [Fraction(1, 2), Fraction(1, 5), 1, 0])
-def test_open_units_under_a_closed_parent_are_charged_its_replay_with_probability_of_any_hit(m, q):
+def test_open_units_under_a_closed_parent_are_charged_its_replay_with_probability_of_any_hit(
+    m, q
+):
     compiled = stages(m)
     table = compiled.kind_table()
     rows = {row.kind: row for row in table.rows}
     root = rows[table.root]
-    units = [rows[compiled.index.replay_units.unit(r).kind] for r in range(compiled.index.replay_units.count)]
+    units = [
+        rows[compiled.index.replay_units.unit(r).kind]
+        for r in range(compiled.index.replay_units.count)
+    ]
     feed = next(row for row in units if row.closed)
     stage = next(row for row in units if not row.closed)
     policy = VerificationPolicy(q, 1)
 
-    assert stage.copies == m and root.replay_cost == feed.replay_cost + m * stage.replay_cost
+    assert (
+        stage.copies == m
+        and root.replay_cost == feed.replay_cost + m * stage.replay_cost
+    )
     assert recomputation_units(table) == {feed.kind: 1, root.kind: m}
     hit = 1 - (1 - Fraction(q)) ** m
     expected = hit * root.replay_cost + (1 - hit) * Fraction(q) * feed.replay_cost
@@ -161,17 +192,36 @@ def test_open_units_under_a_closed_parent_are_charged_its_replay_with_probabilit
 def test_with_many_open_units_the_recomputation_is_the_whole_honest_computation():
     """A serving run with one replay unit per dot product: every request is re-executed."""
 
-    shape = ServingShape(vocab=64, d_model=64, heads=4, layers=4, prompt=16, generated=16, requests=64, batch=8)
+    shape = ServingShape(
+        vocab=64,
+        d_model=64,
+        heads=4,
+        layers=4,
+        prompt=16,
+        generated=16,
+        requests=64,
+        batch=8,
+    )
     fine = serving_table(shape, "cell", "gate")
     coarse = serving_table(shape, "request", "row")
-    q = Fraction(1, 512)  # some 70 thousand replay units per request: q m is well over a hundred
+    q = Fraction(
+        1, 512
+    )  # some 70 thousand replay units per request: q m is well over a hundred
     honest = honest_cost(fine)
 
     units = recomputation_units(fine)
-    closed = [row for row in fine.rows if row.role != REPLAY and row.closed and row.copies == shape.requests]
-    request, prefill = sorted(closed, key=lambda row: -row.replay_cost)  # the request holds the prefill
+    closed = [
+        row
+        for row in fine.rows
+        if row.role != REPLAY and row.closed and row.copies == shape.requests
+    ]
+    request, prefill = sorted(
+        closed, key=lambda row: -row.replay_cost
+    )  # the request holds the prefill
     assert request.out_count == shape.generated and prefill.out_count > shape.generated
-    assert units[request.kind] * q > CERTAIN_MASS  # far past the regime where a request could be skipped
+    assert (
+        units[request.kind] * q > CERTAIN_MASS
+    )  # far past the regime where a request could be skipped
     assert units[prefill.kind] * q > CERTAIN_MASS
     expected = cost(fine, VerificationPolicy(q, Fraction(1, 8)))
     # exactly: the request's survival is taken as 0, and a re-executed request covers its prefill
@@ -184,18 +234,28 @@ def test_with_many_open_units_the_recomputation_is_the_whole_honest_computation(
 
 
 def test_cost_terms_and_defaults(make_compiled):
-    compiled = make_compiled((3, 2))  # 5 (in, add) units, replay interfaces are the unit outputs
+    compiled = make_compiled(
+        (3, 2)
+    )  # 5 (in, add) units, replay interfaces are the unit outputs
     full = cost(compiled, VerificationPolicy(1, 1))
     nothing = cost(compiled, VerificationPolicy(0, 0))
 
     assert full.boundary == 5 + 5  # the input gates plus every replay unit's Out
-    assert full.recompute == 5 * 1  # replaying an ``in`` gate is free; the add costs one
+    assert (
+        full.recompute == 5 * 1
+    )  # replaying an ``in`` gate is free; the add costs one
     assert full.commit_interior == 0  # every gate is an input or an output: no interior
     assert full.replay == full.recompute + full.commit_interior
     assert full.proof == 5 * 2  # both gates of a unit are proved
-    assert full.total == 25 and full.weights == 0  # no weight gates: nothing to commit per epoch
-    assert nothing == ExpectedCost(Fraction(10), Fraction(0), Fraction(0), Fraction(0), Fraction(0))
-    assert cost(compiled, VerificationPolicy(Fraction(1, 2), Fraction(1, 2))).total == 10 + Fraction(5, 2) + Fraction(10, 4)
+    assert (
+        full.total == 25 and full.weights == 0
+    )  # no weight gates: nothing to commit per epoch
+    assert nothing == ExpectedCost(
+        Fraction(10), Fraction(0), Fraction(0), Fraction(0), Fraction(0)
+    )
+    assert cost(
+        compiled, VerificationPolicy(Fraction(1, 2), Fraction(1, 2))
+    ).total == 10 + Fraction(5, 2) + Fraction(10, 4)
 
 
 def test_the_weight_commitment_is_priced_per_epoch_not_per_request():
@@ -208,10 +268,13 @@ def test_the_weight_commitment_is_priced_per_epoch_not_per_request():
     # their gates are pinned) and each row's dots
     assert full.boundary == 2 * (9 + 0 + 0 + 6)
     assert full.weights == 2 * 6
-    assert full.total == full.boundary + full.replay + full.proof  # ``weights`` is not in the total
+    assert (
+        full.total == full.boundary + full.replay + full.proof
+    )  # ``weights`` is not in the total
     # replaying the source units costs nothing: pinned gates are not in an interior
     assert full.replay == sum(
-        compiled.circuit.Cost(index.replay_units.unit(r), "replay") + 2 * index.interior(r).count
+        compiled.circuit.Cost(index.replay_units.unit(r), "replay")
+        + 2 * index.interior(r).count
         for r in range(index.replay_units.count)
     )
     assert index.interior(0).count == index.interior(1).count == 0
@@ -223,32 +286,57 @@ def test_the_fold_agrees_on_the_artifact_and_its_table(make_paper_example):
         assert cost(compiled, policy) == cost(compiled.kind_table(), policy)
 
 
-def test_the_proving_factor_scales_the_proofs_and_nothing_else(make_compiled, make_paper_example):
+def test_the_proving_factor_scales_the_proofs_and_nothing_else(
+    make_compiled, make_paper_example
+):
     """``alpha`` multiplies ``Cost_proof`` of every sampled VU; ``c_0``, the replay and the boundary are untouched."""
 
     policy = VerificationPolicy(Fraction(1, 3), Fraction(1, 5))
-    for compiled in (make_compiled((3, 2)), make_paper_example(2, True), compile_matmul().compiled):
+    for compiled in (
+        make_compiled((3, 2)),
+        make_paper_example(2, True),
+        compile_matmul().compiled,
+    ):
         table = compiled.kind_table()
         plain = cost(table, policy, CostParameters(2, 1))
-        assert cost(table, policy, CostParameters(2, 1, 1)) == plain  # the default is one native execution
+        assert (
+            cost(table, policy, CostParameters(2, 1, 1)) == plain
+        )  # the default is one native execution
         scaled = cost(table, policy, CostParameters(2, 1, Fraction(7, 2)))
-        assert (scaled.boundary, scaled.recompute, scaled.commit_interior, scaled.weights) == (
+        assert (
+            scaled.boundary,
+            scaled.recompute,
+            scaled.commit_interior,
+            scaled.weights,
+        ) == (
             plain.boundary,
             plain.recompute,
             plain.commit_interior,
             plain.weights,
         )
-        proofs = policy.q * policy.s * sum(row.copies * row.proof_cost for row in table.rows if row.role == VERIFICATION)
+        proofs = (
+            policy.q
+            * policy.s
+            * sum(
+                row.copies * row.proof_cost
+                for row in table.rows
+                if row.role == VERIFICATION
+            )
+        )
         assert scaled.proof - plain.proof == Fraction(5, 2) * proofs
         assert scaled.proof == Fraction(7, 2) * proofs + policy.q * policy.s * sum(
             row.copies for row in table.rows if row.role == VERIFICATION
         )
         # zero prices the proofs at their fixed overhead alone; the explicit sum agrees at every alpha
-        assert cost(table, policy, CostParameters(2, 1, 0)).proof == plain.proof - proofs
+        assert (
+            cost(table, policy, CostParameters(2, 1, 0)).proof == plain.proof - proofs
+        )
         if all_closed(compiled):
             for alpha in (0, Fraction(7, 2), 100):
                 parameters = CostParameters(2, 1, alpha)
-                assert cost(compiled, policy, parameters) == explicit_cost(compiled, policy, parameters)
+                assert cost(compiled, policy, parameters) == explicit_cost(
+                    compiled, policy, parameters
+                )
 
 
 def test_survival_is_exact_then_certain_then_a_float():
@@ -262,12 +350,17 @@ def test_survival_is_exact_then_certain_then_a_float():
     assert survival(q, 341) == Fraction(2047, 2048) ** 341  # 341 * 12 bits
     # certain: q m > CERTAIN_MASS, the survival is 0 exactly
     assert survival(q, 10**10) == 0 and survival(Fraction(1, 3), 2049) == 0
-    assert q * (CERTAIN_MASS * 2048 + 1) > CERTAIN_MASS and survival(q, CERTAIN_MASS * 2048 + 1) == 0
+    assert (
+        q * (CERTAIN_MASS * 2048 + 1) > CERTAIN_MASS
+        and survival(q, CERTAIN_MASS * 2048 + 1) == 0
+    )
     # float: too big for exact arithmetic, too likely to round to 0
     m = 1000
     approximate = survival(q, m)
     exact = Fraction(2047, 2048) ** m
-    assert approximate.denominator.bit_length() <= 1075 < exact.denominator.bit_length()  # a binary float
+    assert (
+        approximate.denominator.bit_length() <= 1075 < exact.denominator.bit_length()
+    )  # a binary float
     assert abs(float(approximate - exact)) < 1e-12
     assert float(approximate) == pytest.approx(math.exp(m * math.log1p(-1 / 2048)))
     with pytest.raises(ValueError, match="nonnegative"):

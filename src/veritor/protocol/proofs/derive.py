@@ -128,7 +128,9 @@ def kind_program(node: IndexNode) -> KindProgram:
     )
 
 
-DECLARED_KIND = raw_digest("veritor/protocol/proofs/declared/v2", {"gates": 0, "outputs": 0})
+DECLARED_KIND = raw_digest(
+    "veritor/protocol/proofs/declared/v2", {"gates": 0, "outputs": 0}
+)
 """The kind digest of a declared VU's obligation: a program of no gates, ports or outputs."""
 
 DECLARED_PROGRAM = KindProgram(DECLARED_KIND, 0, (), (), ())
@@ -230,7 +232,9 @@ def derive_obligation(
             f"VU {unit} touches address {error.args[0]} outside its openings"
         ) from None
     if not declared and len(set(inputs) | set(outputs)) != len(positions):
-        raise ProtocolError(f"VU {unit} would open a position its relation does not touch")
+        raise ProtocolError(
+            f"VU {unit} would open a position its relation does not touch"
+        )
     replay_unit = node.replay_unit
     if replay_unit is None:
         raise ProtocolError(f"VU {unit} lies in no replay unit")

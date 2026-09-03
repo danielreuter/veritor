@@ -199,7 +199,9 @@ def extended_gcd(a: int, b: int) -> tuple[int, int, int]:
     return a, x0, y0
 
 
-def progression_meet(start: int, count: int, stride: int, run: Run) -> tuple[int, int, int] | None:
+def progression_meet(
+    start: int, count: int, stride: int, run: Run
+) -> tuple[int, int, int] | None:
     """The indices ``e < count`` with ``start + e * stride`` in ``run``, as ``(first, count, step)``.
 
     ``start + e * stride == run.start + m * run.stride`` with ``0 <= e < count``
@@ -329,7 +331,10 @@ class Definition:
         set_(self, "step_address", prefix_sums([step.size for step in steps]))
         set_(self, "step_slot", prefix_sums([step.slots for step in steps]))
         set_(self, "output_starts", prefix_sums([item.count for item in self.outputs]))
-        for source, name in ((INPUT_SOURCE, "step_input"), (WEIGHT_SOURCE, "step_weight")):
+        for source, name in (
+            (INPUT_SOURCE, "step_input"),
+            (WEIGHT_SOURCE, "step_weight"),
+        ):
             set_(self, name, prefix_sums([step.source_total(source) for step in steps]))
         calls = [step for step in steps if isinstance(step, CallStep)]
         set_(self, "depth", 1 + max((c.child.depth for c in calls), default=-1))
@@ -570,7 +575,9 @@ class Definition:
     def check_pieces(self, check: Check) -> tuple[tuple[PieceKind, Run], ...]:
         """The pieces the output ordinals of ``check`` resolve to (see :attr:`resolved_outputs`)."""
 
-        return tuple(_merge(_declared_pieces(self, check.start, check.count, check.stride)))
+        return tuple(
+            _merge(_declared_pieces(self, check.start, check.count, check.stride))
+        )
 
     @cached_property
     def checked_bits(self) -> int:
@@ -618,7 +625,9 @@ class Definition:
         when the runs do not interleave.
         """
 
-        offsets = sorted({run.element(k) for run in self.out_runs for k in range(run.count)})
+        offsets = sorted(
+            {run.element(k) for run in self.out_runs for k in range(run.count)}
+        )
         if len(offsets) != self.out_count:
             raise InvalidArtifact(f"the output runs of {self.digest[:12]} overlap")
         return tuple(offsets)
@@ -769,12 +778,17 @@ def _weave(runs: tuple[Run, ...]) -> tuple[Run, ...]:
     while index < len(runs):
         run = runs[index]
         pitch = runs[index + 1].start - run.start if index + 1 < len(runs) else 0
-        needed = run.stride // pitch if run.count > 1 and pitch > 0 and run.stride % pitch == 0 else 0
+        needed = (
+            run.stride // pitch
+            if run.count > 1 and pitch > 0 and run.stride % pitch == 0
+            else 0
+        )
         if needed >= 2 and index + needed <= len(runs):
             group = runs[index : index + needed]
             if all(
                 other.start == run.start + t * pitch
-                and (other.count, other.stride, other.width) == (run.count, run.stride, run.width)
+                and (other.count, other.stride, other.width)
+                == (run.count, run.stride, run.width)
                 for t, other in enumerate(group)
             ):
                 woven.append(Run(run.start, needed * run.count, pitch, run.width))
@@ -801,7 +815,9 @@ def _source_runs(definition: Definition, source: str) -> Iterator[Run]:
             continue
         child = step.child
         for run in child.source_runs(source):
-            grid = _grid(base + run.start, step.count, child.size, run.count, run.stride)
+            grid = _grid(
+                base + run.start, step.count, child.size, run.count, run.stride
+            )
             for start, count, stride in grid:
                 yield Run(start, count, stride, run.width)
 
@@ -918,7 +934,12 @@ def _output_pieces(
 
 
 def _call_pieces(
-    definition: Definition, step: CallStep, base: int, slot: int, count: int, stride: int
+    definition: Definition,
+    step: CallStep,
+    base: int,
+    slot: int,
+    count: int,
+    stride: int,
 ) -> Iterator[_Piece]:
     """Pieces for slots ``slot + k * stride`` (``k < count``) of a call or repeat step.
 
@@ -960,7 +981,15 @@ def _call_pieces(
             yield from _lift(definition, step, base, head, copy, 1, 0)
         if last_whole >= first_whole:
             whole = child.resolved_outputs
-            yield from _lift(definition, step, base, whole, first_whole, last_whole - first_whole + 1, 1)
+            yield from _lift(
+                definition,
+                step,
+                base,
+                whole,
+                first_whole,
+                last_whole - first_whole + 1,
+                1,
+            )
         if last_ordinal != outputs - 1:
             tail = _output_pieces(child, 0, last_ordinal + 1, 1)
             yield from _lift(definition, step, base, tail, last_copy, 1, 0)
@@ -984,7 +1013,9 @@ def _call_pieces(
         copy, ordinal = divmod(slot + residue * stride, outputs)
         copies = (count - residue + period - 1) // period
         pieces = _output_pieces(child, ordinal, 1, 0)
-        yield from _lift(definition, step, base, pieces, copy, copies, stride // divisor)
+        yield from _lift(
+            definition, step, base, pieces, copy, copies, stride // divisor
+        )
 
 
 def _lift(
@@ -1007,16 +1038,24 @@ def _lift(
     for kind, run in pieces:
         if kind is not PieceKind.PORT:
             origin = base + copy * child.size + run.start
-            grid = _grid(origin, copies, copy_stride * child.size, run.count, run.stride)
+            grid = _grid(
+                origin, copies, copy_stride * child.size, run.count, run.stride
+            )
             for start, count, stride in grid:
                 yield kind, Run(start, count, stride, run.width)
             continue
-        for index, first, taken in _split(step.arg_starts, run.start, run.count, run.stride):
+        for index, first, taken in _split(
+            step.arg_starts, run.start, run.count, run.stride
+        ):
             item = step.args[index]
             element = run.start + first * run.stride - step.arg_starts[index]
             origin = item.element(element, copy)
             grid = _grid(
-                origin, copies, copy_stride * item.jstride, taken, run.stride * item.stride
+                origin,
+                copies,
+                copy_stride * item.jstride,
+                taken,
+                run.stride * item.stride,
             )
             for start, count, stride in grid:
                 if item.space == INPUT:

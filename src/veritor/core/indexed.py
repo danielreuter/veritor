@@ -344,10 +344,14 @@ class IntervalDifferenceDomain:
         runs = tuple(tuple(run) for run in excluded)
         for run in runs:
             if len(run) != 3 or any(type(value) is not int for value in run):
-                raise InvalidArtifact("excluded runs must be (start, count, stride) integers")
+                raise InvalidArtifact(
+                    "excluded runs must be (start, count, stride) integers"
+                )
             first, count, stride = run
             if count < 1 or stride < 0 or (stride == 0) != (count == 1):
-                raise InvalidArtifact("an excluded run has a positive stride unless it is one member")
+                raise InvalidArtifact(
+                    "an excluded run has a positive stride unless it is one member"
+                )
             if not start <= first < stop or first + (count - 1) * stride >= stop:
                 raise InvalidArtifact("excluded members must lie inside the interval")
         object.__setattr__(self, "start", start)
@@ -373,7 +377,9 @@ class IntervalDifferenceDomain:
         total = 0
         for first, count, stride in self.excluded:
             if item > first:
-                total += 1 if stride == 0 else min(count, (item - 1 - first) // stride + 1)
+                total += (
+                    1 if stride == 0 else min(count, (item - 1 - first) // stride + 1)
+                )
         return total
 
     def _is_excluded(self, item: int) -> bool:

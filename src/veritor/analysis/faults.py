@@ -146,9 +146,13 @@ def declared_bits(
     units, widest = _units(table)
     if widest < 0 or units == 0:
         return base_bits  # nothing can be declared
-    candidates = [bound(table, policy, eta / (1 + units) ** max_faults, options).bits + allowance]
+    candidates = [
+        bound(table, policy, eta / (1 + units) ** max_faults, options).bits + allowance
+    ]
     if policy.s < 1:
-        candidates.append(bound(table, policy, eta * (1 - policy.s) ** max_faults, options).bits)
+        candidates.append(
+            bound(table, policy, eta * (1 - policy.s) ** max_faults, options).bits
+        )
     if policy.q == 1:
         candidates.append(base_bits + allowance)
     return min(candidates)

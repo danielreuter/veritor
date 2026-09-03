@@ -68,7 +68,9 @@ def test_gate_call_and_passthrough_outputs(helpers):
     assert (t.input_count, t.size, t.slot_count, t.output_count) == (2, 3, 4, 4)
     assert t.depth == 1 and t.replay_cost == 4 and t.proof_cost == 4
     assert (r.input_count, r.size, r.slot_count, r.output_count) == (0, 5, 6, 4)
-    assert r.depth == 2 and r.replay_cost == 4 and r.proof_cost == 4 + 2  # `in` gates: 0 and 1
+    assert (
+        r.depth == 2 and r.replay_cost == 4 and r.proof_cost == 4 + 2
+    )  # `in` gates: 0 and 1
     assert (r.input_total, r.weight_total) == (2, 0)
     frame = assert_matches_expansion(h, r)
     # gate addresses: 2 = mul(1, 1), 3 = add(0, 2), 4 = add(3, 1)
@@ -125,7 +127,9 @@ def test_repeat_shifts_arguments_per_copy_and_descends_by_division(helpers):
     assert frame.gate(13)[1] == (10, 11)
     assert frame.gate(14)[1] == (12, 13)
     x, w = (1, 2, 3, 4), (5, 6, 7, 8)
-    assert h.evaluate(description.root, x + w) == (sum(a * b for a, b in zip(x, w)) & 255,)
+    assert h.evaluate(description.root, x + w) == (
+        sum(a * b for a, b in zip(x, w)) & 255,
+    )
     located, step = frame.locate(11)
     assert located.j == 3 and located.depth == 2 and located.interval == range(11, 12)
     assert isinstance(step, GateStep) and step.gate.name == "mul"
@@ -219,7 +223,9 @@ def test_source_gates_are_pinned_pieces_with_prefix_summed_ranks(helpers):
     weight_cell = h.source_cell(doc, "weight")
     in_cell = h.source_cell(doc, "in")
     weights = doc.add(
-        h.body(0, [h.repeat(10**9, weight_cell)], [h.rng(LOC, 0, 10**9, 1)], role="replay")
+        h.body(
+            0, [h.repeat(10**9, weight_cell)], [h.rng(LOC, 0, 10**9, 1)], role="replay"
+        )
     )
     unit = doc.add(
         h.body(
@@ -246,11 +252,19 @@ def test_source_gates_are_pinned_pieces_with_prefix_summed_ranks(helpers):
     r = description.root
     w, u = r.steps[0].child, r.steps[1].child
 
-    assert (weight_cell_def := w.steps[0].child).size == 1 and weight_cell_def.weight_total == 1
+    assert (
+        weight_cell_def := w.steps[0].child
+    ).size == 1 and weight_cell_def.weight_total == 1
     assert weight_cell_def.resolved_outputs == ((PieceKind.PINNED, Run(0, 1, 0, 8)),)
-    assert weight_cell_def.out_runs == () and weight_cell_def.weight_runs == (Run(0, 1, 0, 8),)
+    assert weight_cell_def.out_runs == () and weight_cell_def.weight_runs == (
+        Run(0, 1, 0, 8),
+    )
     assert w.size == w.weight_total == 10**9 and w.input_total == 0
-    assert w.weight_runs == (Run(0, 10**9, 1, 8),) and w.out_runs == () and w.out_count == 0
+    assert (
+        w.weight_runs == (Run(0, 10**9, 1, 8),)
+        and w.out_runs == ()
+        and w.out_count == 0
+    )
     assert w.resolved_outputs == ((PieceKind.PINNED, Run(0, 10**9, 1, 8)),)
     assert (u.size, u.input_total, u.weight_total) == (5, 2, 1)
     assert u.step_input == (0, 1, 1, 2, 2, 2) and u.step_weight == (0, 0, 0, 0, 1, 1)
@@ -278,7 +292,9 @@ def test_source_gates_are_pinned_pieces_with_prefix_summed_ranks(helpers):
         if kind is PieceKind.PINNED
         for k in range(run.count)
     }
-    assert pinned == {1, 3, 5} | {10**9 + 5 * j + o for j in range(3) for o in (0, 2, 3)}
+    assert pinned == {1, 3, 5} | {
+        10**9 + 5 * j + o for j in range(3) for o in (0, 2, 3)
+    }
 
     frame = Frame.root(r)
     for rank in range(6):
@@ -286,7 +302,10 @@ def test_source_gates_are_pinned_pieces_with_prefix_summed_ranks(helpers):
         assert address == 10**9 + 5 * (rank // 2) + 2 * (rank % 2)
         assert frame.source_rank("input", address) == rank
         assert frame.source_rank("weight", address) is None
-    assert frame.source_address("weight", 0) == 0 and frame.source_address("weight", 10**9 - 1) == 10**9 - 1
+    assert (
+        frame.source_address("weight", 0) == 0
+        and frame.source_address("weight", 10**9 - 1) == 10**9 - 1
+    )
     assert frame.source_address("weight", 10**9 + 2) == 10**9 + 13
     assert frame.source_rank("weight", 10**9 + 8) == 10**9 + 1
     assert frame.source_rank("weight", 10**9 + 1) is None
@@ -297,19 +316,29 @@ def test_root_ports_and_repeated_source_gates_are_rejected(helpers):
     h = helpers
     doc = h.Document()
     add = doc.add(h.body(2, [h.gate("add", h.rng(IN, 0, 2, 1))], [h.rng(LOC, 0)]))
-    with pytest.raises(CompileError, match="the root has no ports; inputs are `in` gates"):
+    with pytest.raises(
+        CompileError, match="the root has no ports; inputs are `in` gates"
+    ):
         parse(doc.serialize(add))
     wrapped = h.wrap(doc, add, 2, 1)
     assert parse(doc.serialize(wrapped)).root.input_count == 0
 
     doc = h.Document()
-    twice = doc.add(h.body(0, [h.gate("in")], [h.rng(LOC, 0), h.rng(LOC, 0)], role="verification"))
-    with pytest.raises(CompileError, match="the gate at offset 0 as an output more than once"):
+    twice = doc.add(
+        h.body(0, [h.gate("in")], [h.rng(LOC, 0), h.rng(LOC, 0)], role="verification")
+    )
+    with pytest.raises(
+        CompileError, match="the gate at offset 0 as an output more than once"
+    ):
         parse(doc.serialize(twice))
     doc = h.Document()
     cell = h.source_cell(doc, "weight")
-    block = doc.add(h.body(0, [h.repeat(4, cell)], [h.rng(LOC, 0, 4, 1), h.rng(LOC, 2)]))
-    with pytest.raises(CompileError, match="the gate at offset 2 as an output more than once"):
+    block = doc.add(
+        h.body(0, [h.repeat(4, cell)], [h.rng(LOC, 0, 4, 1), h.rng(LOC, 2)])
+    )
+    with pytest.raises(
+        CompileError, match="the gate at offset 2 as an output more than once"
+    ):
         parse(doc.serialize(block))
 
 
@@ -320,19 +349,35 @@ def test_source_gate_runs_are_bounded_per_definition(helpers):
     doc = h.Document()
     cell = h.source_cell(doc, "weight")
     # a weight beside an add: two gates per copy, so `repeat n` of it is one run of stride 2 ...
-    pair = doc.add(h.body(1, [h.call(cell), h.gate("add", h.rng(IN, 0, 2, 0))], [h.rng(LOC, 0, 2, 1)]))
-    block = doc.add(h.body(1, [h.repeat(1000, pair, h.jrng(IN, 0))], [h.rng(LOC, 0, 2000, 1)]))
+    pair = doc.add(
+        h.body(
+            1, [h.call(cell), h.gate("add", h.rng(IN, 0, 2, 0))], [h.rng(LOC, 0, 2, 1)]
+        )
+    )
+    block = doc.add(
+        h.body(1, [h.repeat(1000, pair, h.jrng(IN, 0))], [h.rng(LOC, 0, 2000, 1)])
+    )
     parsed = parse(doc.serialize(h.wrap(doc, block, 1, 2000)))
-    assert next(d for d in parsed.definitions if d.digest == block).weight_runs == (Run(0, 1000, 2, 8),)
+    assert next(d for d in parsed.definitions if d.digest == block).weight_runs == (
+        Run(0, 1000, 2, 8),
+    )
     # ... while 300 copies of a 300-weight block with 301 gates make 300 interleaved runs
     doc = h.Document()
     cell = h.source_cell(doc, "weight")
     inner = doc.add(
-        h.body(1, [h.repeat(300, cell), h.gate("add", h.rng(IN, 0, 2, 0))], [h.rng(LOC, 300)])
+        h.body(
+            1,
+            [h.repeat(300, cell), h.gate("add", h.rng(IN, 0, 2, 0))],
+            [h.rng(LOC, 300)],
+        )
     )
-    outer = doc.add(h.body(1, [h.repeat(300, inner, h.jrng(IN, 0))], [h.rng(LOC, 0, 300, 1)]))
+    outer = doc.add(
+        h.body(1, [h.repeat(300, inner, h.jrng(IN, 0))], [h.rng(LOC, 0, 300, 1)])
+    )
     payload = doc.serialize(h.wrap(doc, outer, 1, 300))
-    with pytest.raises(CompileError, match="weight gates in more than max_output_runs = 256 runs"):
+    with pytest.raises(
+        CompileError, match="weight gates in more than max_output_runs = 256 runs"
+    ):
         parse(payload)
     relaxed = parse(payload, CompilationLimits(max_output_runs=300))
     outer_definition = next(d for d in relaxed.definitions if d.digest == outer)

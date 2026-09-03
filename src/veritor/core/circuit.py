@@ -132,7 +132,9 @@ class Circuit(Protocol):
 
     def decode(self, address: int, payload: bytes) -> int: ...
 
-    def evaluate(self, inputs: Sequence[int], weights: Sequence[int] = ()) -> tuple[int, ...]: ...
+    def evaluate(
+        self, inputs: Sequence[int], weights: Sequence[int] = ()
+    ) -> tuple[int, ...]: ...
 
 
 class _Semantics:
@@ -210,7 +212,9 @@ class FlatCircuit(_Semantics):
                 raise InvalidArtifact(f"address {address} uses unknown gate {ref.op!r}")
             gate = gate_set[ref.op]
             if ref.source is not None and ref.source != gate.source:
-                raise InvalidArtifact(f"address {address} misstates the source of {ref.op!r}")
+                raise InvalidArtifact(
+                    f"address {address} misstates the source of {ref.op!r}"
+                )
             if len(ref.args) != gate.arity:
                 raise InvalidArtifact(f"address {address} has the wrong arity")
             if any(not 0 <= arg < address for arg in ref.args):
@@ -224,7 +228,9 @@ class FlatCircuit(_Semantics):
         self._weights = tuple(i for i, ref in enumerate(self._gates) if ref.is_weight)
         self._ranks = {
             INPUT_SOURCE: {address: rank for rank, address in enumerate(self._inputs)},
-            WEIGHT_SOURCE: {address: rank for rank, address in enumerate(self._weights)},
+            WEIGHT_SOURCE: {
+                address: rank for rank, address in enumerate(self._weights)
+            },
         }
         self.gate_set = gate_set
 
@@ -294,10 +300,14 @@ class FlatCircuit(_Semantics):
     def Cost(self, subset: object, kind: CostKind = "replay") -> int:
         return sum(self._cost(self._gates[a], kind) for a in _interval(subset))
 
-    def evaluate(self, inputs: Sequence[int], weights: Sequence[int] = ()) -> tuple[int, ...]:
+    def evaluate(
+        self, inputs: Sequence[int], weights: Sequence[int] = ()
+    ) -> tuple[int, ...]:
         given = {
             INPUT_SOURCE: iter(_checked_sources(inputs, self.input_count, "inputs")),
-            WEIGHT_SOURCE: iter(_checked_sources(weights, self.weight_count, "weights")),
+            WEIGHT_SOURCE: iter(
+                _checked_sources(weights, self.weight_count, "weights")
+            ),
         }
         values: list[int] = []
         for ref in self._gates:
@@ -393,7 +403,8 @@ class DescriptionCircuit(_Semantics):
     def weights(self) -> Sequence[int]:
         frame = self.frame
         return _LazyAddresses(
-            self.root.weight_total, lambda rank: frame.source_address(WEIGHT_SOURCE, rank)
+            self.root.weight_total,
+            lambda rank: frame.source_address(WEIGHT_SOURCE, rank),
         )
 
     @property
@@ -426,9 +437,7 @@ class DescriptionCircuit(_Semantics):
 
     def In(self, subset: object) -> tuple[int, ...]:
         frame = _frame(subset)
-        return tuple(
-            sorted({frame.input_address(i) for i in frame.definition.reads})
-        )
+        return tuple(sorted({frame.input_address(i) for i in frame.definition.reads}))
 
     def Out(self, subset: object) -> Sequence[int]:
         frame = _frame(subset)
@@ -448,10 +457,14 @@ class DescriptionCircuit(_Semantics):
             return definition.proof_cost
         raise ValueError(f"unknown cost kind {kind!r}")
 
-    def evaluate(self, inputs: Sequence[int], weights: Sequence[int] = ()) -> tuple[int, ...]:
+    def evaluate(
+        self, inputs: Sequence[int], weights: Sequence[int] = ()
+    ) -> tuple[int, ...]:
         given = {
             INPUT_SOURCE: iter(_checked_sources(inputs, self.input_count, "inputs")),
-            WEIGHT_SOURCE: iter(_checked_sources(weights, self.weight_count, "weights")),
+            WEIGHT_SOURCE: iter(
+                _checked_sources(weights, self.weight_count, "weights")
+            ),
         }
         values: list[int] = []
         for address in range(self.n):
@@ -461,4 +474,3 @@ class DescriptionCircuit(_Semantics):
             else:
                 values.append(gate.evaluate(tuple(values[a] for a in args)))
         return tuple(values)
-

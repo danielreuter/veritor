@@ -108,7 +108,9 @@ def record(*rows: Row, path: Path = DATA) -> dict[str, dict[str, Any]]:
     lines = ["{"]
     for position, identifier in enumerate(ordered):
         body_text = json.dumps(stored[identifier], sort_keys=True, ensure_ascii=False)
-        lines.append(f' "{identifier}": {body_text}{"," if position + 1 < len(ordered) else ""}')
+        lines.append(
+            f' "{identifier}": {body_text}{"," if position + 1 < len(ordered) else ""}'
+        )
     lines.append("}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -151,7 +153,12 @@ class Priced:
     def capacity(self, max_faults: int = 0) -> int:
         """``Bound + |a|`` at the row's policy and ``eta = 2^-40``, in whole bits."""
 
-        return math.ceil(bound(self.compiled, self.policy, ETA, max_faults=max_faults).bits) + self.advice_bits
+        return (
+            math.ceil(
+                bound(self.compiled, self.policy, ETA, max_faults=max_faults).bits
+            )
+            + self.advice_bits
+        )
 
     def run(
         self,
@@ -176,7 +183,10 @@ class Priced:
             self.policy if policy is None else policy,
             tuple(outputs),
             parameters=VerifierParameters(
-                ETA, max_capacity=1 << 20, max_advice_bits=self.advice_bits, max_faults=max_faults
+                ETA,
+                max_capacity=1 << 20,
+                max_advice_bits=self.advice_bits,
+                max_faults=max_faults,
             ),
             weights=self.kappa,
             session_id=seed[:16],
@@ -211,7 +221,9 @@ def price(
     limits: Any = None,
 ) -> Priced:
     gate_set = make_isa_gate_set(shape.width)
-    compilation = Compile(constructor, x, advice, gate_set, limits=limits, max_advice_bits=8 * len(advice))
+    compilation = Compile(
+        constructor, x, advice, gate_set, limits=limits, max_advice_bits=8 * len(advice)
+    )
     circuit = compilation.compiled.circuit
     values = dict(enumerate(circuit.evaluate(compilation.inputs, weights)))
     kappa, tree = commit_weights(gate_set, weights)
@@ -237,7 +249,10 @@ def rejected_at(run: ProtocolRun, unit: int) -> bool:
 
 
 def served_with(
-    priced: Priced, *, inputs: Sequence[int] | None = None, weights: Sequence[int] | None = None
+    priced: Priced,
+    *,
+    inputs: Sequence[int] | None = None,
+    weights: Sequence[int] | None = None,
 ) -> dict[int, int]:
     """The assignment of a server that computed with other inputs or weights than the statement's.
 
@@ -284,7 +299,9 @@ def small() -> Small:
     parameters = random_parameters(shape, config.parameters_seed)
     simulation = simulate(config.workload, shape, parameters)
     advice = simulation.schedule.encode()
-    constructor = ClusterG(shape, config.workload.pods, config.workload.slots, config.workload.steps)
+    constructor = ClusterG(
+        shape, config.workload.pods, config.workload.slots, config.workload.steps
+    )
     priced = price(
         constructor,
         simulation.requests,
@@ -323,7 +340,9 @@ def owning_unit(compiled: Compiled, address: int) -> int:
 def dot_candidates(compiled: Compiled, units: Sequence[int]) -> list[int]:
     """The dot product VUs among ``units``, in order."""
 
-    return [u for u in units if is_dot_unit(compiled, compiled.index.verification_unit(u))]
+    return [
+        u for u in units if is_dot_unit(compiled, compiled.index.verification_unit(u))
+    ]
 
 
 def units_of(compiled: Compiled, replay_unit: int) -> range:
@@ -354,7 +373,9 @@ def logit_dots(compiled: Compiled) -> list[int]:
 def device_hours_note(small: Small) -> tuple[int, str]:
     """``f_max`` from the brief's SDC rate and the run's device-hours, with the arithmetic."""
 
-    step_seconds = 0.05  # one decode step of a production server, an assumption stated in the row
+    step_seconds = (
+        0.05  # one decode step of a production server, an assumption stated in the row
+    )
     run_hours = small.pods * small.steps * step_seconds / 3600
     run_mean = expected_faults(run_hours)
     f_run = fault_budget(run_mean)
@@ -374,7 +395,9 @@ def device_hours_note(small: Small) -> tuple[int, str]:
 # -- N4: silent data corruption in a sampled VU ----------------------------------------
 
 
-def test_n4_silent_corruption_rejected_without_declaration_accepted_with(small: Small) -> None:
+def test_n4_silent_corruption_rejected_without_declaration_accepted_with(
+    small: Small,
+) -> None:
     priced = small.priced
     f_max, arithmetic = device_hours_note(small)
     assert f_max == 1
@@ -384,31 +407,44 @@ def test_n4_silent_corruption_rejected_without_declaration_accepted_with(small: 
     honest = {f: priced.run(max_faults=f, label=f"n4/{f}") for f in (0, f_max)}
     assert all(run.report.accepted for run in honest.values())
     opened = sorted(
-        set(honest[0].report.sampled_replay_units) & set(honest[f_max].report.sampled_replay_units)
+        set(honest[0].report.sampled_replay_units)
+        & set(honest[f_max].report.sampled_replay_units)
     )
     assert opened, "some RU is opened under both headers"
     candidates = [
-        unit for replay_unit in opened for unit in dot_candidates(priced.compiled, units_of(priced.compiled, replay_unit))
+        unit
+        for replay_unit in opened
+        for unit in dot_candidates(
+            priced.compiled, units_of(priced.compiled, replay_unit)
+        )
     ][::7]  # every seventh, to spread the attempts over the opened RUs
     escaped = 0
     for fault in faults(small, candidates, bit=0):
         if fault.changed_outputs:
             continue  # the boundary changed with the tokens, so did J: not the run we are studying
-        assert self_check(priced.compiled, fault.replay_unit, fault.values) == (fault.verification_unit,)
+        assert self_check(priced.compiled, fault.replay_unit, fault.values) == (
+            fault.verification_unit,
+        )
         without = priced.run(fault.values, fault.outputs, max_faults=0, label="n4/0")
         if rejected_at(without, fault.verification_unit):
             break
-        assert without.report.accepted, without.report  # the s-challenge missed it: completeness 1 - s
+        assert without.report.accepted, (
+            without.report
+        )  # the s-challenge missed it: completeness 1 - s
         escaped += 1
     else:  # pragma: no cover - each attempt is sampled with probability s = 1/8
         pytest.fail("no candidate fault was sampled")
 
     # The same faulty run under a header that admits one declaration: the server declares it.
-    with_declaration = priced.run(fault.values, fault.outputs, max_faults=f_max, declare=True, label=f"n4/{f_max}")
+    with_declaration = priced.run(
+        fault.values, fault.outputs, max_faults=f_max, declare=True, label=f"n4/{f_max}"
+    )
     assert with_declaration.report.accepted, with_declaration.report
     assert with_declaration.transcript is not None
     assert fault.replay_unit in with_declaration.report.sampled_replay_units
-    assert with_declaration.transcript.interiors.declarations == (fault.verification_unit,)
+    assert with_declaration.transcript.interiors.declarations == (
+        fault.verification_unit,
+    )
     where = (
         "declared and sampled: openings authenticated, relation skipped"
         if fault.verification_unit in with_declaration.report.sampled_verification_units
@@ -418,7 +454,9 @@ def test_n4_silent_corruption_rejected_without_declaration_accepted_with(small: 
     second = next(unit for unit in candidates if unit != fault.verification_unit)
     second_address = priced.compiled.index.verification_unit(second).interval[-1]
     two = small.injector.propagate({fault.address: 1, second_address: 1})
-    declare_first: Declare = lambda unit, _values: (fault.verification_unit,) if unit == fault.replay_unit else ()
+    declare_first: Declare = lambda unit, _values: (
+        (fault.verification_unit,) if unit == fault.replay_unit else ()
+    )
     hidden = priced.run(
         two,
         tuple(two[a] for a in priced.compiled.circuit.outputs),
@@ -484,7 +522,9 @@ def test_n5_wrong_token_streamed_unopened_and_unsampled(small: Small) -> None:
     for fault in faults(small, candidates, bit=top_bit):
         if not fault.changed_outputs:
             continue  # a flipped top bit of a logit that did not move the token: not this scenario
-        run = priced.run(fault.values, fault.outputs, max_faults=f_max, declare=True, label="n5")
+        run = priced.run(
+            fault.values, fault.outputs, max_faults=f_max, declare=True, label="n5"
+        )
         assert run.report.accepted, run.report
         assert run.transcript is not None
         declared = run.transcript.interiors.declarations
@@ -492,7 +532,9 @@ def test_n5_wrong_token_streamed_unopened_and_unsampled(small: Small) -> None:
             assert declared == (), "nothing to declare: the faulty RU was not opened"
             unopened = unopened or (fault, run)
         elif fault.verification_unit not in run.report.sampled_verification_units:
-            assert declared == (fault.verification_unit,), "declared although the s-challenge missed it"
+            assert declared == (fault.verification_unit,), (
+                "declared although the s-challenge missed it"
+            )
             unsampled = unsampled or (fault, run)
         else:
             assert declared == (fault.verification_unit,)
@@ -502,7 +544,9 @@ def test_n5_wrong_token_streamed_unopened_and_unsampled(small: Small) -> None:
     fault_a, run_a = unopened
     fault_b, _run_b = unsampled
     # Without the mechanism the opened fault is a coin flip on the s-challenge; the unopened one is invisible.
-    assert priced.run(fault_a.values, fault_a.outputs, max_faults=0, label="n5").report.accepted
+    assert priced.run(
+        fault_a.values, fault_a.outputs, max_faults=0, label="n5"
+    ).report.accepted
     record(
         Row(
             id="N5",
@@ -536,7 +580,9 @@ def test_n5_wrong_token_streamed_unopened_and_unsampled(small: Small) -> None:
 # -- S7: client disconnect / abort ------------------------------------------------------
 
 
-def _requests(shape: LMShape, seed: int, count: int, max_new: int) -> tuple[Request, ...]:
+def _requests(
+    shape: LMShape, seed: int, count: int, max_new: int
+) -> tuple[Request, ...]:
     import random
 
     rng = random.Random(seed)
@@ -544,7 +590,9 @@ def _requests(shape: LMShape, seed: int, count: int, max_new: int) -> tuple[Requ
         Request(
             tuple(rng.randrange(shape.vocab) for _ in range(rng.randint(2, 4))),
             max_new,
-            tuple(rng.randrange(1 << shape.random_bits) for _ in range(max_new)) if shape.sampling else (),
+            tuple(rng.randrange(1 << shape.random_bits) for _ in range(max_new))
+            if shape.sampling
+            else (),
         )
         for _ in range(count)
     )
@@ -561,9 +609,13 @@ def test_s7_client_disconnect_length_as_advice() -> None:
     advice = constructor.advice(x, lengths)
     assert constructor.lengths(x, advice) == lengths
     assert constructor.advice_bits(x) == 6 * field_width(max_new) == 18
-    assert len(advice) == 3  # on the wire: padded to whole bytes, the padding checked zero
+    assert (
+        len(advice) == 3
+    )  # on the wire: padded to whole bytes, the padding checked zero
     truncated = price(constructor, x, advice, shape, weights)
-    assert truncated.advice_bits == 18  # charged: the 18 bits the constructor declares, not 24
+    assert (
+        truncated.advice_bits == 18
+    )  # charged: the 18 bits the constructor declares, not 24
     # The run streams exactly the prefixes of the full generations; every request keeps its max_new
     # output slots, the absent ones blank (the word vocab) and fixed by the root's checks.
     full_reference = reference_generate(shape, parameters, x)
@@ -575,11 +627,15 @@ def test_s7_client_disconnect_length_as_advice() -> None:
     )
     blanks = constructor.blank_positions(x, advice)
     assert len(blanks) == asked_for_total(x) - sum(lengths) == 23
-    assert list(truncated.compiled.check_values()) == [(position, blank) for position in blanks]
+    assert list(truncated.compiled.check_values()) == [
+        (position, blank) for position in blanks
+    ]
     assert truncated.run(label="s7").report.accepted
     # The steps are those of a run that asked for t tokens: the blanks add one add cell each, no kind
     # of the model's, and no capacity (a check output carries 0 bits), so U is that run's U.
-    asked = price(RequestsG(shape), constructor.truncated(x, advice), b"", shape, weights)
+    asked = price(
+        RequestsG(shape), constructor.truncated(x, advice), b"", shape, weights
+    )
     assert truncated.capacity() == asked.capacity() + 18
     assert truncated.compiled.circuit.n == asked.compiled.circuit.n + len(blanks)
     # A server that streams a token where the client saw none is caught at the check: the opened
@@ -588,11 +644,21 @@ def test_s7_client_disconnect_length_as_advice() -> None:
     slot = truncated.compiled.circuit.outputs[blanks[0]]
     values[slot] = 0
     outputs = tuple(values[a] for a in truncated.compiled.circuit.outputs)
-    assert truncated.run(values, outputs, label="s7").report.code is VerificationCode.CHECK_MISMATCH
-    assert truncated.run(values, label="s7").report.code is VerificationCode.CHECK_MISMATCH  # claimed blank, opened 0
+    assert (
+        truncated.run(values, outputs, label="s7").report.code
+        is VerificationCode.CHECK_MISMATCH
+    )
+    assert (
+        truncated.run(values, label="s7").report.code is VerificationCode.CHECK_MISMATCH
+    )  # claimed blank, opened 0
     # Advice that lies about a length names a different circuit; its outputs are not what was streamed.
     lying = constructor.advice(x, (8, 4, 5, 1, 6, 2))
-    assert Compile(constructor, x, lying, make_isa_gate_set(shape.width), max_advice_bits=24).compiled.digest != truncated.compiled.digest
+    assert (
+        Compile(
+            constructor, x, lying, make_isa_gate_set(shape.width), max_advice_bits=24
+        ).compiled.digest
+        != truncated.compiled.digest
+    )
     # The alternative: pad every request to max_new and let the verifier ignore the tail.
     padded = price(RequestsG(shape), x, b"", shape, weights)
     extra = float(padded.honest_cost / truncated.honest_cost) - 1
@@ -638,38 +704,74 @@ def asked_for_total(x: Sequence[Request]) -> int:
 # -- C5: nondeterministic sampling over published randomness -------------------------
 
 
-def test_c5_sampling_over_public_randomness_biased_token_is_caught(small: Small) -> None:
+def test_c5_sampling_over_public_randomness_biased_token_is_caught(
+    small: Small,
+) -> None:
     shape = small.shape
     weights = small.parameters.flatten()
-    requests = small.requests[:5]  # enough tokens to carry a secret, small enough to sample everything
+    requests = small.requests[
+        :5
+    ]  # enough tokens to carry a secret, small enough to sample everything
     sampling = price(RequestsG(shape), requests, b"", shape, weights)
-    argmax_shape = LMShape(shape.vocab, shape.d_model, shape.heads, shape.layers, shape.context, shape.width)
+    argmax_shape = LMShape(
+        shape.vocab,
+        shape.d_model,
+        shape.heads,
+        shape.layers,
+        shape.context,
+        shape.width,
+    )
     argmax_requests = tuple(Request(r.prompt, r.max_new) for r in requests)
-    argmax = price(RequestsG(argmax_shape), argmax_requests, b"", argmax_shape, random_parameters(argmax_shape, 0).flatten())
-    tokens = len(sampling.outputs)  # every request run to max_new (no EOS or run end here)
+    argmax = price(
+        RequestsG(argmax_shape),
+        argmax_requests,
+        b"",
+        argmax_shape,
+        random_parameters(argmax_shape, 0).flatten(),
+    )
+    tokens = len(
+        sampling.outputs
+    )  # every request run to max_new (no EOS or run end here)
     assert tokens == sum(request.max_new for request in requests)
     sample_size = len(
-        sampling.compiled.index.verification_unit(owning_unit(sampling.compiled, sampling.compiled.circuit.outputs[0])).interval
+        sampling.compiled.index.verification_unit(
+            owning_unit(sampling.compiled, sampling.compiled.circuit.outputs[0])
+        ).interval
     )
     argmax_size = len(
-        argmax.compiled.index.verification_unit(owning_unit(argmax.compiled, argmax.compiled.circuit.outputs[0])).interval
+        argmax.compiled.index.verification_unit(
+            owning_unit(argmax.compiled, argmax.compiled.circuit.outputs[0])
+        ).interval
     )
     # Per token: the head's extra gates plus the in gate of the random word; per run: the sampler's two constants.
     extra = sampling.compiled.circuit.n - argmax.compiled.circuit.n
-    assert extra == tokens * (sample_size - argmax_size + 1) + len(shape.sampler_constants)
+    assert extra == tokens * (sample_size - argmax_size + 1) + len(
+        shape.sampler_constants
+    )
     per_token = sample_size - argmax_size + 1
     assert sampling.run(label="c1").report.accepted
     # The adversary decides tokens instead of sampling them: one head VU per carrier disobeys.
     layout = RequestsG(shape).output_layout(requests)
     secret = adversary.random_secret(4 * shape.vocab_bits, "c1")
-    attack = adversary.plan_attack(sampling.compiled, sampling.compilation.inputs, weights, layout, secret, shape.vocab_bits)
+    attack = adversary.plan_attack(
+        sampling.compiled,
+        sampling.compilation.inputs,
+        weights,
+        layout,
+        secret,
+        shape.vocab_bits,
+    )
     assert attack.corrupted, "at least one carrier had to change"
     caught = sampling.run(attack.values, attack.outputs, policy=FULL, label="c1")
     assert caught.report.code is VerificationCode.RELATION_REJECTED
-    assert set(attack.verification_units) & set(caught.report.sampled_verification_units)
+    assert set(attack.verification_units) & set(
+        caught.report.sampled_verification_units
+    )
     predicted = adversary.predicted_survival(POLICY, attack)
     trials = 400
-    escaped = adversary.survival_trials(sampling.compiled, POLICY, attack, trials, label="c1")
+    escaped = adversary.survival_trials(
+        sampling.compiled, POLICY, attack, trials, label="c1"
+    )
     p = float(predicted)
     sigma = math.sqrt(p * (1 - p) / trials)
     assert abs(escaped / trials - p) <= 4 * sigma
@@ -711,16 +813,25 @@ def test_w1_hot_swap_two_versions_under_one_root() -> None:
     versions = (random_parameters(shape, 0), random_parameters(shape, 1))
     constructor = ModelsG(shape, 2, "input")
     requests = _requests(shape, 11, 6, 4)
-    x = tuple((i % 2, request) for i, request in enumerate(requests))  # the swap: odd requests on version 1
+    x = tuple(
+        (i % 2, request) for i, request in enumerate(requests)
+    )  # the swap: odd requests on version 1
     weights = constructor.flatten_weights(versions)
     priced = price(constructor, x, b"", shape, weights)
-    references = [reference_generate(shape, versions[model], (request,))[0] for model, request in x]
-    expected = tuple(references[r][g] for r, g in constructor.output_layout(x, b""))  # circuit order
+    references = [
+        reference_generate(shape, versions[model], (request,))[0]
+        for model, request in x
+    ]
+    expected = tuple(
+        references[r][g] for r, g in constructor.output_layout(x, b"")
+    )  # circuit order
     assert priced.outputs == expected
     assert priced.run(label="w1").report.accepted
     # A server that quietly served version 1 to every request (the swap it did not announce): its
     # interiors are computed from version 1's weights while the committed weights are the real ones.
-    served = served_with(priced, weights=constructor.flatten_weights((versions[1], versions[1])))
+    served = served_with(
+        priced, weights=constructor.flatten_weights((versions[1], versions[1]))
+    )
     outputs = tuple(served[a] for a in priced.compiled.circuit.outputs)
     assert outputs != priced.outputs
     swapped = priced.run(served, outputs, policy=FULL, label="w1")
@@ -763,21 +874,33 @@ def test_w2_per_request_adapter_as_boundary_inputs() -> None:
 
     def merged(seed: int) -> tuple[tuple[int, ...], ...]:
         rng = random.Random(seed)
-        a = [rng.randrange(1 << 4) for _ in range(d)]  # rank-1 LoRA: A is d x 1, B is 1 x hidden
+        a = [
+            rng.randrange(1 << 4) for _ in range(d)
+        ]  # rank-1 LoRA: A is d x 1, B is 1 x hidden
         b = [rng.randrange(1 << 4) for _ in range(hidden)]
         w1 = base.layers[0].w_1
-        return tuple(tuple((w1[i][j] + a[i] * b[j]) & mask for j in range(hidden)) for i in range(d))
+        return tuple(
+            tuple((w1[i][j] + a[i] * b[j]) & mask for j in range(hidden))
+            for i in range(d)
+        )
 
     tenants = (merged(1), merged(2), merged(3))
     requests = _requests(shape, 13, 6, 4)
-    x = tuple((tuple(v for row in tenants[i % 3] for v in row), request) for i, request in enumerate(requests))
+    x = tuple(
+        (tuple(v for row in tenants[i % 3] for v in row), request)
+        for i, request in enumerate(requests)
+    )
     weights = base.flatten()
     priced = price(constructor, x, b"", shape, weights)
     references = [
-        reference_generate(shape, constructor.merged(base, tenants[i % 3]), (request,))[0]
+        reference_generate(shape, constructor.merged(base, tenants[i % 3]), (request,))[
+            0
+        ]
         for i, request in enumerate(requests)
     ]
-    expected = tuple(references[r][g] for r, g in constructor.output_layout(x))  # circuit order
+    expected = tuple(
+        references[r][g] for r, g in constructor.output_layout(x)
+    )  # circuit order
     assert priced.outputs == expected
     assert priced.run(label="w2").report.accepted
     # A server that ignored the tenants' adapters and ran the base matrix: the boundary holds the
@@ -824,20 +947,33 @@ def test_w2_per_request_adapter_as_boundary_inputs() -> None:
 
 def test_w3_router_picks_a_model_public_or_advised() -> None:
     shape = small_config().shape
-    models = (random_parameters(shape, 0), random_parameters(shape, 1), random_parameters(shape, 2))
+    models = (
+        random_parameters(shape, 0),
+        random_parameters(shape, 1),
+        random_parameters(shape, 2),
+    )
     requests = _requests(shape, 17, 6, 4)
     choice = (0, 2, 1, 1, 0, 2)
     public = ModelsG(shape, 3, "input")
     advised = ModelsG(shape, 3, "advice")
     weights = public.flatten_weights(models)
-    by_input = price(public, tuple(zip(choice, requests, strict=True)), b"", shape, weights)
+    by_input = price(
+        public, tuple(zip(choice, requests, strict=True)), b"", shape, weights
+    )
     advice = advised.advice(requests, choice)
     by_advice = price(advised, requests, advice, shape, weights)
-    assert advised.advice_bits(requests) == 6 * field_width(3) == 12 and len(advice) == 2
-    assert by_advice.advice_bits == 12  # charged exactly; the 4 padding bits are checked zero
+    assert (
+        advised.advice_bits(requests) == 6 * field_width(3) == 12 and len(advice) == 2
+    )
+    assert (
+        by_advice.advice_bits == 12
+    )  # charged exactly; the 4 padding bits are checked zero
     assert by_input.compiled.digest == by_advice.compiled.digest
     assert by_input.outputs == by_advice.outputs
-    assert by_input.run(label="w3").report.accepted and by_advice.run(label="w3").report.accepted
+    assert (
+        by_input.run(label="w3").report.accepted
+        and by_advice.run(label="w3").report.accepted
+    )
     assert by_advice.capacity() == by_input.capacity() + 12
     record(
         Row(

@@ -120,4 +120,3 @@ def validate_digest(value: object, field_name: str = "digest") -> Digest:
     except ValueError as error:
         raise InvalidArtifact(f"{field_name} must be hexadecimal") from error
     return Digest(value)
-

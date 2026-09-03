@@ -74,7 +74,9 @@ ETA = Fraction(1, 2**40)
 FULL = VerificationPolicy(1, 1)
 """Every RU replayed, every VU checked: a dishonest relation is caught with certainty."""
 
-DATA = Path(__file__).resolve().parents[3] / "docs" / "data" / "stress-control-flow.json"
+DATA = (
+    Path(__file__).resolve().parents[3] / "docs" / "data" / "stress-control-flow.json"
+)
 WIDTH = 16
 
 
@@ -123,7 +125,9 @@ def record(rows: Iterable[Row], path: Path = DATA) -> dict[str, dict[str, object
     ]
     text = "{\n" + "\n".join(lines) + "\n}\n"
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    handle, temporary = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
     with os.fdopen(handle, "w", encoding="utf-8") as out:
         out.write(text)
     os.replace(temporary, path)
@@ -181,7 +185,13 @@ def measure(
 ) -> Measured:
     """``Compile``, evaluate, ``Bound`` at ``eta`` and ``Cost`` under ``policy``."""
 
-    compilation = Compile(constructor, x, advice, make_isa_gate_set(WIDTH), max_advice_bits=8 * len(advice))
+    compilation = Compile(
+        constructor,
+        x,
+        advice,
+        make_isa_gate_set(WIDTH),
+        max_advice_bits=8 * len(advice),
+    )
     compiled = compilation.compiled
     circuit = compiled.circuit
     values = dict(enumerate(circuit.evaluate(compilation.inputs, weights)))
@@ -215,7 +225,9 @@ def protocol(
 
     kappa, tree = commit_weights(make_isa_gate_set(WIDTH), weights)
     parameters = VerifierParameters(
-        ETA, max_capacity=math.ceil(measured.bound_bits), max_advice_bits=measured.advice_bits
+        ETA,
+        max_capacity=math.ceil(measured.bound_bits),
+        max_advice_bits=measured.advice_bits,
     )
     expectation = make_expectation(
         measured.compilation,
@@ -238,11 +250,15 @@ def protocol(
     return run.report
 
 
-def check_address(measured: Measured, layout: Sequence[tuple[int, int]], request: int) -> int:
+def check_address(
+    measured: Measured, layout: Sequence[tuple[int, int]], request: int
+) -> int:
     """The output address of ``request``'s ``ok`` word (laid out at position ``-1``)."""
 
     return next(
-        a for a, (r, g) in zip(measured.compiled.circuit.outputs, layout, strict=True) if r == request and g < 0
+        a
+        for a, (r, g) in zip(measured.compiled.circuit.outputs, layout, strict=True)
+        if r == request and g < 0
     )
 
 
@@ -256,7 +272,9 @@ DENSE = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=32, width=WIDTH)
 EOS = DENSE.vocab - 1
 
 
-def stopped(reference: Sequence[Sequence[int]], requests: Sequence[Request]) -> tuple[int, ...]:
+def stopped(
+    reference: Sequence[Sequence[int]], requests: Sequence[Request]
+) -> tuple[int, ...]:
     """Each request's streamed length: through its first EOS, else ``max_new``."""
 
     lengths = []
@@ -274,14 +292,21 @@ def test_c1_variable_length_generation() -> None:
     reference = reference_generate(DENSE, parameters, requests)
     lengths = stopped(reference, requests)
     assert len(set(lengths)) >= 3, lengths
-    eos_stops = sum(length < request.max_new for length, request in zip(lengths, requests, strict=True))
+    eos_stops = sum(
+        length < request.max_new
+        for length, request in zip(lengths, requests, strict=True)
+    )
     assert eos_stops >= 2, lengths
-    streamed = tuple(tokens[:length] for tokens, length in zip(reference, lengths, strict=True))
+    streamed = tuple(
+        tokens[:length] for tokens, length in zip(reference, lengths, strict=True)
+    )
     weights = parameters.flatten()
     tokens = sum(lengths)
 
     # (a) request RUs: the streamed length is the request's shape; nothing is left to the client.
-    shaped = tuple(Request(r.prompt, length) for r, length in zip(requests, lengths, strict=True))
+    shaped = tuple(
+        Request(r.prompt, length) for r, length in zip(requests, lengths, strict=True)
+    )
     requests_g = RequestsG(DENSE)
     by_request = measure(requests_g, shaped, b"", weights)
     assert by_request.outputs == tuple(t for response in streamed for t in response)
@@ -365,7 +390,14 @@ def test_c1_variable_length_generation() -> None:
 
 def moe_shape(experts: int, top_k: int, layers: int = 1, vocab: int = 8) -> LMShape:
     return LMShape(
-        vocab=vocab, d_model=4, heads=1, layers=layers, context=32, width=WIDTH, experts=experts, top_k=top_k
+        vocab=vocab,
+        d_model=4,
+        heads=1,
+        layers=layers,
+        context=32,
+        width=WIDTH,
+        experts=experts,
+        top_k=top_k,
     )
 
 
@@ -382,24 +414,36 @@ class MoEPair:
 
 
 def moe_pair(
-    shape: LMShape, requests: tuple[Request, ...], seed: int = 1, policy: VerificationPolicy = POLICY
+    shape: LMShape,
+    requests: tuple[Request, ...],
+    seed: int = 1,
+    policy: VerificationPolicy = POLICY,
 ) -> MoEPair:
     """Both routes of one MoE shape over ``requests``, checked against the reference decoder."""
 
     parameters = random_parameters(shape, seed)
     weights = parameters.flatten()
-    reference = tuple(t for response in reference_generate(shape, parameters, requests) for t in response)
+    reference = tuple(
+        t
+        for response in reference_generate(shape, parameters, requests)
+        for t in response
+    )
     padded = measure(RequestsG(shape, PADDED), requests, b"", weights, policy)
     assert padded.outputs == reference
     advised_g = RequestsG(shape, ADVICE)
     a = advised_g.advice(requests, parameters)
     advised = measure(advised_g, requests, a, weights, policy)
     layout = advised_g.output_layout(requests)
-    assert tuple(v for v, (_r, g) in zip(advised.outputs, layout, strict=True) if g >= 0) == reference
-    assert all(v == 1 for v, (_r, g) in zip(advised.outputs, layout, strict=True) if g < 0), (
-        "a route check failed"
+    assert (
+        tuple(v for v, (_r, g) in zip(advised.outputs, layout, strict=True) if g >= 0)
+        == reference
     )
-    return MoEPair(shape, parameters, padded, advised, route_advice_bits(shape, requests))
+    assert all(
+        v == 1 for v, (_r, g) in zip(advised.outputs, layout, strict=True) if g < 0
+    ), "a route check failed"
+    return MoEPair(
+        shape, parameters, padded, advised, route_advice_bits(shape, requests)
+    )
 
 
 def test_c2_route_codec_round_trips_and_rejects_bad_routes() -> None:
@@ -428,14 +472,20 @@ def test_c2_moe_routing_padded_and_advised() -> None:
     padded, advised = pair.padded, pair.advised
     tokens = sum(r.max_new for r in MOE_REQUESTS)
     assert advised.gates < padded.gates
-    fed = sum(len(r.prompt) + r.max_new - 1 for r in MOE_REQUESTS)  # the last token is never fed back
+    fed = sum(
+        len(r.prompt) + r.max_new - 1 for r in MOE_REQUESTS
+    )  # the last token is never fed back
     assert pair.exact_advice_bits == fed * pair.shape.route_bits == 10 * 2
-    assert advised.advice_bits == pair.exact_advice_bits, "the routes are charged at their exact bit length"
+    assert advised.advice_bits == pair.exact_advice_bits, (
+        "the routes are charged at their exact bit length"
+    )
     assert len(advised.compilation.advice) == 3  # ...though they occupy three bytes
     # the ok word is one more output per request but a check output: the verifier fixes it at 1,
     # so it carries no bits and lifts no kind's reach
     layout = RequestsG(pair.shape, ADVICE).output_layout(MOE_REQUESTS)
-    assert list(advised.compiled.check_values()) == [(i, 1) for i, (_r, g) in enumerate(layout) if g < 0]
+    assert list(advised.compiled.check_values()) == [
+        (i, 1) for i, (_r, g) in enumerate(layout) if g < 0
+    ]
     assert advised.out_bits == padded.out_bits == WIDTH * tokens
     assert padded.capped and advised.capped, "at this scale Bound is the interface"
     assert padded.bound_bits == advised.bound_bits == WIDTH * tokens
@@ -490,13 +540,21 @@ def test_c2_moe_routing_padded_and_advised() -> None:
     )
 
 
-CROSSOVER_REQUESTS = tuple(Request(((i * 3) % 7 + 1, (i * 5) % 7 + 1), 4) for i in range(32))
+CROSSOVER_REQUESTS = tuple(
+    Request(((i * 3) % 7 + 1, (i * 5) % 7 + 1), 4) for i in range(32)
+)
 """32 requests of 4 tokens: enough interface that a strong policy takes Bound below it."""
 
 GRID = tuple(
     VerificationPolicy(q, s)
     for q in (Fraction(1, 2), Fraction(1))
-    for s in (Fraction(1, 8), Fraction(1, 4), Fraction(1, 2), Fraction(3, 4), Fraction(7, 8))
+    for s in (
+        Fraction(1, 8),
+        Fraction(1, 4),
+        Fraction(1, 2),
+        Fraction(3, 4),
+        Fraction(7, 8),
+    )
 )
 
 
@@ -515,7 +573,12 @@ def price(compiled: Compiled, advice_bits: int, policy: VerificationPolicy) -> P
     honest = next(row.replay_cost for row in table.rows if row.kind == table.root)
     expected = cost(compiled, policy).total
     bound = Bound(compiled, policy, ETA)
-    return Priced(bound.bits + advice_bits, bound.capped, float(expected / honest), float(expected))
+    return Priced(
+        bound.bits + advice_bits,
+        bound.capped,
+        float(expected / honest),
+        float(expected),
+    )
 
 
 def test_c2_crossover_in_experts_and_top_k() -> None:
@@ -537,10 +600,15 @@ def test_c2_crossover_in_experts_and_top_k() -> None:
         padded_g, advised_g = RequestsG(shape, PADDED), RequestsG(shape, ADVICE)
         padded = Compile(padded_g, CROSSOVER_REQUESTS, b"", gate_set).compiled
         a = advised_g.advice(CROSSOVER_REQUESTS, parameters)
-        compilation = Compile(advised_g, CROSSOVER_REQUESTS, a, gate_set, max_advice_bits=8 * len(a))
+        compilation = Compile(
+            advised_g, CROSSOVER_REQUESTS, a, gate_set, max_advice_bits=8 * len(a)
+        )
         advised, advice_bits = compilation.compiled, compilation.advice_bits
         assert advice_bits == route_advice_bits(shape, CROSSOVER_REQUESTS) <= 8 * len(a)
-        descriptions = (len(padded_g(CROSSOVER_REQUESTS, b"")[0]), len(advised_g(CROSSOVER_REQUESTS, a)[0]))
+        descriptions = (
+            len(padded_g(CROSSOVER_REQUESTS, b"")[0]),
+            len(advised_g(CROSSOVER_REQUESTS, a)[0]),
+        )
         grid_p = {policy: price(padded, 0, policy) for policy in GRID}
         grid_a = {policy: price(advised, advice_bits, policy) for policy in GRID}
         # (i) equal policy (hence equal relative overhead): padding wins by the advice (the ok words are free)
@@ -555,7 +623,10 @@ def test_c2_crossover_in_experts_and_top_k() -> None:
         # which the advised server, whose honest work is E/k times smaller, spends on a stronger theta
         budget = grid_p[POLICY].absolute
         best_padded = min(p.capacity for p in grid_p.values() if p.absolute <= budget)
-        best_advised = min((p.capacity for p in grid_a.values() if p.absolute <= budget), default=math.inf)
+        best_advised = min(
+            (p.capacity for p in grid_a.values() if p.absolute <= budget),
+            default=math.inf,
+        )
         winner = "advice" if best_advised < best_padded else "padding"
         winners[(experts, top_k)] = winner
         findings.append(
@@ -582,7 +653,9 @@ def test_c2_crossover_in_experts_and_top_k() -> None:
                 verdict=(
                     "at equal theta padding beats advice in U at every (E, k), by exactly |a| (the ok words are check "
                     f"outputs, 0 bits); at equal absolute prover cost advice wins from E={crossover[0]}, k={crossover[1]} on ("
-                    + ", ".join(f"E={e},k={k}:{w}" for (e, k), w in sorted(winners.items()))
+                    + ", ".join(
+                        f"E={e},k={k}:{w}" for (e, k), w in sorted(winners.items())
+                    )
                     + ")"
                 ),
                 notes=" | ".join(findings),
@@ -631,7 +704,9 @@ def spec_pair(
     advised = measure(advised_g, requests, a, weights, policy)
     assert advised_g.tokens(advised.outputs, requests) == reference
     assert advised_g.checks(advised.outputs, requests) == (1,) * len(requests)
-    return SpecPair(gamma, target, draft, padded, advised, tuple(t.acceptances for t in traces))
+    return SpecPair(
+        gamma, target, draft, padded, advised, tuple(t.acceptances for t in traces)
+    )
 
 
 def test_c3_acceptance_codec_round_trips() -> None:
@@ -651,19 +726,28 @@ def test_c3_speculative_decoding_padded_and_advised() -> None:
 
     tokens = sum(r.max_new for r in SPEC_REQUESTS)
     poor = spec_pair(2, SPEC_REQUESTS)
-    perfect = spec_pair(2, SPEC_REQUESTS, draft=random_parameters(TARGET, 1))  # the draft is the target
+    perfect = spec_pair(
+        2, SPEC_REQUESTS, draft=random_parameters(TARGET, 1)
+    )  # the draft is the target
     assert all(m == 2 for steps in perfect.acceptances for m in steps)
     assert perfect.advised.advice_bits < poor.advised.advice_bits
     assert poor.padded.gates > 2 * poor.advised.gates
     for pair in (poor, perfect):
         assert pair.padded.gates > pair.advised.gates
-        assert pair.padded.out_bits == WIDTH * sum(1 + (r.max_new - 1) * 3 for r in SPEC_REQUESTS)
+        assert pair.padded.out_bits == WIDTH * sum(
+            1 + (r.max_new - 1) * 3 for r in SPEC_REQUESTS
+        )
         # the ok words are check outputs: one more output per request, 0 bits
         assert pair.advised.out_bits == WIDTH * tokens
         assert len(list(pair.advised.compiled.check_values())) == len(SPEC_REQUESTS)
-        assert pair.advised.advice_bits == sum(len(s) for s in pair.acceptances) * acceptance_bits(2)
+        assert pair.advised.advice_bits == sum(
+            len(s) for s in pair.acceptances
+        ) * acceptance_bits(2)
     wide = spec_pair(4, SPEC_REQUESTS)
-    exact_bits = {p.gamma: sum(len(s) for s in p.acceptances) * acceptance_bits(p.gamma) for p in (poor, wide)}
+    exact_bits = {
+        p.gamma: sum(len(s) for s in p.acceptances) * acceptance_bits(p.gamma)
+        for p in (poor, wide)
+    }
     assert wide.advised.advice_bits == exact_bits[4]
     record(
         [
@@ -724,24 +808,47 @@ def test_protocol_moe_honest_and_dishonest() -> None:
     advised_g = RequestsG(pair.shape, ADVICE)
     layout = advised_g.output_layout(MOE_REQUESTS)
     (carrier,) = adversary.carriers(layout, 1)
-    assert layout[carrier][1] == MOE_REQUESTS[layout[carrier][0]].max_new - 1, "the carrier is a token, not ok"
-    secret = format((pair.advised.outputs[carrier] + 1) % pair.shape.vocab, f"0{pair.shape.vocab_bits}b")
+    assert layout[carrier][1] == MOE_REQUESTS[layout[carrier][0]].max_new - 1, (
+        "the carrier is a token, not ok"
+    )
+    secret = format(
+        (pair.advised.outputs[carrier] + 1) % pair.shape.vocab,
+        f"0{pair.shape.vocab_bits}b",
+    )
     attack = adversary.plan_attack(
-        pair.advised.compiled, pair.advised.inputs, weights, layout, secret, pair.shape.vocab_bits
+        pair.advised.compiled,
+        pair.advised.inputs,
+        weights,
+        layout,
+        secret,
+        pair.shape.vocab_bits,
     )
     assert attack.carriers == (carrier,) and len(attack.corrupted) == 1
-    report = protocol(pair.advised, weights, FULL, outputs=attack.outputs, values=attack.values, dishonest=True)
+    report = protocol(
+        pair.advised,
+        weights,
+        FULL,
+        outputs=attack.outputs,
+        values=attack.values,
+        dishonest=True,
+    )
     assert not report.accepted and report.code is VerificationCode.RELATION_REJECTED
     assert set(attack.verification_units) & set(report.sampled_verification_units)
     # a dishonest route in the advice, computed honestly: the check word comes out 0
     routes = reference_routes(pair.shape, pair.parameters, MOE_REQUESTS)
-    (honest_route,) = routes[0][1][0]  # request 0, first decode step, layer 0, its one position
+    (honest_route,) = routes[0][1][
+        0
+    ]  # request 0, first decode step, layer 0, its one position
     wrong = tuple((e + 1) % pair.shape.experts for e in honest_route)
     lying = ((routes[0][0], ((wrong,),), *routes[0][2:]), *routes[1:])
     a = encode_routes(pair.shape, lying)
     lied = measure(advised_g, MOE_REQUESTS, a, weights)
     checks = tuple(
-        v for v, (_r, g) in zip(lied.outputs, advised_g.output_layout(MOE_REQUESTS), strict=True) if g < 0
+        v
+        for v, (_r, g) in zip(
+            lied.outputs, advised_g.output_layout(MOE_REQUESTS), strict=True
+        )
+        if g < 0
     )
     assert checks == (0, 1), "the lied-about request's ok word must be 0"
     # ok is a check output: a run that reports it as computed is rejected before anything is opened...
@@ -749,9 +856,13 @@ def test_protocol_moe_honest_and_dishonest() -> None:
     assert not report.accepted and report.code is VerificationCode.CHECK_MISMATCH
     # ...and a server that claims ok = 1 instead breaks route_check's relation, which FULL catches
     ok_address = check_address(lied, advised_g.output_layout(MOE_REQUESTS), 0)
-    forced = adversary.evaluate_with_overrides(lied.compiled, lied.inputs, weights, {ok_address: 1})
+    forced = adversary.evaluate_with_overrides(
+        lied.compiled, lied.inputs, weights, {ok_address: 1}
+    )
     outputs = tuple(forced[address] for address in lied.compiled.circuit.outputs)
-    report = protocol(lied, weights, FULL, outputs=outputs, values=forced, dishonest=True)
+    report = protocol(
+        lied, weights, FULL, outputs=outputs, values=forced, dishonest=True
+    )
     assert not report.accepted and report.code is VerificationCode.RELATION_REJECTED
 
 
@@ -768,7 +879,10 @@ def test_protocol_speculative_honest_and_dishonest() -> None:
     steps = list(honest[0])
     index = next(i for i, m in enumerate(steps) if m < 2)
     steps[index] += 1  # claim one more draft token than the target agreed with
-    kept, emitted = [], 1  # the advice is self-delimiting: keep the steps that start before max_new
+    kept, emitted = (
+        [],
+        1,
+    )  # the advice is self-delimiting: keep the steps that start before max_new
     for m in steps:
         if emitted >= SPEC_REQUESTS[0].max_new:
             break
@@ -778,10 +892,16 @@ def test_protocol_speculative_honest_and_dishonest() -> None:
     a = encode_acceptances(2, lying)
     lied = measure(advised_g, SPEC_REQUESTS, a, weights)
     assert advised_g.checks(lied.outputs, SPEC_REQUESTS)[0] == 0
-    report = protocol(lied, weights, POLICY)  # reported as computed: the check output is not 1
+    report = protocol(
+        lied, weights, POLICY
+    )  # reported as computed: the check output is not 1
     assert not report.accepted and report.code is VerificationCode.CHECK_MISMATCH
     ok_address = check_address(lied, advised_g.output_layout(SPEC_REQUESTS), 0)
-    forced = adversary.evaluate_with_overrides(lied.compiled, lied.inputs, weights, {ok_address: 1})
+    forced = adversary.evaluate_with_overrides(
+        lied.compiled, lied.inputs, weights, {ok_address: 1}
+    )
     outputs = tuple(forced[address] for address in lied.compiled.circuit.outputs)
-    report = protocol(lied, weights, FULL, outputs=outputs, values=forced, dishonest=True)
+    report = protocol(
+        lied, weights, FULL, outputs=outputs, values=forced, dishonest=True
+    )
     assert not report.accepted and report.code is VerificationCode.RELATION_REJECTED

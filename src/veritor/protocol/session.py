@@ -222,7 +222,9 @@ def make_expectation(
     if not isinstance(compilation, Compilation):
         raise ProtocolError("make_expectation requires a Compilation from Compile")
     if not isinstance(parameters, VerifierParameters):
-        raise ProtocolError("make_expectation requires the verifier's VerifierParameters")
+        raise ProtocolError(
+            "make_expectation requires the verifier's VerifierParameters"
+        )
     checked = parameters
     return Expectation(
         session_id=token_bytes(16) if session_id is None else session_id,
@@ -241,7 +243,9 @@ def make_expectation(
     )
 
 
-def rejection_report(rejection: Reject, session: VerifierSession | None) -> VerificationReport:
+def rejection_report(
+    rejection: Reject, session: VerifierSession | None
+) -> VerificationReport:
     """The verdict for ``rejection``, with the selections made so far."""
 
     if session is None:
@@ -355,7 +359,9 @@ class _Layout:
         result: list[tuple[int, int]] = []
         for address in sorted(inputs | outputs | pinned):
             owner = self.owner(address)
-            if owner == replay_unit and not self.interior(replay_unit).contains(address):
+            if owner == replay_unit and not self.interior(replay_unit).contains(
+                address
+            ):
                 raise Reject(
                     VerificationCode.INVALID_COMPILED_RESULT,
                     f"address {address} is {'read' if address in inputs else 'declared'} "
@@ -372,7 +378,9 @@ class _Layout:
         return tuple(result)
 
 
-def replay_unit(compiled: Compiled, unit: int, boundary_values: Values) -> dict[int, object]:
+def replay_unit(
+    compiled: Compiled, unit: int, boundary_values: Values
+) -> dict[int, object]:
     """Honest replay: recompute every gate of ``R_unit`` from the boundary, in address order.
 
     The result holds every computed gate of the unit (its interior positions,
@@ -520,16 +528,24 @@ class ProverSession:
             if weight_tree is not None:
                 raise ProtocolError("the header binds no weights")
             if compiled.index.weight_count:
-                raise ProtocolError("the circuit has weight gates but the header binds no weights")
+                raise ProtocolError(
+                    "the circuit has weight gates but the header binds no weights"
+                )
         else:
             if weight_tree is None:
-                raise ProtocolError("the header binds weights; the prover needs their tree")
-            expected = weight_domain(compiled.circuit.gate_set, compiled.index.weight_count)
+                raise ProtocolError(
+                    "the header binds weights; the prover needs their tree"
+                )
+            expected = weight_domain(
+                compiled.circuit.gate_set, compiled.index.weight_count
+            )
             if (
                 weight_tree.domain.domain_id != expected.domain_id
                 or weight_tree.commitment != header.weights.commitment
             ):
-                raise ProtocolError("the weight tree does not match the header's weights")
+                raise ProtocolError(
+                    "the weight tree does not match the header's weights"
+                )
             self._trees[WEIGHT_OWNER] = weight_tree
         self._phase = "boundary"
         self._boundary_phase = b""
@@ -551,8 +567,12 @@ class ProverSession:
             try:
                 value = values[address]
             except KeyError as error:
-                raise ProtocolError(f"prover has no value for address {address}") from error
-            width = circuit[address].width  # one lazy lookup per position, shared by value and schema
+                raise ProtocolError(
+                    f"prover has no value for address {address}"
+                ) from error
+            width = circuit[
+                address
+            ].width  # one lazy lookup per position, shared by value and schema
             encoded[address] = encode_value(width, value)
             schemas[address] = f"u{width}"
         tree = MerkleTree(domain, encoded, schemas.__getitem__)
@@ -561,7 +581,9 @@ class ProverSession:
 
     def boundary(self) -> BoundaryMessage:
         self._expect("boundary")
-        tree = self._commit(boundary_domain(self.header, self._layout.compiled), self._values)
+        tree = self._commit(
+            boundary_domain(self.header, self._layout.compiled), self._values
+        )
         message = BoundaryMessage(
             tree.commitment, tuple(tree.open(p) for p in self._layout.io)
         )
@@ -585,7 +607,9 @@ class ProverSession:
                 else self._replay(unit, self._values)
             )
             if self._declare is not None:
-                declared.update(self._declare(unit, _Overlay(interior_values, self._values)))
+                declared.update(
+                    self._declare(unit, _Overlay(interior_values, self._values))
+                )
             domain = interior_domain(self._replay_phase, compiled, unit)
             commitments.append(self._commit(domain, interior_values).commitment)
         message = InteriorMessage(tuple(commitments), tuple(sorted(declared)))
@@ -602,15 +626,23 @@ class ProverSession:
 
         self._expect("evidence")
         sample_phase(self._interior_phase, challenge)
-        commitments = {owner: (tree.domain, tree.commitment) for owner, tree in self._trees.items()}
+        commitments = {
+            owner: (tree.domain, tree.commitment) for owner, tree in self._trees.items()
+        }
         obligations, kinds = derive_obligations(
-            self._layout, self.header, commitments, challenge.selected, set(self._declarations)
+            self._layout,
+            self.header,
+            commitments,
+            challenge.selected,
+            set(self._declarations),
         )
         batches: list[tuple[Opening, ...]] = []
         for obligation in obligations:
             batches.append(
                 tuple(
-                    self._trees[obligation.commitments[ref.commitment].owner].open(ref.position)
+                    self._trees[obligation.commitments[ref.commitment].owner].open(
+                        ref.position
+                    )
                     for ref in obligation.positions
                 )
             )
@@ -620,7 +652,9 @@ class ProverSession:
             gate_set = self._layout.circuit.gate_set
             proofs = prove_plan(
                 self._backend,
-                BatchPlan.single(len(obligations)) if self._plan is None else self._plan,
+                BatchPlan.single(len(obligations))
+                if self._plan is None
+                else self._plan,
                 obligations,
                 [tuple((item.value, item.path) for item in batch) for batch in batches],
                 kinds,
@@ -669,7 +703,9 @@ class VerifierSession:
             raise ProtocolError("sessions require a Compiled circuit")
         if not isinstance(expectation, Expectation | Claim):
             raise ProtocolError("sessions require an Expectation or a Claim")
-        claim = expectation.claim if isinstance(expectation, Expectation) else expectation
+        claim = (
+            expectation.claim if isinstance(expectation, Expectation) else expectation
+        )
         if claim.compiled_digest != compiled.digest:
             raise ProtocolError("expectation names a different compiled circuit")
         self._backend = resolve_backend(backend, claim.backend, compiled, limits)
@@ -704,10 +740,14 @@ class VerifierSession:
             )
             outputs = tuple(
                 circuit.encode(address, value)
-                for address, value in zip(circuit.outputs, claim.claimed_outputs, strict=True)
+                for address, value in zip(
+                    circuit.outputs, claim.claimed_outputs, strict=True
+                )
             )
         except Exception as error:
-            raise ProtocolError("expectation values do not encode canonically") from error
+            raise ProtocolError(
+                "expectation values do not encode canonically"
+            ) from error
         for ordinal, constant in compiled.check_values():
             address = circuit.outputs[ordinal]
             if outputs[ordinal] != circuit.encode(address, constant):
@@ -816,7 +856,10 @@ class VerifierSession:
             )
         if parameters.max_capacity is not None:
             capacity = bound(
-                self._layout.compiled, policy, parameters.eta, max_faults=parameters.max_faults
+                self._layout.compiled,
+                policy,
+                parameters.eta,
+                max_faults=parameters.max_faults,
             ).bits
             if capacity > parameters.max_capacity:
                 raise self._reject(
@@ -845,7 +888,9 @@ class VerifierSession:
         except ResourceLimit as error:
             raise self._reject(VerificationCode.RESOURCE_LIMIT, str(error)) from error
 
-    def _accept_commitment(self, domain: CommitmentDomain, commitment: Commitment) -> None:
+    def _accept_commitment(
+        self, domain: CommitmentDomain, commitment: Commitment
+    ) -> None:
         self._limits.enforce("max_positions", domain.count)
         if not validate_commitment(domain, commitment):
             raise self._reject(
@@ -1060,7 +1105,8 @@ class VerifierSession:
             )
         if message.proofs and transparent:
             raise self._reject(
-                VerificationCode.COVERAGE_MISMATCH, "the transparent backend takes openings"
+                VerificationCode.COVERAGE_MISMATCH,
+                "the transparent backend takes openings",
             )
         with self._rejecting_limits():
             demanded, kinds = derive_obligations(
@@ -1075,7 +1121,9 @@ class VerifierSession:
             width = statement_width(gate_set)
             try:
                 if transparent:
-                    self._check_openings(demanded, kinds, gate_set_digest, width, message)
+                    self._check_openings(
+                        demanded, kinds, gate_set_digest, width, message
+                    )
                 else:
                     check_coverage(
                         demanded,
@@ -1124,11 +1172,14 @@ class VerifierSession:
                     VerificationCode.COVERAGE_MISMATCH,
                     f"evidence for unit {unit} must open exactly its required positions",
                 )
-            statement = make_statement(gate_set.id, gate_set_digest, width, kinds, (obligation,))
+            statement = make_statement(
+                gate_set.id, gate_set_digest, width, kinds, (obligation,)
+            )
             witness = Witness((tuple((item.value, item.path) for item in batch),))
             if not self._backend.verify(statement, encode_witness(witness)):
                 raise Reject(
-                    VerificationCode.PROOF_REJECTED, f"openings for unit {unit} do not verify"
+                    VerificationCode.PROOF_REJECTED,
+                    f"openings for unit {unit} do not verify",
                 )
 
     @property
@@ -1172,14 +1223,18 @@ def run_protocol(
     """
 
     try:
-        verifier = VerifierSession(expectation, compiled, limits=limits, backend=backend)
+        verifier = VerifierSession(
+            expectation, compiled, limits=limits, backend=backend
+        )
     except Reject as rejection:
         return ProtocolRun(rejection_report(rejection, None), None)
     if expectation.weights is not None and weight_tree is None:
         try:
             weight_values = [values[address] for address in compiled.circuit.weights]
         except KeyError as error:
-            raise ProtocolError(f"prover has no value for weight gate {error.args[0]}") from None
+            raise ProtocolError(
+                f"prover has no value for weight gate {error.args[0]}"
+            ) from None
         _, weight_tree = commit_weights(compiled.circuit.gate_set, weight_values)
     prover = ProverSession(
         compiled,
@@ -1194,7 +1249,9 @@ def run_protocol(
     )
     try:
         replay_challenge = verifier.receive_boundary(prover.boundary())
-        sample_challenge = verifier.receive_interiors(prover.interiors(replay_challenge))
+        sample_challenge = verifier.receive_interiors(
+            prover.interiors(replay_challenge)
+        )
         report = verifier.receive_evidence(prover.evidence(sample_challenge))
     except Reject as rejection:
         return ProtocolRun(rejection_report(rejection, verifier), None)

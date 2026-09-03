@@ -58,4 +58,3 @@ def as_kind_table(target: Compiled | KindTable) -> KindTable:
     if isinstance(target, KindTable):
         return target
     raise TypeError("expected a Compiled artifact or a KindTable")
-

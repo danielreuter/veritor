@@ -38,7 +38,12 @@ from veritor.protocol import (
 from veritor.research import Compile
 
 SHAPE = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=6, width=16)
-REQUESTS = (Request((1, 2, 3), 3), Request((5,), 2), Request((7, 0), 4), Request((2, 2, 2), 1))
+REQUESTS = (
+    Request((1, 2, 3), 3),
+    Request((5,), 2),
+    Request((7, 0), 4),
+    Request((2, 2, 2), 1),
+)
 GATE_SET = make_isa_gate_set(16)
 SEEDS = {"session_id": b"cluster-run", "q_seed": b"Q" * 32, "s_seed": b"S" * 32}
 CHECK_EVERYTHING = VerificationPolicy(1, 1)
@@ -54,12 +59,20 @@ class Deployment:
         self.constructor = ClusterG(SHAPE, pods, slots, steps)
         self.schedule = schedule
         self.compilation = Compile(
-            self.constructor, REQUESTS, schedule.encode(), GATE_SET, max_advice_bits=4096
+            self.constructor,
+            REQUESTS,
+            schedule.encode(),
+            GATE_SET,
+            max_advice_bits=4096,
         )
         self.compiled = self.compilation.compiled
         self.circuit = self.compiled.circuit
         self.values = dict(
-            enumerate(self.circuit.evaluate(self.compilation.inputs, self.parameters.flatten()))
+            enumerate(
+                self.circuit.evaluate(
+                    self.compilation.inputs, self.parameters.flatten()
+                )
+            )
         )
         self.outputs = tuple(self.values[address] for address in self.circuit.outputs)
 
@@ -71,7 +84,9 @@ class Deployment:
             **SEEDS,
             **overrides,
         }
-        return make_expectation(self.compilation, policy, arguments.pop("claimed_outputs"), **arguments)
+        return make_expectation(
+            self.compilation, policy, arguments.pop("claimed_outputs"), **arguments
+        )
 
 
 @pytest.fixture(scope="module")
@@ -79,15 +94,29 @@ def deployment() -> Deployment:
     return Deployment(schedule_fcfs(REQUESTS, 2, 2, 6), 2, 2, 6)
 
 
-def test_the_compilation_binds_the_constructor_the_prompts_and_the_schedule(deployment: Deployment) -> None:
+def test_the_compilation_binds_the_constructor_the_prompts_and_the_schedule(
+    deployment: Deployment,
+) -> None:
     compilation = deployment.compilation
 
     assert compilation.constructor == deployment.constructor.digest
-    assert compilation.inputs == deployment.constructor.flatten_inputs(REQUESTS, deployment.schedule)
+    assert compilation.inputs == deployment.constructor.flatten_inputs(
+        REQUESTS, deployment.schedule
+    )
     assert compilation.advice == deployment.schedule.encode()
-    assert compilation.advice_bits == deployment.schedule.bit_length() > 0  # exact bits, not 8 * len(a)
-    assert 8 * len(compilation.advice) - 8 < compilation.advice_bits <= 8 * len(compilation.advice)
-    assert deployment.weights.count == SHAPE.weight_count == deployment.compiled.index.weight_count
+    assert (
+        compilation.advice_bits == deployment.schedule.bit_length() > 0
+    )  # exact bits, not 8 * len(a)
+    assert (
+        8 * len(compilation.advice) - 8
+        < compilation.advice_bits
+        <= 8 * len(compilation.advice)
+    )
+    assert (
+        deployment.weights.count
+        == SHAPE.weight_count
+        == deployment.compiled.index.weight_count
+    )
     # the claimed outputs are what sequential decoding gives
     layout = deployment.constructor.output_layout(REQUESTS, deployment.schedule)
     reference = reference_generate(SHAPE, deployment.parameters, REQUESTS)
@@ -100,12 +129,17 @@ def test_an_honest_cluster_run_is_accepted_and_its_transcript_round_trips(
 ) -> None:
     expectation = deployment.expectation(policy)
 
-    run = run_protocol(deployment.compiled, expectation, deployment.values, weight_tree=deployment.tree)
+    run = run_protocol(
+        deployment.compiled, expectation, deployment.values, weight_tree=deployment.tree
+    )
 
     assert run.report.accepted and run.report.code is VerificationCode.ACCEPTED
     assert run.transcript is not None
     header = run.transcript.header
-    assert header.weights == deployment.weights and header.advice == deployment.schedule.encode()
+    assert (
+        header.weights == deployment.weights
+        and header.advice == deployment.schedule.encode()
+    )
     assert header.constructor == deployment.constructor.digest
     boundary = deployment.compiled.index.boundary()
     assert run.transcript.boundary.commitment.count == boundary.count == 9 + 130
@@ -125,22 +159,30 @@ def test_an_honest_cluster_run_is_accepted_and_its_transcript_round_trips(
 
 
 def test_the_advice_must_be_admitted_by_the_verifier(deployment: Deployment) -> None:
-    expectation = deployment.expectation(parameters=VerifierParameters(max_advice_bits=8, max_capacity=None))
+    expectation = deployment.expectation(
+        parameters=VerifierParameters(max_advice_bits=8, max_capacity=None)
+    )
 
-    run = run_protocol(deployment.compiled, expectation, deployment.values, weight_tree=deployment.tree)
+    run = run_protocol(
+        deployment.compiled, expectation, deployment.values, weight_tree=deployment.tree
+    )
 
     assert run.report.code is VerificationCode.POLICY_REJECTED
     assert "exceeding max_advice_bits 8" in run.report.detail
 
 
-def test_an_altered_generated_token_is_rejected_at_the_boundary(deployment: Deployment) -> None:
+def test_an_altered_generated_token_is_rejected_at_the_boundary(
+    deployment: Deployment,
+) -> None:
     """The prover claims a different token for one request but computed honestly."""
 
     claimed = list(deployment.outputs)
     claimed[4] = (claimed[4] + 1) % SHAPE.vocab
     expectation = deployment.expectation(claimed_outputs=tuple(claimed))
 
-    run = run_protocol(deployment.compiled, expectation, deployment.values, weight_tree=deployment.tree)
+    run = run_protocol(
+        deployment.compiled, expectation, deployment.values, weight_tree=deployment.tree
+    )
 
     assert run.report.code is VerificationCode.PUBLIC_IO_MISMATCH
     assert run.transcript is None
@@ -148,11 +190,15 @@ def test_an_altered_generated_token_is_rejected_at_the_boundary(deployment: Depl
     # ... and one who also changes the output gate's value to match is caught at its relation
     lying = dict(deployment.values)
     lying[deployment.circuit.outputs[4]] = claimed[4]
-    run = run_protocol(deployment.compiled, expectation, lying, weight_tree=deployment.tree)
+    run = run_protocol(
+        deployment.compiled, expectation, lying, weight_tree=deployment.tree
+    )
     assert run.report.code is VerificationCode.RELATION_REJECTED
 
 
-def test_a_corrupted_interior_value_is_rejected_when_everything_is_sampled(deployment: Deployment) -> None:
+def test_a_corrupted_interior_value_is_rejected_when_everything_is_sampled(
+    deployment: Deployment,
+) -> None:
     """A dot product inside one decode step is off by one; the outputs are the honest ones.
 
     The prover commits the corrupted interior (``assignment_replay``: the
@@ -161,13 +207,16 @@ def test_a_corrupted_interior_value_is_rejected_when_everything_is_sampled(deplo
     """
 
     index = deployment.compiled.index
-    step = index.replay_units.unit(3)  # steps are laid out by step then pod: pod 0, step 1, a decode
+    step = index.replay_units.unit(
+        3
+    )  # steps are laid out by step then pod: pod 0, step 1, a decode
     interior = index.interior(3)
     outputs = set(deployment.circuit.outputs)
     address = next(
         int(interior.unrank(rank))
         for rank in range(interior.count // 2, interior.count)
-        if deployment.circuit[int(interior.unrank(rank))].op == "add" and int(interior.unrank(rank)) not in outputs
+        if deployment.circuit[int(interior.unrank(rank))].op == "add"
+        and int(interior.unrank(rank)) not in outputs
     )
     assert step.interval.start <= address < step.interval.stop
     corrupted = dict(deployment.values)
@@ -184,7 +233,12 @@ def test_a_corrupted_interior_value_is_rejected_when_everything_is_sampled(deplo
     assert run.report.code is VerificationCode.RELATION_REJECTED
     assert run.transcript is None
     # the honest prover recomputes interiors from the boundary: the same dict is harmless
-    honest = run_protocol(deployment.compiled, deployment.expectation(), corrupted, weight_tree=deployment.tree)
+    honest = run_protocol(
+        deployment.compiled,
+        deployment.expectation(),
+        corrupted,
+        weight_tree=deployment.tree,
+    )
     assert honest.report.accepted
     # sampled sparsely the corruption may slip through: that is what Bound charges for
     sparse = run_protocol(
@@ -194,19 +248,45 @@ def test_a_corrupted_interior_value_is_rejected_when_everything_is_sampled(deplo
         replay=assignment_replay(corrupted),
         weight_tree=deployment.tree,
     )
-    assert sparse.report.code in (VerificationCode.ACCEPTED, VerificationCode.RELATION_REJECTED)
+    assert sparse.report.code in (
+        VerificationCode.ACCEPTED,
+        VerificationCode.RELATION_REJECTED,
+    )
 
 
-def test_a_hand_written_schedule_runs_under_the_same_weight_root(deployment: Deployment) -> None:
+def test_a_hand_written_schedule_runs_under_the_same_weight_root(
+    deployment: Deployment,
+) -> None:
     """Another schedule of the same requests: a different circuit, the model's one ``kappa_W``."""
 
-    schedule = Schedule(2, 1, 6, (Join(0, 0, 0, 0, 2), Join(0, 2, 0, 1, 2), Join(1, 0, 0, 2, 4), Join(1, 4, 0, 3, 1)))
+    schedule = Schedule(
+        2,
+        1,
+        6,
+        (
+            Join(0, 0, 0, 0, 2),
+            Join(0, 2, 0, 1, 2),
+            Join(1, 0, 0, 2, 4),
+            Join(1, 4, 0, 3, 1),
+        ),
+    )
     other = Deployment(schedule, 2, 1, 6)
 
-    assert other.weights == deployment.weights and other.compiled.digest != deployment.compiled.digest
+    assert (
+        other.weights == deployment.weights
+        and other.compiled.digest != deployment.compiled.digest
+    )
     run = run_protocol(
-        other.compiled, other.expectation(weights=deployment.weights), other.values, weight_tree=deployment.tree
+        other.compiled,
+        other.expectation(weights=deployment.weights),
+        other.values,
+        weight_tree=deployment.tree,
     )
     assert run.report.accepted
     reference = reference_generate(SHAPE, other.parameters, REQUESTS)
-    assert other.outputs == (*reference[0][:2], *reference[1], *reference[2], *reference[3])
+    assert other.outputs == (
+        *reference[0][:2],
+        *reference[1],
+        *reference[2],
+        *reference[3],
+    )

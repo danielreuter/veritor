@@ -36,7 +36,9 @@ def verify_transcript(
         return VerificationReport(VerificationCode.RESOURCE_LIMIT, str(error))
 
     try:
-        session = VerifierSession(expectation, compiled, limits=checked, backend=backend)
+        session = VerifierSession(
+            expectation, compiled, limits=checked, backend=backend
+        )
     except Reject as rejection:
         return rejection_report(rejection, None)
     try:
@@ -56,12 +58,16 @@ def verify_transcript(
         if replay_challenge.seed != transcript.replay_challenge.seed:
             raise Reject(VerificationCode.EXPECTATION_MISMATCH, "q seed differs")
         if replay_challenge != transcript.replay_challenge:
-            raise Reject(VerificationCode.CHALLENGE_MISMATCH, "replay selection differs")
+            raise Reject(
+                VerificationCode.CHALLENGE_MISMATCH, "replay selection differs"
+            )
         sample_challenge = session.receive_interiors(transcript.interiors)
         if sample_challenge.seed != transcript.sample_challenge.seed:
             raise Reject(VerificationCode.EXPECTATION_MISMATCH, "s seed differs")
         if sample_challenge != transcript.sample_challenge:
-            raise Reject(VerificationCode.CHALLENGE_MISMATCH, "sample selection differs")
+            raise Reject(
+                VerificationCode.CHALLENGE_MISMATCH, "sample selection differs"
+            )
         return session.receive_evidence(transcript.evidence)
     except Reject as rejection:
         return rejection_report(rejection, session)

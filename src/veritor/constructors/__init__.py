@@ -59,7 +59,8 @@ from .tracer import (
 
 __all__ = [
     "ADVICE",
-    "GPT2", "GPT2G",
+    "GPT2",
+    "GPT2G",
     "PADDED",
     "BatchInput",
     "ClusterG",

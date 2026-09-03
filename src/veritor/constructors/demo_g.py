@@ -62,7 +62,9 @@ class DemoG:
         if type(width) is not int or width <= 0:
             raise ValueError("width must be a positive integer")
         self.width = width
-        self.digest = constructor_digest(type(self).__name__, self.VERSION, {"width": width})
+        self.digest = constructor_digest(
+            type(self).__name__, self.VERSION, {"width": width}
+        )
         self.tracer = Tracer(make_word_gate_set(width))
         add, mul = self.tracer.gate("add"), self.tracer.gate("mul")
 
@@ -81,7 +83,9 @@ class DemoG:
             cells = self.tracer.inputs(1 + 2 * length)  # accumulator, values, weights
             accumulator: Wire | Wires = cells[0]
             for index in range(length):
-                accumulator = self.mac(accumulator, cells[1 + index], cells[1 + length + index])
+                accumulator = self.mac(
+                    accumulator, cells[1 + index], cells[1 + length + index]
+                )
             return accumulator
 
         return dot
@@ -109,7 +113,9 @@ class DemoG:
             raise TracerError("DemoG needs at least one dot request")
         if any(request.length == 0 for request in x.requests):
             raise TracerError("DemoG dot requests must be nonempty")
-        description = self.tracer.serialize(self.batch(tuple(r.length for r in x.requests)))
+        description = self.tracer.serialize(
+            self.batch(tuple(r.length for r in x.requests))
+        )
         return description, x.cells()
 
 

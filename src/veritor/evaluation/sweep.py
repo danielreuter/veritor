@@ -56,7 +56,9 @@ Key = tuple[str, str, Fraction, Fraction, Fraction]
 SMALL_GRID = PolicyGrid(q=(Fraction(1, 2), Fraction(1, 8)), s=(1, Fraction(1, 8)))
 """A ``2 x 2`` grid for smoke tests of the sweep itself."""
 
-TOY_SHAPE = ServingShape(vocab=8, d_model=4, heads=2, layers=1, prompt=2, generated=3, requests=4, batch=2)
+TOY_SHAPE = ServingShape(
+    vocab=8, d_model=4, heads=2, layers=1, prompt=2, generated=3, requests=4, batch=2
+)
 """A run small enough that the whole default sweep takes seconds."""
 
 SHAPES: dict[str, ServingShape] = {"70b": FRONTIER_SHAPE, "toy": TOY_SHAPE}
@@ -74,8 +76,12 @@ class SweepSpec:
     options: BoundOptions = FRONTIER_OPTIONS
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "etas", tuple(exact_fraction(eta, name="eta") for eta in self.etas))
-        object.__setattr__(self, "levels", tuple((str(r), str(v)) for r, v in self.levels))
+        object.__setattr__(
+            self, "etas", tuple(exact_fraction(eta, name="eta") for eta in self.etas)
+        )
+        object.__setattr__(
+            self, "levels", tuple((str(r), str(v)) for r, v in self.levels)
+        )
         if not self.levels:
             raise ValueError("a sweep needs at least one partition")
         if not self.etas:
@@ -98,8 +104,13 @@ class SweepSpec:
             "shape": self.shape.manifest,
             "options": asdict(self.options),
             "etas": [str(eta) for eta in self.etas],
-            "grid": {"q": [str(q) for q in self.grid.q], "s": [str(s) for s in self.grid.s]},
-            "partitions": [f"{replay}/{verification}" for replay, verification in self.levels],
+            "grid": {
+                "q": [str(q) for q in self.grid.q],
+                "s": [str(s) for s in self.grid.s],
+            },
+            "partitions": [
+                f"{replay}/{verification}" for replay, verification in self.levels
+            ],
         }
 
 
@@ -113,7 +124,9 @@ _TABLES: dict[tuple[ServingShape, str, str], KindTable] = {}
 """Serving tables built so far in this process: one per partition, shared by its points."""
 
 
-def price_key(shape: ServingShape, key: Key, options: BoundOptions = FRONTIER_OPTIONS) -> Point:
+def price_key(
+    shape: ServingShape, key: Key, options: BoundOptions = FRONTIER_OPTIONS
+) -> Point:
     """The point at ``key``: :func:`~veritor.evaluation.frontier.price` on the partition's table.
 
     A module-level function of picklable arguments, so a process pool can run
@@ -126,7 +139,15 @@ def price_key(shape: ServingShape, key: Key, options: BoundOptions = FRONTIER_OP
     if table is None:
         table = serving_table(shape, replay, verification)  # type: ignore[arg-type]
         _TABLES[(shape, replay, verification)] = table
-    return price(table, shape, replay, verification, VerificationPolicy(q, s), eta, options=options)
+    return price(
+        table,
+        shape,
+        replay,
+        verification,
+        VerificationPolicy(q, s),
+        eta,
+        options=options,
+    )
 
 
 # -- the manifest -----------------------------------------------------------------------
@@ -142,10 +163,18 @@ def git_state(directory: Path | None = None) -> tuple[str | None, bool | None]:
     cwd = directory or Path(__file__).resolve().parent
     try:
         commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True, check=True
+            ["git", "rev-parse", "HEAD"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         status = subprocess.run(
-            ["git", "status", "--porcelain"], cwd=cwd, capture_output=True, text=True, check=True
+            ["git", "status", "--porcelain"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout
     except (OSError, subprocess.CalledProcessError):
         return None, None
@@ -178,14 +207,19 @@ def manifest(
     runs = 1
     total = wall_seconds
     if previous is not None:
-        earlier_runs, earlier_seconds = previous.get("runs", 1), previous.get("wall_seconds", 0.0)
+        earlier_runs, earlier_seconds = (
+            previous.get("runs", 1),
+            previous.get("wall_seconds", 0.0),
+        )
         runs += earlier_runs if isinstance(earlier_runs, int) else 1
         total += earlier_seconds if isinstance(earlier_seconds, (int, float)) else 0.0
     return {
         "commit": commit,
         "dirty": dirty,
         "version": package_version(),
-        "completed_at": _datetime.datetime.now(_datetime.UTC).isoformat(timespec="seconds"),
+        "completed_at": _datetime.datetime.now(_datetime.UTC).isoformat(
+            timespec="seconds"
+        ),
         "wall_seconds": total,
         "runs": runs,
         "workers": workers,
@@ -197,7 +231,9 @@ def manifest(
 # -- the sweep ---------------------------------------------------------------------------
 
 
-def resume(spec: SweepSpec, out: Path) -> tuple[dict[Key, Point], dict[str, object] | None]:
+def resume(
+    spec: SweepSpec, out: Path
+) -> tuple[dict[Key, Point], dict[str, object] | None]:
     """The points of ``out`` that belong to ``spec``, by key, and its manifest.
 
     Nothing when the file does not exist.  A file for another shape is an
@@ -210,9 +246,13 @@ def resume(spec: SweepSpec, out: Path) -> tuple[dict[Key, Point], dict[str, obje
         return {}, None
     shape, points = load(out)
     if shape != spec.shape:
-        raise ValueError(f"{out} holds points of another shape: {shape.manifest} != {spec.shape.manifest}")
+        raise ValueError(
+            f"{out} holds points of another shape: {shape.manifest} != {spec.shape.manifest}"
+        )
     wanted = set(spec.keys())
-    return {key_of(point): point for point in points if key_of(point) in wanted}, load_manifest(out)
+    return {
+        key_of(point): point for point in points if key_of(point) in wanted
+    }, load_manifest(out)
 
 
 def parallel_sweep(
@@ -237,7 +277,9 @@ def parallel_sweep(
     by_key, previous = resume(spec, out)
     missing = [key for key in order if key not in by_key]
     say = log or (lambda _: None)
-    say(f"{len(by_key)} points present, {len(missing)} missing, {workers} workers -> {out}")
+    say(
+        f"{len(by_key)} points present, {len(missing)} missing, {workers} workers -> {out}"
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
 
     started = time.perf_counter()
@@ -275,7 +317,10 @@ def parallel_sweep(
                 checkpoint()
     else:
         with ProcessPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(price_key, spec.shape, key, spec.options): key for key in missing}
+            futures = {
+                pool.submit(price_key, spec.shape, key, spec.options): key
+                for key in missing
+            }
             for future in as_completed(futures):
                 point = future.result()
                 by_key[futures[future]] = point
@@ -284,7 +329,9 @@ def parallel_sweep(
                 if done % checkpoint_every == 0:
                     checkpoint()
     checkpoint()
-    say(f"done: {len(by_key)} points ({done} new) in {time.perf_counter() - started:.0f}s")
+    say(
+        f"done: {len(by_key)} points ({done} new) in {time.perf_counter() - started:.0f}s"
+    )
     return merged(), done
 
 
@@ -296,13 +343,17 @@ def _parse_levels(text: str) -> tuple[tuple[ReplayLevel, VerificationLevel], ...
     for item in text.split(","):
         replay, _, verification = item.strip().partition("/")
         if not replay or not verification:
-            raise argparse.ArgumentTypeError(f"a partition is written REPLAY/VERIFICATION, not {item!r}")
+            raise argparse.ArgumentTypeError(
+                f"a partition is written REPLAY/VERIFICATION, not {item!r}"
+            )
         levels.append((replay, verification))
     return tuple(levels)  # type: ignore[arg-type]
 
 
 def _parse_fractions(text: str) -> tuple[Fraction, ...]:
-    return tuple(exact_fraction(Fraction(item.strip()), name="eta") for item in text.split(","))
+    return tuple(
+        exact_fraction(Fraction(item.strip()), name="eta") for item in text.split(",")
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -310,26 +361,42 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m veritor.evaluation.sweep",
         description="Price the honest server's frontier in parallel; resumes a partially written OUT.",
     )
-    parser.add_argument("out", type=Path, help="the JSON file to write (and resume from)")
-    parser.add_argument("--workers", type=int, default=1, help="processes in the pool (1: this process)")
-    parser.add_argument("--shape", choices=sorted(SHAPES), default="70b", help="the serving shape")
+    parser.add_argument(
+        "out", type=Path, help="the JSON file to write (and resume from)"
+    )
+    parser.add_argument(
+        "--workers", type=int, default=1, help="processes in the pool (1: this process)"
+    )
+    parser.add_argument(
+        "--shape", choices=sorted(SHAPES), default="70b", help="the serving shape"
+    )
     parser.add_argument(
         "--levels",
         type=_parse_levels,
         default=DEFAULT_PARTITIONS,
         help="comma-separated partitions, e.g. request/row,cell/gate (default: every admissible one)",
     )
-    parser.add_argument("--grid", choices=sorted(GRIDS), default="full", help="the (q, s) grid")
     parser.add_argument(
-        "--etas", type=_parse_fractions, default=DEFAULT_ETAS, help="comma-separated etas, e.g. 1/2,1/100"
+        "--grid", choices=sorted(GRIDS), default="full", help="the (q, s) grid"
     )
-    parser.add_argument("--checkpoint-every", type=int, default=20, help="write OUT every N points")
+    parser.add_argument(
+        "--etas",
+        type=_parse_fractions,
+        default=DEFAULT_ETAS,
+        help="comma-separated etas, e.g. 1/2,1/100",
+    )
+    parser.add_argument(
+        "--checkpoint-every", type=int, default=20, help="write OUT every N points"
+    )
     return parser
 
 
 def spec_from_args(args: argparse.Namespace) -> SweepSpec:
     return SweepSpec(
-        shape=SHAPES[args.shape], levels=tuple(args.levels), grid=GRIDS[args.grid], etas=tuple(args.etas)
+        shape=SHAPES[args.shape],
+        levels=tuple(args.levels),
+        grid=GRIDS[args.grid],
+        etas=tuple(args.etas),
     )
 
 
@@ -340,7 +407,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     def say(line: str) -> None:
         print(line, flush=True)
 
-    parallel_sweep(spec, args.out, workers=args.workers, checkpoint_every=args.checkpoint_every, log=say)
+    parallel_sweep(
+        spec,
+        args.out,
+        workers=args.workers,
+        checkpoint_every=args.checkpoint_every,
+        log=say,
+    )
     return 0
 
 

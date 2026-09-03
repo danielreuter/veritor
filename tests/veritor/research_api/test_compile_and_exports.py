@@ -64,7 +64,9 @@ def test_compile_runs_g_and_records_what_it_ran_on() -> None:
 def test_compile_charges_the_advice_g_consumes() -> None:
     request = DemoGCompileRequest(advice=b"hint", max_advice_bits=32)
 
-    compilation = Compile(DemoG(8), request.batch, b"hint", GATE_SET, max_advice_bits=32)
+    compilation = Compile(
+        DemoG(8), request.batch, b"hint", GATE_SET, max_advice_bits=32
+    )
 
     assert compilation.advice == b"hint" and compilation.advice_bits == 32
     assert compilation.constructor == DemoG(8).digest != MatmulG(8).digest
@@ -72,7 +74,10 @@ def test_compile_charges_the_advice_g_consumes() -> None:
     assert same(compilation, compile_demo_g(request))
     # DemoG ignores its advice: the same circuit, only the charged advice differs
     without = Compile(DemoG(8), request.batch, b"", GATE_SET)
-    assert without.compiled.digest == compilation.compiled.digest and without.advice_bits == 0
+    assert (
+        without.compiled.digest == compilation.compiled.digest
+        and without.advice_bits == 0
+    )
 
 
 def test_compile_rejects_advice_over_the_bound() -> None:
@@ -86,7 +91,10 @@ def test_compile_rejects_advice_over_the_bound() -> None:
         Compile(DemoG(8), request.batch, "x", GATE_SET, max_advice_bits=8)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="max_advice_bits"):
         Compile(DemoG(8), request.batch, b"", GATE_SET, max_advice_bits=-1)
-    assert Compile(DemoG(8), request.batch, b"x", GATE_SET, max_advice_bits=8).advice_bits == 8
+    assert (
+        Compile(DemoG(8), request.batch, b"x", GATE_SET, max_advice_bits=8).advice_bits
+        == 8
+    )
 
 
 class FailingG:
@@ -151,10 +159,15 @@ def test_paper_functions_reject_anything_but_what_compile_produced() -> None:
     with pytest.raises(TypeError, match="Compilation"):
         Capacity(compile_demo_g().compiled, VerificationPolicy(1, 1), 0)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="Compilation"):
-        make_verification_expectation(object(), VerificationPolicy(1, 1), (), parameters=NO_CAPACITY)  # type: ignore[arg-type]
+        make_verification_expectation(
+            object(), VerificationPolicy(1, 1), (), parameters=NO_CAPACITY
+        )  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="Compilation"):
         make_verification_expectation(
-            compile_demo_g().compiled, VerificationPolicy(1, 1), (), parameters=NO_CAPACITY  # type: ignore[arg-type]
+            compile_demo_g().compiled,
+            VerificationPolicy(1, 1),
+            (),
+            parameters=NO_CAPACITY,  # type: ignore[arg-type]
         )
 
 
@@ -163,8 +176,12 @@ def test_expectation_generates_mandatory_verifier_seeds() -> None:
     compilation = compile_demo_g(request)
     policy = VerificationPolicy(1, 1)
     outputs = request.expected_outputs
-    first = make_verification_expectation(compilation, policy, outputs, parameters=NO_CAPACITY)
-    second = make_verification_expectation(compilation, policy, outputs, parameters=NO_CAPACITY)
+    first = make_verification_expectation(
+        compilation, policy, outputs, parameters=NO_CAPACITY
+    )
+    second = make_verification_expectation(
+        compilation, policy, outputs, parameters=NO_CAPACITY
+    )
 
     assert len(first.q_seed) == len(first.s_seed) == 32
     assert (first.q_seed, first.s_seed) != (second.q_seed, second.s_seed)
@@ -186,7 +203,9 @@ def test_capacity_adds_exactly_the_advice_bits() -> None:
     request = DemoGCompileRequest()
     without = compile_demo_g(request)
     with_advice = compile_demo_g(replace(request, advice=b"hint!", max_advice_bits=40))
-    assert with_advice.compiled.digest == without.compiled.digest  # DemoG ignores its advice
+    assert (
+        with_advice.compiled.digest == without.compiled.digest
+    )  # DemoG ignores its advice
 
     for theta, eta in [
         (VerificationPolicy(1, 1), 0),

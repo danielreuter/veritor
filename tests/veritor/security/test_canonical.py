@@ -38,8 +38,12 @@ def test_same_description_bytes_give_the_same_digest_and_layout(sec):
     first = Compiler(gate_set).compile(description, [0, 0])
     second = Compiler(make_word_gate_set(8)).compile(bytes(description), [0, 0])
     assert first.digest == second.digest
-    assert [(first.circuit[a].op, first.circuit[a].args, first.circuit[a].width) for a in range(first.circuit.n)] == [
-        (second.circuit[a].op, second.circuit[a].args, second.circuit[a].width) for a in range(second.circuit.n)
+    assert [
+        (first.circuit[a].op, first.circuit[a].args, first.circuit[a].width)
+        for a in range(first.circuit.n)
+    ] == [
+        (second.circuit[a].op, second.circuit[a].args, second.circuit[a].width)
+        for a in range(second.circuit.n)
     ]
     assert first.index.kinds() == second.index.kinds()
     assert first.index.digest == second.index.digest
@@ -47,7 +51,10 @@ def test_same_description_bytes_give_the_same_digest_and_layout(sec):
     narrow = Compiler(make_word_gate_set(4)).compile(description, [0, 0])
     assert narrow.digest != first.digest
     # and it is the digest of the canonical bytes (with the gate set), nothing environmental
-    assert parse_description(description, gate_set).digest == parse_description(description, gate_set).digest
+    assert (
+        parse_description(description, gate_set).digest
+        == parse_description(description, gate_set).digest
+    )
 
 
 def test_reencoded_description_bytes_are_rejected_before_any_compile_work(sec):
@@ -57,7 +64,9 @@ def test_reencoded_description_bytes_are_rejected_before_any_compile_work(sec):
     with pytest.raises(CompileError, match="canonically serialized"):
         parse_description(pretty, gate_set)
     reordered = json.dumps(document, separators=(",", ":"), sort_keys=False).encode()
-    swapped = json.dumps({k: document[k] for k in reversed(list(document))}, separators=(",", ":")).encode()
+    swapped = json.dumps(
+        {k: document[k] for k in reversed(list(document))}, separators=(",", ":")
+    ).encode()
     assert swapped != description
     with pytest.raises(CompileError, match="canonically serialized"):
         parse_description(swapped, gate_set)
@@ -70,16 +79,20 @@ def test_reencoded_description_bytes_are_rejected_before_any_compile_work(sec):
         parse_description(b"\xff" + description, gate_set)
     # oversize bytes are refused before parsing
     with pytest.raises(CompileError, match="max_description_bytes"):
-        parse_description(description, gate_set, CompilationLimits(max_description_bytes=len(description) - 1))
+        parse_description(
+            description,
+            gate_set,
+            CompilationLimits(max_description_bytes=len(description) - 1),
+        )
 
 
 def test_changing_a_mark_changes_the_digest_and_the_header(sec):
     """The same gates at the same addresses under other units: another ``(C, I)``."""
 
     fine, wide = sec.Model(2, 2), sec.Model(2, 2, wide_units=True)
-    assert [(fine.circuit[a].op, fine.circuit[a].args) for a in range(fine.circuit.n)] == [
-        (wide.circuit[a].op, wide.circuit[a].args) for a in range(wide.circuit.n)
-    ]
+    assert [
+        (fine.circuit[a].op, fine.circuit[a].args) for a in range(fine.circuit.n)
+    ] == [(wide.circuit[a].op, wide.circuit[a].args) for a in range(wide.circuit.n)]
     assert fine.index.verification_unit_count != wide.index.verification_unit_count
     assert fine.compiled.digest != wide.compiled.digest
     assert fine.index.digest != wide.index.digest
@@ -103,7 +116,11 @@ def test_changing_a_mark_changes_the_digest_and_the_header(sec):
 @pytest.mark.parametrize(
     ("label", "rewrite", "code"),
     [
-        ("whitespace", lambda data: data.replace(b",", b", "), VerificationCode.NONCANONICAL_TRANSCRIPT),
+        (
+            "whitespace",
+            lambda data: data.replace(b",", b", "),
+            VerificationCode.NONCANONICAL_TRANSCRIPT,
+        ),
         ("uppercase-hex", None, VerificationCode.NONCANONICAL_TRANSCRIPT),
         ("unreduced-fraction", None, VerificationCode.NONCANONICAL_TRANSCRIPT),
         ("unsorted-keys", None, VerificationCode.NONCANONICAL_TRANSCRIPT),
@@ -141,7 +158,9 @@ def test_transcript_with_a_noncanonical_or_malformed_encoding_is_rejected(
             document["boundary"]["commitment"]["count"] = -6
         elif label == "other-version":
             document["version"] = f"{document['version']}-other"
-        data = json.dumps(document, separators=(",", ":"), sort_keys=label != "unsorted-keys").encode()
+        data = json.dumps(
+            document, separators=(",", ":"), sort_keys=label != "unsorted-keys"
+        ).encode()
     assert data != canonical
     report = model.verify(data, expectation)
     assert report.code == code, label
@@ -192,7 +211,9 @@ def test_nesting_deeper_than_the_limit_is_a_compile_error():
     )
     for level in range(1, depth):
         previous = current
-        current = tracer.definition(input_count=1, key=("level", level))(lambda v, p=previous: p(v[0]))
+        current = tracer.definition(input_count=1, key=("level", level))(
+            lambda v, p=previous: p(v[0])
+        )
     deepest = current
 
     @tracer.definition(input_count=0, key="deep-root", role="replay")

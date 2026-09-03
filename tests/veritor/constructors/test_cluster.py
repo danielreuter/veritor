@@ -35,11 +35,18 @@ from veritor.research import Bound, Cost, Optimize
 
 SHAPE = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=6, width=16)
 DEEP = LMShape(vocab=8, d_model=4, heads=2, layers=2, context=6, width=16)
-REQUESTS = (Request((1, 2, 3), 3), Request((5,), 2), Request((7, 0), 4), Request((2, 2, 2), 1))
+REQUESTS = (
+    Request((1, 2, 3), 3),
+    Request((5,), 2),
+    Request((7, 0), 4),
+    Request((2, 2, 2), 1),
+)
 GATES = make_isa_gate_set(16)
 
 
-def compile_run(constructor: ClusterG, requests: tuple[Request, ...], schedule: Schedule) -> Compiled:
+def compile_run(
+    constructor: ClusterG, requests: tuple[Request, ...], schedule: Schedule
+) -> Compiled:
     description, inputs = constructor(requests, schedule.encode())
     return Compiler(GATES).compile(description, inputs)
 
@@ -77,24 +84,48 @@ def test_fcfs_run_generates_what_the_reference_generates(fcfs) -> None:
     parameters = random_parameters(SHAPE, seed=1)
 
     assert schedule.active_steps(REQUESTS) == {0: 3, 1: 2, 2: 4, 3: 1}
-    assert generated(constructor, compiled, REQUESTS, schedule, parameters) == reference_generate(
-        SHAPE, parameters, REQUESTS
-    )
+    assert generated(
+        constructor, compiled, REQUESTS, schedule, parameters
+    ) == reference_generate(SHAPE, parameters, REQUESTS)
     # the prompts are the in gates, laid out by (pod, step) then slot
     assert constructor.flatten_inputs(REQUESTS, schedule) == (1, 2, 3, 5, 7, 0, 2, 2, 2)
-    assert compiled.circuit.input_count == 9 and compiled.circuit.weight_count == SHAPE.weight_count
+    assert (
+        compiled.circuit.input_count == 9
+        and compiled.circuit.weight_count == SHAPE.weight_count
+    )
     assert constructor.output_layout(REQUESTS, schedule) == (
-        (0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (2, 0), (2, 1), (2, 2), (2, 3), (3, 0),
+        (0, 0),
+        (0, 1),
+        (0, 2),
+        (1, 0),
+        (1, 1),
+        (2, 0),
+        (2, 1),
+        (2, 2),
+        (2, 3),
+        (3, 0),
     )
     # other parameters, same circuit: the weights are not part of the description
     other = random_parameters(SHAPE, seed=2)
-    assert generated(constructor, compiled, REQUESTS, schedule, other) == reference_generate(SHAPE, other, REQUESTS)
+    assert generated(
+        constructor, compiled, REQUESTS, schedule, other
+    ) == reference_generate(SHAPE, other, REQUESTS)
 
 
 def test_a_hand_written_schedule_is_semantically_transparent() -> None:
     """One slot per pod; request 1 takes request 0's slot at step 2 and cuts it to two tokens."""
 
-    schedule = Schedule(2, 1, 6, (Join(0, 0, 0, 0, 2), Join(0, 2, 0, 1, 2), Join(1, 0, 0, 2, 4), Join(1, 4, 0, 3, 1)))
+    schedule = Schedule(
+        2,
+        1,
+        6,
+        (
+            Join(0, 0, 0, 0, 2),
+            Join(0, 2, 0, 1, 2),
+            Join(1, 0, 0, 2, 4),
+            Join(1, 4, 0, 3, 1),
+        ),
+    )
     constructor = ClusterG(SHAPE, pods=2, slots=1, steps=6)
     compiled = compile_run(constructor, REQUESTS, schedule)
     parameters = random_parameters(SHAPE, seed=7)
@@ -102,9 +133,14 @@ def test_a_hand_written_schedule_is_semantically_transparent() -> None:
     assert schedule.active_steps(REQUESTS) == {0: 2, 1: 2, 2: 4, 3: 1}
     reference = reference_generate(SHAPE, parameters, REQUESTS)
     assert generated(constructor, compiled, REQUESTS, schedule, parameters) == (
-        reference[0][:2], reference[1], reference[2], reference[3],
+        reference[0][:2],
+        reference[1],
+        reference[2],
+        reference[3],
     )
-    assert compiled.index.replay_units.count == 1 + 4 + 5  # weights, pod 0 steps 0-3, pod 1 steps 0-4
+    assert (
+        compiled.index.replay_units.count == 1 + 4 + 5
+    )  # weights, pod 0 steps 0-3, pod 1 steps 0-4
 
 
 @pytest.mark.parametrize(
@@ -112,7 +148,9 @@ def test_a_hand_written_schedule_is_semantically_transparent() -> None:
     [(1, 2, 1), (1, 3, 2), (2, 1, 2, 1), (1, 1, 3), (3, 1, 1, 2)],
     ids=lambda m: "-".join(map(str, m)),
 )
-def test_mixed_lifetimes_in_one_pod_compile_and_decode_like_the_reference(max_news) -> None:
+def test_mixed_lifetimes_in_one_pod_compile_and_decode_like_the_reference(
+    max_news,
+) -> None:
     """Occupants leaving at different steps make a step declare a strided subset of its tokens.
 
     Three or four slots in one pod, one-token prompts, `max_new` differing per
@@ -128,13 +166,15 @@ def test_mixed_lifetimes_in_one_pod_compile_and_decode_like_the_reference(max_ne
     parameters = random_parameters(SHAPE, seed=5)
 
     assert schedule.active_steps(requests) == dict(enumerate(max_news))
-    assert generated(constructor, compiled, requests, schedule, parameters) == reference_generate(
-        SHAPE, parameters, requests
-    )
+    assert generated(
+        constructor, compiled, requests, schedule, parameters
+    ) == reference_generate(SHAPE, parameters, requests)
     assert len(compiled.circuit.outputs) == sum(max_news)
 
 
-def test_a_restarted_request_streams_the_reference_and_keeps_its_aborted_steps() -> None:
+def test_a_restarted_request_streams_the_reference_and_keeps_its_aborted_steps() -> (
+    None
+):
     """Pod 0 fails at step 2: request 0 (two tokens streamed) restarts from its prefill on pod 1 at step 3.
 
     The aborted attempt's two steps stay in the circuit (their tokens were
@@ -143,7 +183,12 @@ def test_a_restarted_request_streams_the_reference_and_keeps_its_aborted_steps()
     """
 
     requests = (Request((1, 2), 4), Request((5,), 2), Request((7, 0, 3), 2))
-    joins = (Join(0, 0, 0, 0, 2), Join(0, 0, 1, 1, 2), Join(1, 0, 0, 2, 2), Join(1, 3, 0, 0, 4))
+    joins = (
+        Join(0, 0, 0, 0, 2),
+        Join(0, 0, 1, 1, 2),
+        Join(1, 0, 0, 2, 2),
+        Join(1, 3, 0, 0, 4),
+    )
     schedule = Schedule(2, 2, 7, joins)
     constructor = ClusterG(SHAPE, pods=2, slots=2, steps=7)
     compiled = compile_run(constructor, requests, schedule)
@@ -151,23 +196,29 @@ def test_a_restarted_request_streams_the_reference_and_keeps_its_aborted_steps()
 
     assert schedule.streamed_before(requests) == (0, 0, 0, 2)
     assert schedule.active_steps(requests) == {0: 4, 1: 2, 2: 2}
-    assert generated(constructor, compiled, requests, schedule, parameters) == reference_generate(
-        SHAPE, parameters, requests
-    )
+    assert generated(
+        constructor, compiled, requests, schedule, parameters
+    ) == reference_generate(SHAPE, parameters, requests)
     # the prompt of request 0 is prefilled twice: once per attempt, in (pod, step) order
     assert constructor.flatten_inputs(requests, schedule) == (1, 2, 5, 7, 0, 3, 1, 2)
     # the weights, pod 0's steps 0-1, pod 1's steps 0-1 and 3-6
     assert compiled.index.replay_units.count == 1 + 2 + 2 + 4
     assert len(compiled.circuit.outputs) == 4 + 2 + 2
     # the recomputed positions are declared by their steps but are not circuit outputs
-    tokens_declared = sum(len(occupants) for occupants in schedule.occupancy(requests).values())
+    tokens_declared = sum(
+        len(occupants) for occupants in schedule.occupancy(requests).values()
+    )
     assert tokens_declared == 2 + 2 + 2 + 4 > len(compiled.circuit.outputs)
     # a restart while the first attempt still holds its slot is not a schedule
     with pytest.raises(TracerError, match="restarts at step 1"):
-        constructor(requests, Schedule(2, 2, 7, (*joins[:3], Join(1, 1, 1, 0, 4))).encode())
+        constructor(
+            requests, Schedule(2, 2, 7, (*joins[:3], Join(1, 1, 1, 0, 4))).encode()
+        )
 
 
-def test_a_resumed_attempt_reads_the_cache_it_left_across_a_gap_and_across_pods() -> None:
+def test_a_resumed_attempt_reads_the_cache_it_left_across_a_gap_and_across_pods() -> (
+    None
+):
     """Request 0 decodes two tokens on pod 0, is swapped out for two steps, and resumes on pod 1 at step 4.
 
     The resumed steps are decode steps over the cache pod 0's steps declared;
@@ -176,7 +227,12 @@ def test_a_resumed_attempt_reads_the_cache_it_left_across_a_gap_and_across_pods(
     """
 
     requests = (Request((1, 2), 4), Request((5,), 2), Request((7, 0, 3), 2))
-    joins = (Join(0, 0, 0, 0, 2), Join(0, 0, 1, 1, 2), Join(1, 0, 0, 2, 2), Join(1, 4, 0, 0, 2, resume=True))
+    joins = (
+        Join(0, 0, 0, 0, 2),
+        Join(0, 0, 1, 1, 2),
+        Join(1, 0, 0, 2, 2),
+        Join(1, 4, 0, 0, 2, resume=True),
+    )
     schedule = Schedule(2, 2, 7, joins)
     constructor = ClusterG(SHAPE, pods=2, slots=2, steps=7)
     compiled = compile_run(constructor, requests, schedule)
@@ -184,20 +240,32 @@ def test_a_resumed_attempt_reads_the_cache_it_left_across_a_gap_and_across_pods(
 
     assert schedule.streamed_before(requests) == (0, 0, 0, 2)
     assert schedule.active_steps(requests) == {0: 4, 1: 2, 2: 2}
-    assert generated(constructor, compiled, requests, schedule, parameters) == reference_generate(
-        SHAPE, parameters, requests
-    )
-    assert constructor.flatten_inputs(requests, schedule) == (1, 2, 5, 7, 0, 3)  # the prompt enters once
+    assert generated(
+        constructor, compiled, requests, schedule, parameters
+    ) == reference_generate(SHAPE, parameters, requests)
+    assert constructor.flatten_inputs(requests, schedule) == (
+        1,
+        2,
+        5,
+        7,
+        0,
+        3,
+    )  # the prompt enters once
     # the weights; steps 0-1 of both pods; pod 1's steps 4-5 -- laid out by step, then pod
     index = compiled.index
     assert index.replay_units.count == 1 + 4 + 2
     resumed = index.replay_units.unit(5)
     reads = set(compiled.circuit.In(resumed)) - set(compiled.circuit.weights)
-    assert {index.replay_units.owner(address) for address in reads} == {1, 3}  # pod 0's steps 0 and 1
+    assert {index.replay_units.owner(address) for address in reads} == {
+        1,
+        3,
+    }  # pod 0's steps 0 and 1
     assert len(compiled.circuit.outputs) == 4 + 2 + 2
 
 
-def test_a_chunked_prefill_spreads_a_prompt_over_steps_and_computes_the_reference() -> None:
+def test_a_chunked_prefill_spreads_a_prompt_over_steps_and_computes_the_reference() -> (
+    None
+):
     """Request 0's three-token prompt enters two tokens per step; the second chunk generates the first token."""
 
     requests = (Request((1, 2, 3), 3), Request((5,), 2))
@@ -207,23 +275,34 @@ def test_a_chunked_prefill_spreads_a_prompt_over_steps_and_computes_the_referenc
     parameters = random_parameters(SHAPE, seed=4)
 
     assert schedule.active_steps(requests) == {0: 3, 1: 2}
-    assert generated(constructor, compiled, requests, schedule, parameters) == reference_generate(
-        SHAPE, parameters, requests
-    )
-    assert constructor.flatten_inputs(requests, schedule) == (1, 2, 5, 3)  # chunk 0 and request 1, then chunk 1
+    assert generated(
+        constructor, compiled, requests, schedule, parameters
+    ) == reference_generate(SHAPE, parameters, requests)
+    assert constructor.flatten_inputs(requests, schedule) == (
+        1,
+        2,
+        5,
+        3,
+    )  # chunk 0 and request 1, then chunk 1
     assert compiled.index.replay_units.count == 1 + 4
     # the same requests prefilled in one step: another description (other step kinds), the same tokens
     plain_schedule = Schedule(1, 2, 5, (Join(0, 0, 0, 0, 3), Join(0, 0, 1, 1, 2)))
     plain = compile_run(constructor, requests, plain_schedule)
     assert plain.digest != compiled.digest
-    assert generated(constructor, plain, requests, plain_schedule, parameters) == generated(
-        constructor, compiled, requests, schedule, parameters
-    )
+    assert generated(
+        constructor, plain, requests, plain_schedule, parameters
+    ) == generated(constructor, compiled, requests, schedule, parameters)
     assert compiled.index.replay_units.count == plain.index.replay_units.count + 1
 
 
 def test_two_layers_and_a_different_fcfs_shape() -> None:
-    requests = (Request((3, 1), 4), Request((0,), 3), Request((6, 6, 6), 2), Request((2, 5), 1), Request((4,), 2))
+    requests = (
+        Request((3, 1), 4),
+        Request((0,), 3),
+        Request((6, 6, 6), 2),
+        Request((2, 5), 1),
+        Request((4,), 2),
+    )
     constructor = ClusterG(DEEP, pods=2, slots=2, steps=5)
     schedule = schedule_fcfs(requests, 2, 2, 5)
     compiled = compile_run(constructor, requests, schedule)
@@ -255,23 +334,32 @@ def test_kinds_are_shared_across_pods_and_steps() -> None:
             compiled = Compiler(GATES).compile(description, inputs)
             best = min(best, time.perf_counter() - started)
         runs[pods] = (description, compiled, best)
-        assert generated(constructor, compiled, requests, schedule, random_parameters(SHAPE, 0)) == (
-            reference_generate(SHAPE, random_parameters(SHAPE, 0), requests)
-        )
+        assert generated(
+            constructor, compiled, requests, schedule, random_parameters(SHAPE, 0)
+        ) == (reference_generate(SHAPE, random_parameters(SHAPE, 0), requests))
 
     one, three, six = runs[1], runs[3], runs[6]
     assert len(definitions(one[0])) == len(definitions(three[0]))
-    assert one[1].circuit.n == three[1].circuit.n and one[1].index.replay_units.count == 1 + 9
+    assert (
+        one[1].circuit.n == three[1].circuit.n
+        and one[1].index.replay_units.count == 1 + 9
+    )
     assert three[1].index.replay_units.count == 1 + 9
     assert abs(len(one[0]) - len(three[0])) < 64  # the roots differ in digits only
     # six one-slot pods: three single-occupant step kinds instead of the three two-occupant ones
     assert len(definitions(six[0])) == len(definitions(three[0]))
     assert six[1].index.replay_units.count == 1 + 18
     for run, copies in ((three, 9), (six, 18)):
-        replay_kinds = {row.kind: row.copies for row in run[1].index.kinds() if row.role == "replay"}
+        replay_kinds = {
+            row.kind: row.copies for row in run[1].index.kinds() if row.role == "replay"
+        }
         assert len(replay_kinds) == 1 + 3 and sum(replay_kinds.values()) == 1 + copies
     step_kinds = [
-        {row.kind for row in run[1].index.kinds() if row.role == "replay" and row.source_weights == 0}
+        {
+            row.kind
+            for row in run[1].index.kinds()
+            if row.role == "replay" and row.source_weights == 0
+        }
         for run in (one, three, six)
     ]
     assert step_kinds[0] == step_kinds[1] and step_kinds[1].isdisjoint(step_kinds[2])
@@ -285,34 +373,56 @@ def test_kinds_are_shared_across_pods_and_steps() -> None:
         steps = [row for row in units if row.source_weights == 0]
         assert weights.closed and rows[run[1].index.root.kind].closed
         assert {row.input_count == SHAPE.weight_count for row in steps} == {True, False}
-        assert all(row.closed == (row.input_count == SHAPE.weight_count) for row in steps)
+        assert all(
+            row.closed == (row.input_count == SHAPE.weight_count) for row in steps
+        )
 
 
-def test_marks_tile_every_gate_once_and_the_kv_cache_is_the_step_interface(fcfs) -> None:
+def test_marks_tile_every_gate_once_and_the_kv_cache_is_the_step_interface(
+    fcfs,
+) -> None:
     _, schedule, compiled = fcfs
     index, circuit = compiled.index, compiled.circuit
     occupancy = schedule.occupancy(REQUESTS)
 
     assert index.replay_units.count == 1 + len(occupancy) == 8
     weights = index.replay_units.unit(0)
-    assert list(circuit.weights) == list(weights.interval) and circuit.Out(weights) == ()
-    covered = [a for r in range(index.replay_units.count) for a in index.replay_units.unit(r).interval]
+    assert (
+        list(circuit.weights) == list(weights.interval) and circuit.Out(weights) == ()
+    )
+    covered = [
+        a
+        for r in range(index.replay_units.count)
+        for a in index.replay_units.unit(r).interval
+    ]
     assert covered == list(range(circuit.n))
-    assert all(index.replay_units.owner(a) == r for r in range(8) for a in index.replay_units.unit(r).interval)
+    assert all(
+        index.replay_units.owner(a) == r
+        for r in range(8)
+        for a in index.replay_units.unit(r).interval
+    )
     inputs = set(circuit.inputs)
-    time_order = sorted(occupancy, key=lambda key: (key[1], key[0]))  # steps are laid out by step, then pod
+    time_order = sorted(
+        occupancy, key=lambda key: (key[1], key[0])
+    )  # steps are laid out by step, then pod
     for r, key in enumerate(time_order, start=1):
         unit = index.replay_units.unit(r)
         occupants = occupancy[key]
-        prefills = [o for o in occupants if o.prefilled == 0]  # a fresh join prefills its whole prompt
+        prefills = [
+            o for o in occupants if o.prefilled == 0
+        ]  # a fresh join prefills its whole prompt
         produced = sum(
-            SHAPE.state_size(len(REQUESTS[o.request].prompt) if o in prefills else 1) + 1 for o in occupants
+            SHAPE.state_size(len(REQUESTS[o.request].prompt) if o in prefills else 1)
+            + 1
+            for o in occupants
         )
         assert unit.role == "replay" and len(circuit.Out(unit)) == produced
         prompts = sum(len(REQUESTS[o.request].prompt) for o in prefills)
         assert len(inputs & set(unit.interval)) == prompts
         reads = set(circuit.In(unit))
-        assert set(circuit.weights) <= reads  # every step reads the whole model through ports
+        assert (
+            set(circuit.weights) <= reads
+        )  # every step reads the whole model through ports
         for other in reads - set(circuit.weights):
             assert index.replay_units.owner(other) < r  # and only earlier steps
     verification = sum(index.verification_units(r).count for r in range(8))
@@ -326,35 +436,60 @@ def test_bound_cost_and_optimize_run_over_the_cluster(fcfs) -> None:
     grid = tuple(Fraction(k, 4) for k in range(1, 5))
     for eta in (Fraction(1, 100), Fraction(1, 10)):
         table = {
-            (q, s): Bound(compiled, VerificationPolicy(q, s), eta) for q in grid for s in grid
+            (q, s): Bound(compiled, VerificationPolicy(q, s), eta)
+            for q in grid
+            for s in grid
         }
-        assert all(0 <= result.bits <= result.out_bits == 16 * 10 for result in table.values())
+        assert all(
+            0 <= result.bits <= result.out_bits == 16 * 10 for result in table.values()
+        )
         assert table[(1, 1)].bits == 0.0
         for q in grid:
             for s in grid:
                 if q < 1:
-                    assert table[(q + Fraction(1, 4), s)].bits <= table[(q, s)].bits + 1e-9
+                    assert (
+                        table[(q + Fraction(1, 4), s)].bits <= table[(q, s)].bits + 1e-9
+                    )
                 if s < 1:
-                    assert table[(q, s + Fraction(1, 4))].bits <= table[(q, s)].bits + 1e-9
+                    assert (
+                        table[(q, s + Fraction(1, 4))].bits <= table[(q, s)].bits + 1e-9
+                    )
     assert Bound(compiled, VerificationPolicy(0, 1), Fraction(1, 2)).capped
 
     policy = VerificationPolicy(Fraction(1, 2), Fraction(1, 2))
     cost = Cost(compiled, policy, CostParameters(hash_cost=1, proof_overhead=0))
-    assert cost.boundary == compiled.index.boundary().count == 139  # 9 prompt tokens + 130 declared outputs
+    assert (
+        cost.boundary == compiled.index.boundary().count == 139
+    )  # 9 prompt tokens + 130 declared outputs
     assert cost.weights == SHAPE.weight_count
-    full = Cost(compiled, VerificationPolicy(1, 1), CostParameters(hash_cost=1, proof_overhead=0))
-    assert full.commit_interior == 2 * cost.commit_interior and full.proof == 4 * cost.proof
+    full = Cost(
+        compiled,
+        VerificationPolicy(1, 1),
+        CostParameters(hash_cost=1, proof_overhead=0),
+    )
+    assert (
+        full.commit_interior == 2 * cost.commit_interior
+        and full.proof == 4 * cost.proof
+    )
     assert full.total > cost.total > 0
     # the decode steps read the caches of earlier steps, which the honest server does not keep:
     # sampling any of them re-executes the run, so the recomputation is not linear in ``q``
     rows = {row.kind: row for row in compiled.kind_table().rows}
     honest = rows[compiled.index.root.kind].replay_cost  # the replay units tile the run
-    assert honest == sum(row.copies * row.replay_cost for row in rows.values() if row.role == "replay")
+    assert honest == sum(
+        row.copies * row.replay_cost for row in rows.values() if row.role == "replay"
+    )
     assert full.recompute == honest
-    assert Fraction(1, 2) * honest < cost.recompute < honest  # more than ``q`` of the run, less than all of it
+    assert (
+        Fraction(1, 2) * honest < cost.recompute < honest
+    )  # more than ``q`` of the run, less than all of it
 
     best = Optimize(compiled, Fraction(1, 100), PolicyGrid.uniform(2), max_bits=8)
-    assert best is not None and best.policy == VerificationPolicy(1, 1) and best.bound.bits == 0.0
+    assert (
+        best is not None
+        and best.policy == VerificationPolicy(1, 1)
+        and best.bound.bits == 0.0
+    )
     assert best.evaluated == 9
 
 
@@ -365,7 +500,12 @@ def test_digest_names_the_constructor_and_its_parameters() -> None:
     assert len(constructor.digest) == 64
     assert constructor.digest != ClusterG(SHAPE, 3, 2, 6).digest
     assert constructor.digest != ClusterG(DEEP, 2, 2, 6).digest
-    assert constructor.manifest == {"pods": 2, "shape": SHAPE.manifest, "slots": 2, "steps": 6}
+    assert constructor.manifest == {
+        "pods": 2,
+        "shape": SHAPE.manifest,
+        "slots": 2,
+        "steps": 6,
+    }
     with pytest.raises(ValueError, match="pods must be a positive integer"):
         ClusterG(SHAPE, 0, 2, 6)
     with pytest.raises(TypeError, match="LMShape"):
@@ -382,7 +522,9 @@ def test_bad_requests_and_bad_advice_fail_to_trace() -> None:
         constructor(REQUESTS, schedule.encode()[:-1])
     with pytest.raises(TracerError, match="advice must be bytes"):
         constructor(REQUESTS, "schedule")  # type: ignore[arg-type]
-    with pytest.raises(TracerError, match=r"never scheduled: \[2, 3\]"):  # one pod, one step
+    with pytest.raises(
+        TracerError, match=r"never scheduled: \[2, 3\]"
+    ):  # one pod, one step
         ClusterG(SHAPE, 1, 2, 1)(REQUESTS, schedule_fcfs(REQUESTS, 1, 2, 1).encode())
     with pytest.raises(TracerError, match="unknown request"):
         constructor(REQUESTS[:3], schedule.encode())
@@ -394,7 +536,9 @@ def test_bad_requests_and_bad_advice_fail_to_trace() -> None:
     cut = Schedule(1, 1, 3, (Join(0, 0, 0, 0, 3),))  # the run ends first: 3 + 3 fits
     assert ClusterG(SHAPE, 1, 1, 3)(long, cut.encode())[1] == (1, 2, 3)
     with pytest.raises(TracerError, match="outside the vocabulary"):
-        ClusterG(SHAPE, 1, 1, 1)((Request((8,), 1),), schedule_fcfs((Request((8,), 1),), 1, 1, 1).encode())
+        ClusterG(SHAPE, 1, 1, 1)(
+            (Request((8,), 1),), schedule_fcfs((Request((8,), 1),), 1, 1, 1).encode()
+        )
     with pytest.raises(TracerError, match="nonempty tuple of Request"):
         constructor([REQUESTS[0]], schedule.encode())  # type: ignore[arg-type]
     with pytest.raises(TracerError, match="nonempty tuple of Request"):
@@ -409,7 +553,9 @@ def test_the_compiler_checks_the_input_count_against_the_prompts(fcfs) -> None:
         Compiler(GATES).compile(description, inputs[:-1])
 
 
-def test_a_heterogeneous_fleet_traces_each_pod_on_its_own_gates_in_one_circuit() -> None:
+def test_a_heterogeneous_fleet_traces_each_pod_on_its_own_gates_in_one_circuit() -> (
+    None
+):
     """Two pods, two namespaced copies of the toy ISA: the steps on each are their own kinds, the
     weights and the caches are shared, a request prefilled on one architecture decodes on the other,
     and a gate outside the union does not compile."""
@@ -424,24 +570,50 @@ def test_a_heterogeneous_fleet_traces_each_pod_on_its_own_gates_in_one_circuit()
     assert fleet.digest != plain.digest and fleet.manifest["arches"] == ["sm80", "sm90"]
     description, inputs = fleet(requests, schedule.encode())
     compiled = Compiler(fleet.gate_set).compile(description, inputs)
-    assert generated(fleet, compiled, requests, schedule, parameters) == reference_generate(SHAPE, parameters, requests)
+    assert generated(
+        fleet, compiled, requests, schedule, parameters
+    ) == reference_generate(SHAPE, parameters, requests)
     kinds = {row.kind: row for row in compiled.index.kinds()}
     sm80, sm90 = fleet.models["sm80"], fleet.models["sm90"]
     assert sm80.tracer is sm90.tracer is fleet.lm.tracer
     assert kinds[sm80.dot(4).digest].copies > 0 and kinds[sm90.dot(4).digest].copies > 0
-    assert sm80.dot(4).digest != sm90.dot(4).digest and sm80.weights_unit() is sm90.weights_unit()
-    steps = [row for row in kinds.values() if row.role == "replay" and row.source_weights == 0]
-    assert len(steps) == 5  # prefill and two decodes on sm80 (3 kinds), prefill and one decode on sm90
-    prefill80, prefill90 = fleet.step((("prefill", 2, 0),), "sm80"), fleet.step((("prefill", 1, 0),), "sm90")
-    assert prefill80.digest != fleet.step((("prefill", 2, 0),), "sm90").digest and kinds[prefill90.digest].copies == 1
+    assert (
+        sm80.dot(4).digest != sm90.dot(4).digest
+        and sm80.weights_unit() is sm90.weights_unit()
+    )
+    steps = [
+        row
+        for row in kinds.values()
+        if row.role == "replay" and row.source_weights == 0
+    ]
+    assert (
+        len(steps) == 5
+    )  # prefill and two decodes on sm80 (3 kinds), prefill and one decode on sm90
+    prefill80, prefill90 = (
+        fleet.step((("prefill", 2, 0),), "sm80"),
+        fleet.step((("prefill", 1, 0),), "sm90"),
+    )
+    assert (
+        prefill80.digest != fleet.step((("prefill", 2, 0),), "sm90").digest
+        and kinds[prefill90.digest].copies == 1
+    )
     # the description names the namespaced gates; the plain ISA rejects it
     body = json.loads(description)
     with pytest.raises(CompileError, match="unknown gate"):
         Compiler(GATES).compile(description, inputs)
-    assert "add@sm80" in description.decode() and "add@sm90" in description.decode() and body
+    assert (
+        "add@sm80" in description.decode()
+        and "add@sm90" in description.decode()
+        and body
+    )
 
     # prefilled on sm80 at step 0, swapped out, decoded on sm90 from step 1
-    across = Schedule(2, 1, 4, (Join(0, 0, 0, 0, 1), Join(1, 1, 0, 0, 2, resume=True), Join(1, 3, 0, 1, 1)))
+    across = Schedule(
+        2,
+        1,
+        4,
+        (Join(0, 0, 0, 0, 1), Join(1, 1, 0, 0, 2, resume=True), Join(1, 3, 0, 1, 1)),
+    )
     description, inputs = fleet(requests, across.encode())
     compiled = Compiler(fleet.gate_set).compile(description, inputs)
     tokens = generated(fleet, compiled, requests, across, parameters)

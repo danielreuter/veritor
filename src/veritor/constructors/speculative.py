@@ -127,7 +127,9 @@ def encode_acceptances(gamma: int, traces: Sequence[Sequence[int]]) -> bytes:
     return bytes(int(text[i : i + 8], 2) for i in range(0, len(text), 8))
 
 
-def decode_acceptances(gamma: int, requests: Sequence[Request], a: bytes) -> tuple[Acceptances, ...]:
+def decode_acceptances(
+    gamma: int, requests: Sequence[Request], a: bytes
+) -> tuple[Acceptances, ...]:
     """The advice back into per-request acceptances, each self-delimited by reaching ``max_new``."""
 
     width = acceptance_bits(gamma)
@@ -156,24 +158,37 @@ class SpeculativeG:
 
     VERSION = "1"
 
-    def __init__(self, target: LMShape, draft: LMShape, gamma: int, acceptance: str = PADDED) -> None:
+    def __init__(
+        self, target: LMShape, draft: LMShape, gamma: int, acceptance: str = PADDED
+    ) -> None:
         if not isinstance(target, LMShape) or not isinstance(draft, LMShape):
             raise TypeError("target and draft must be LMShapes")
         if target.sampling or draft.sampling:
             raise ValueError("greedy speculative decoding needs argmax models")
         if target.vocab != draft.vocab or target.width != draft.width:
-            raise ValueError("the draft must share the target's vocabulary and word width")
+            raise ValueError(
+                "the draft must share the target's vocabulary and word width"
+            )
         if type(gamma) is not int or gamma < 1:
             raise ValueError("gamma must be a positive integer")
         if gamma + 1 >= target.vocab:
-            raise ValueError("gamma + 1 must be below vocab: the constant table holds the sentinel's parts")
+            raise ValueError(
+                "gamma + 1 must be below vocab: the constant table holds the sentinel's parts"
+            )
         if acceptance not in (PADDED, ADVICE):
             raise ValueError(f"acceptance must be {PADDED!r} or {ADVICE!r}")
-        self.target_shape, self.draft_shape, self.gamma, self.acceptance = target, draft, gamma, acceptance
+        self.target_shape, self.draft_shape, self.gamma, self.acceptance = (
+            target,
+            draft,
+            gamma,
+            acceptance,
+        )
         self.tracer = Tracer(make_isa_gate_set(target.width))
         self.target = ToyLM(target, tracer=self.tracer, prefix="target")
         self.draft = ToyLM(draft, tracer=self.tracer, prefix="draft")
-        self.digest: Digest = constructor_digest(type(self).__name__, self.VERSION, self.manifest)
+        self.digest: Digest = constructor_digest(
+            type(self).__name__, self.VERSION, self.manifest
+        )
 
     @property
     def advised(self) -> bool:
@@ -206,20 +221,32 @@ class SpeculativeG:
 
         n, gamma = len(request.prompt), self.gamma
         if self.advised:
-            return n + request.max_new + gamma  # the last step may overshoot by at most gamma
+            return (
+                n + request.max_new + gamma
+            )  # the last step may overshoot by at most gamma
         return n + (request.max_new - 1) * (gamma + 1) + 1
 
     def requests(self, x: object) -> tuple[Request, ...]:
-        if type(x) is not tuple or not x or any(type(item) is not Request for item in x):
+        if (
+            type(x) is not tuple
+            or not x
+            or any(type(item) is not Request for item in x)
+        ):
             raise TracerError("SpeculativeG expects a nonempty tuple of Request")
         for index, request in enumerate(x):
             if any(token >= self.target_shape.vocab for token in request.prompt):
-                raise TracerError(f"request {index} has a prompt token outside the vocabulary")
+                raise TracerError(
+                    f"request {index} has a prompt token outside the vocabulary"
+                )
             if request.randomness:
-                raise TracerError(f"request {index} carries randomness; speculative decoding is greedy")
+                raise TracerError(
+                    f"request {index} carries randomness; speculative decoding is greedy"
+                )
             needed = self.positions(request)
             if needed > min(self.target_shape.context, self.draft_shape.context):
-                raise TracerError(f"request {index} reaches {needed} positions, beyond a model's context")
+                raise TracerError(
+                    f"request {index} reaches {needed} positions, beyond a model's context"
+                )
         return x
 
     # -- layouts ---------------------------------------------------------------------
@@ -262,12 +289,21 @@ class SpeculativeG:
         for value, (r, position) in zip(outputs, self.output_layout(x), strict=True):
             if position >= 0 and value != self.target_shape.vocab:
                 by_request[r].append(value)
-        return tuple(tuple(tokens[: request.max_new]) for tokens, request in zip(by_request, requests, strict=True))
+        return tuple(
+            tuple(tokens[: request.max_new])
+            for tokens, request in zip(by_request, requests, strict=True)
+        )
 
     def checks(self, outputs: Sequence[int], x: object) -> tuple[int, ...]:
         """The ``ok`` words, one per request (none when padded)."""
 
-        return tuple(value for value, (_r, position) in zip(outputs, self.output_layout(x), strict=True) if position < 0)
+        return tuple(
+            value
+            for value, (_r, position) in zip(
+                outputs, self.output_layout(x), strict=True
+            )
+            if position < 0
+        )
 
     # -- verification units ------------------------------------------------------------
 
@@ -276,7 +312,9 @@ class SpeculativeG:
 
         mul = self.tracer.gate("mul")
 
-        @self.tracer.definition(input_count=1 + d, key=("speculative", "mask_row", d), role=VERIFICATION)
+        @self.tracer.definition(
+            input_count=1 + d, key=("speculative", "mask_row", d), role=VERIFICATION
+        )
         def mask_row(v: Wires) -> object:
             return [mul(v[0], v[1 + i]) for i in range(d)]
 
@@ -291,23 +329,37 @@ class SpeculativeG:
         """
 
         gamma = self.gamma
-        add, mul, sub, eq = (self.tracer.gate(name) for name in ("add", "mul", "sub", "eq"))
+        add, mul, sub, eq = (
+            self.tracer.gate(name) for name in ("add", "mul", "sub", "eq")
+        )
 
-        @self.tracer.definition(input_count=2 * gamma + 3, key=("speculative", "accept", gamma), role=VERIFICATION)
+        @self.tracer.definition(
+            input_count=2 * gamma + 3,
+            key=("speculative", "accept", gamma),
+            role=VERIFICATION,
+        )
         def accept(v: Wires) -> object:
             drafts, z = v[:gamma], v[gamma : 2 * gamma + 1]
-            one, blank = v[2 * gamma + 1], add(v[2 * gamma + 2], v[2 * gamma + 1])  # blank = vocab
+            one, blank = (
+                v[2 * gamma + 1],
+                add(v[2 * gamma + 2], v[2 * gamma + 1]),
+            )  # blank = vocab
             acc: list[Wire] = []
             for i in range(gamma):
                 agree = eq(drafts[i], z[i])
                 acc.append(agree if i == 0 else mul(acc[-1], agree))
             before = [one, *acc]  # acc_0 = 1
-            select = [sub(before[i], acc[i]) if i < gamma else acc[-1] for i in range(gamma + 1)]  # [m == i]
+            select = [
+                sub(before[i], acc[i]) if i < gamma else acc[-1]
+                for i in range(gamma + 1)
+            ]  # [m == i]
             nxt = mul(select[0], z[0])
             for i in range(1, gamma + 1):
                 nxt = add(nxt, mul(select[i], z[i]))
             slots: list[Wire] = []
-            for i in range(1, gamma + 1):  # slot i: d_i if accepted, z_{i-1} if first rejected, else blank
+            for i in range(
+                1, gamma + 1
+            ):  # slot i: d_i if accepted, z_{i-1} if first rejected, else blank
                 slot = add(mul(acc[i - 1], drafts[i - 1]), mul(select[i - 1], z[i - 1]))
                 if i > 1:
                     slot = add(slot, mul(sub(one, before[i - 1]), blank))
@@ -331,10 +383,17 @@ class SpeculativeG:
         drafted = m + 1 if m < gamma else gamma
 
         @self.tracer.definition(
-            input_count=drafted + m + 3, key=("speculative", "check", gamma, m), role=VERIFICATION
+            input_count=drafted + m + 3,
+            key=("speculative", "check", gamma, m),
+            role=VERIFICATION,
         )
         def check(v: Wires) -> object:
-            drafts, z, one, ok = v[:drafted], v[drafted : drafted + m + 1], v[drafted + m + 1], v[drafted + m + 2]
+            drafts, z, one, ok = (
+                v[:drafted],
+                v[drafted : drafted + m + 1],
+                v[drafted + m + 1],
+                v[drafted + m + 2],
+            )
             for i in range(m):
                 ok = mul(ok, eq(drafts[i], z[i]))
             if m < gamma:
@@ -345,7 +404,9 @@ class SpeculativeG:
 
     # -- the request replay unit ---------------------------------------------------------
 
-    def request(self, prompt: int, max_new: int, acceptances: Acceptances | None = None) -> TracedDefinition:
+    def request(
+        self, prompt: int, max_new: int, acceptances: Acceptances | None = None
+    ) -> TracedDefinition:
         """One request: both prefills, then the speculative steps, over both caches.
 
         Ports: the target's weights, then the draft's.  Outputs as in the
@@ -354,14 +415,24 @@ class SpeculativeG:
         """
 
         if (acceptances is None) == self.advised:
-            raise TracerError("advised acceptance needs the request's acceptances; padded takes none")
-        gamma, wt, wd = self.gamma, self.target_shape.weight_count, self.draft_shape.weight_count
+            raise TracerError(
+                "advised acceptance needs the request's acceptances; padded takes none"
+            )
+        gamma, wt, wd = (
+            self.gamma,
+            self.target_shape.weight_count,
+            self.draft_shape.weight_count,
+        )
         dt, dd = self.target_shape.d_model, self.draft_shape.d_model
         lt, ld = self.target_shape.layers, self.draft_shape.layers
         key: tuple[object, ...] = ("speculative", "request", prompt, max_new)
         if acceptances is not None:
-            if sum(m + 1 for m in acceptances) + 1 < max_new or any(not 0 <= m <= gamma for m in acceptances):
-                raise TracerError("the acceptances must reach max_new with counts in 0..gamma")
+            if sum(m + 1 for m in acceptances) + 1 < max_new or any(
+                not 0 <= m <= gamma for m in acceptances
+            ):
+                raise TracerError(
+                    "the acceptances must reach max_new with counts in 0..gamma"
+                )
             if sum(m + 1 for m in acceptances[:-1]) + 1 >= max_new:
                 raise TracerError("the acceptances run past max_new")
             key = (*key, acceptances)
@@ -379,7 +450,11 @@ class SpeculativeG:
             values_d: list[list[Wires]] = [[] for _ in range(ld)]
 
             def remember(
-                block: Wires, positions: int, d: int, keys: list[list[Wires]], values: list[list[Wires]]
+                block: Wires,
+                positions: int,
+                d: int,
+                keys: list[list[Wires]],
+                values: list[list[Wires]],
             ) -> list[Wires]:
                 """File a step's ``K`` blocks and return its ``V`` blocks, position-major, for masking."""
 
@@ -394,7 +469,9 @@ class SpeculativeG:
                 for layer, block in enumerate(blocks):
                     values[layer].append(block)
 
-            def cache_args(keys: list[list[Wires]], values: list[list[Wires]]) -> list[Wire | Wires]:
+            def cache_args(
+                keys: list[list[Wires]], values: list[list[Wires]]
+            ) -> list[Wire | Wires]:
                 args: list[Wire | Wires] = []
                 for layer in range(len(keys)):
                     args.extend(keys[layer])
@@ -405,21 +482,29 @@ class SpeculativeG:
             file_values(remember(block, prompt, dt, keys_t, values_t), values_t)
             y: Wire = block[-1]
             block = self.draft.prefill_ports(prompt)(w_draft, tokens)
-            file_values(remember(block, prompt, dd, keys_d, values_d), values_d)  # its token is unused
+            file_values(
+                remember(block, prompt, dd, keys_d, values_d), values_d
+            )  # its token is unused
             outputs: list[Wire | Wires] = [y]
             ok: Wire | None = one if acceptances is not None else None
             cached, emitted = prompt, 1
-            steps: Sequence[int | None] = acceptances if acceptances is not None else (None,) * (max_new - 1)
+            steps: Sequence[int | None] = (
+                acceptances if acceptances is not None else (None,) * (max_new - 1)
+            )
             for m in steps:
                 # The draft decodes y, d_1, ..., producing d_1, d_2, ...: gamma + 1 times when padded
                 # (gamma proposals, then a decode of d_gamma that only fills the cache), m + 1 times
                 # when advised (d_{m+1} is the rejected draft, or the cache fill when m = gamma).
                 drafted = gamma + 1 if m is None else m + 1
-                verified = gamma + 1 if m is None else m + 1  # positions the target looks at: y and drafts
+                verified = (
+                    gamma + 1 if m is None else m + 1
+                )  # positions the target looks at: y and drafts
                 drafts: list[Wire] = []
                 token = y
                 for i in range(drafted):
-                    step = self.draft.decode(cached + i + 1)(w_draft, token, *cache_args(keys_d, values_d))
+                    step = self.draft.decode(cached + i + 1)(
+                        w_draft, token, *cache_args(keys_d, values_d)
+                    )
                     file_values(remember(step, 1, dd, keys_d, values_d), values_d)
                     token = step[-1]
                     drafts.append(token)
@@ -430,7 +515,11 @@ class SpeculativeG:
                 z = block[-verified:]
                 if m is None:
                     decision = self.acceptance_unit()(*drafts[:gamma], z, one, top)
-                    acc, slots, y = decision[:gamma], decision[gamma : 2 * gamma + 1], decision[-1]
+                    acc, slots, y = (
+                        decision[:gamma],
+                        decision[gamma : 2 * gamma + 1],
+                        decision[-1],
+                    )
                     outputs.append(slots)
                     # Position 0 of the step is y, always kept; positions 1..gamma keep their V
                     # entries only if accepted.  K entries need no mask: attention is a weighted
@@ -438,14 +527,20 @@ class SpeculativeG:
                     for layer, values in enumerate(target_values):
                         values_t[layer].append(values[0:dt])
                         values_t[layer].append(
-                            repeat(gamma, self.mask_row(dt), acc[0].by(1), values[dt : 2 * dt].by(dt))
+                            repeat(
+                                gamma,
+                                self.mask_row(dt),
+                                acc[0].by(1),
+                                values[dt : 2 * dt].by(dt),
+                            )
                         )
                     for layer in range(ld):
                         filed = values_d[layer][-drafted:]
                         del values_d[layer][-drafted:]
                         values_d[layer].append(filed[0])
                         values_d[layer].extend(
-                            self.mask_row(dd)(acc[i - 1], filed[i]) for i in range(1, drafted)
+                            self.mask_row(dd)(acc[i - 1], filed[i])
+                            for i in range(1, drafted)
                         )
                     cached += gamma + 1
                 else:
@@ -463,16 +558,20 @@ class SpeculativeG:
 
         return request
 
-    def root(self, requests: tuple[Request, ...], acceptances: Sequence[Acceptances] | None) -> TracedDefinition:
+    def root(
+        self, requests: tuple[Request, ...], acceptances: Sequence[Acceptances] | None
+    ) -> TracedDefinition:
         @self.tracer.definition(input_count=0)
         def root(_v: Wires) -> object:
             w_target = self.target.weights_unit()()
             w_draft = self.draft.weights_unit()()
             outputs: list[Wires] = []
             for i, r in enumerate(requests):
-                request = self.request(len(r.prompt), r.max_new, None if acceptances is None else acceptances[i])(
-                    w_target, w_draft
-                )
+                request = self.request(
+                    len(r.prompt),
+                    r.max_new,
+                    None if acceptances is None else acceptances[i],
+                )(w_target, w_draft)
                 if acceptances is not None:
                     self.tracer.check(request[0], 1)  # ok: the verifier requires 1
                 outputs.append(request)
@@ -489,7 +588,9 @@ class SpeculativeG:
 
         if not self.advised:
             return 0
-        acceptances = decode_acceptances(self.gamma, self.requests(x), b"" if a is None else a)
+        acceptances = decode_acceptances(
+            self.gamma, self.requests(x), b"" if a is None else a
+        )
         return sum(len(steps) for steps in acceptances) * acceptance_bits(self.gamma)
 
     def __call__(self, x: object, a: bytes) -> tuple[bytes, tuple[int, ...]]:
@@ -499,9 +600,13 @@ class SpeculativeG:
         if not self.advised:
             if a:
                 raise TracerError("padded speculative decoding takes no advice")
-            return self.tracer.serialize(self.root(requests, None)), self.flatten_inputs(requests)
+            return self.tracer.serialize(
+                self.root(requests, None)
+            ), self.flatten_inputs(requests)
         acceptances = decode_acceptances(self.gamma, requests, a)
-        return self.tracer.serialize(self.root(requests, acceptances)), self.flatten_inputs(requests)
+        return self.tracer.serialize(
+            self.root(requests, acceptances)
+        ), self.flatten_inputs(requests)
 
 
 __all__ = [

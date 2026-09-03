@@ -17,7 +17,9 @@ GATES = make_word_gate_set(8)
 def test_source_gates_are_one_repeat_of_a_canonical_verification_cell() -> None:
     tracer = Tracer(GATES)
     add = tracer.gate("add")
-    pair = tracer.definition(input_count=2, key="pair", role="verification")(lambda v: add(v[0], v[1]))
+    pair = tracer.definition(input_count=2, key="pair", role="verification")(
+        lambda v: add(v[0], v[1])
+    )
 
     @tracer.definition(input_count=0, key="layer", role="replay")
     def layer(_v):
@@ -32,9 +34,25 @@ def test_source_gates_are_one_repeat_of_a_canonical_verification_cell() -> None:
     root = bodies[document["root"]]
     in_cell, weight_cell = tracer.source_cell("input"), tracer.source_cell("weight")
 
-    assert [step["kind"] for step in root["steps"]] == ["repeat", "repeat", "call", "call", "call"]
-    assert root["steps"][0] == {"kind": "repeat", "count": 1000, "digest": in_cell.digest, "args": []}
-    assert root["steps"][1] == {"kind": "repeat", "count": 3, "digest": weight_cell.digest, "args": []}
+    assert [step["kind"] for step in root["steps"]] == [
+        "repeat",
+        "repeat",
+        "call",
+        "call",
+        "call",
+    ]
+    assert root["steps"][0] == {
+        "kind": "repeat",
+        "count": 1000,
+        "digest": in_cell.digest,
+        "args": [],
+    }
+    assert root["steps"][1] == {
+        "kind": "repeat",
+        "count": 3,
+        "digest": weight_cell.digest,
+        "args": [],
+    }
     assert root["steps"][2] == {"kind": "call", "digest": in_cell.digest, "args": []}
     for cell, gate in ((in_cell, "in"), (weight_cell, "weight")):
         assert bodies[cell.digest] == {
@@ -55,12 +73,17 @@ def test_source_gates_are_one_repeat_of_a_canonical_verification_cell() -> None:
     assert list(index.weights()) == [1000, 1001, 1002]
     assert index.verification_unit_count == 1001 + 3 + 2
     tape = compiled.circuit.evaluate(inputs, (10, 20, 30))
-    assert [tape[o] for o in compiled.circuit.outputs] == [10, ((1000 & 255) + 30) & 255]
+    assert [tape[o] for o in compiled.circuit.outputs] == [
+        10,
+        ((1000 & 255) + 30) & 255,
+    ]
     with pytest.raises(InvalidArtifact, match="weight value is not a 8-bit value"):
         compiled.circuit.evaluate(inputs, (10, 20, 300))
 
 
-def test_source_gates_outside_a_replay_unit_or_inside_a_verification_unit_are_rejected() -> None:
+def test_source_gates_outside_a_replay_unit_or_inside_a_verification_unit_are_rejected() -> (
+    None
+):
     tracer = Tracer(GATES)
     add = tracer.gate("add")
 
@@ -81,7 +104,9 @@ def test_source_gates_outside_a_replay_unit_or_inside_a_verification_unit_are_re
     def outer(_v):
         return nested()
 
-    with pytest.raises(CompileError, match="marked verification and contains a verification mark"):
+    with pytest.raises(
+        CompileError, match="marked verification and contains a verification mark"
+    ):
         Compiler(GATES).compile(tracer.serialize(outer), (1, 2))
 
     # a wider verification unit around its inputs names the gate directly
@@ -96,21 +121,34 @@ def test_source_gates_outside_a_replay_unit_or_inside_a_verification_unit_are_re
         return wide()
 
     compiled = Compiler(GATES).compile(tracer.serialize(wide_root), (3, 4))
-    assert compiled.index.verification_unit_count == 1 and compiled.index.input_count == 2
+    assert (
+        compiled.index.verification_unit_count == 1 and compiled.index.input_count == 2
+    )
     assert compiled.circuit.evaluate((3, 4))[-1] == 7
 
 
 def test_source_requests_are_validated() -> None:
     tracer = Tracer(GATES)
     with pytest.raises(TracerError, match="positive integer"):
-        tracer.definition(input_count=0, key="zero", role="replay")(lambda _v: tracer.inputs(0))
+        tracer.definition(input_count=0, key="zero", role="replay")(
+            lambda _v: tracer.inputs(0)
+        )
     with pytest.raises(TracerError, match="source must be one of"):
         tracer.source_cell("advice")
     with pytest.raises(TracerError, match="only be used while tracing"):
         tracer.inputs(1)
 
     plain = GateSet(
-        (Gate("add", 2, 8, replay_cost=1, proof_cost=1, evaluate=lambda a: (a[0] + a[1]) & 255),),
+        (
+            Gate(
+                "add",
+                2,
+                8,
+                replay_cost=1,
+                proof_cost=1,
+                evaluate=lambda a: (a[0] + a[1]) & 255,
+            ),
+        ),
         name="tests.plain",
         version="1",
     )
@@ -118,7 +156,9 @@ def test_source_requests_are_validated() -> None:
     with pytest.raises(TracerError, match="has no input gate"):
         plain_tracer.source_cell("input")
     with pytest.raises(TracerError, match="has no weight gate"):
-        plain_tracer.definition(input_count=0, key="w", role="replay")(lambda _v: plain_tracer.weights(2))
+        plain_tracer.definition(input_count=0, key="w", role="replay")(
+            lambda _v: plain_tracer.weights(2)
+        )
 
 
 def test_the_canonical_cells_parse_as_pinned_verification_units() -> None:
@@ -129,7 +169,9 @@ def test_the_canonical_cells_parse_as_pinned_verification_units() -> None:
         return tracer.weights(4)
 
     parsed = parse_description(tracer.serialize(unit), GATES)
-    assert parsed.root.role == "replay" and parsed.root.out_runs == ()  # all outputs pinned
+    assert (
+        parsed.root.role == "replay" and parsed.root.out_runs == ()
+    )  # all outputs pinned
     assert parsed.root.weight_total == 4 and parsed.root.input_total == 0
     cell = parsed.root.steps[0].child
     assert cell.role == "verification" and cell.size == 1 and cell.weight_total == 1

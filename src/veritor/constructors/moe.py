@@ -65,7 +65,10 @@ def reference_routes(
         cursor = 0
         for count in step_positions(request):
             steps.append(
-                tuple(tuple(decoder.routes[layer][cursor : cursor + count]) for layer in range(shape.layers))
+                tuple(
+                    tuple(decoder.routes[layer][cursor : cursor + count])
+                    for layer in range(shape.layers)
+                )
             )
             cursor += count
         result.append(tuple(steps))
@@ -95,14 +98,18 @@ def encode_routes(shape: LMShape, routes: Sequence[RequestRoutes]) -> bytes:
     return bytes(int(text[i : i + 8], 2) for i in range(0, len(text), 8))
 
 
-def decode_routes(shape: LMShape, requests: Sequence[Request], a: bytes) -> tuple[RequestRoutes, ...]:
+def decode_routes(
+    shape: LMShape, requests: Sequence[Request], a: bytes
+) -> tuple[RequestRoutes, ...]:
     """The advice back into routes, validated: the exact length, ids below ``E``, distinct and ascending."""
 
     if not shape.experts:
         raise TracerError("a dense shape takes no routes")
     needed = advice_bits(shape, requests)
     if len(a) != (needed + 7) // 8:
-        raise TracerError(f"the routes of these requests are {(needed + 7) // 8} bytes, got {len(a)}")
+        raise TracerError(
+            f"the routes of these requests are {(needed + 7) // 8} bytes, got {len(a)}"
+        )
     text = "".join(format(byte, "08b") for byte in a)
     if any(bit != "0" for bit in text[needed:]):
         raise TracerError("the route advice has nonzero padding")
@@ -116,15 +123,24 @@ def decode_routes(shape: LMShape, requests: Sequence[Request], a: bytes) -> tupl
             ids.append(int(text[cursor : cursor + width], 2))
             cursor += width
         if any(e >= experts for e in ids) or any(a >= b for a, b in pairwise(ids)):
-            raise TracerError(f"route {tuple(ids)} is not {k} distinct experts below {experts}, ascending")
+            raise TracerError(
+                f"route {tuple(ids)} is not {k} distinct experts below {experts}, ascending"
+            )
         return tuple(ids)
 
     result: list[RequestRoutes] = []
     for request in requests:
         steps: list[Routes] = []
         for count in step_positions(request):
-            by_position = [tuple(route() for _ in range(shape.layers)) for _ in range(count)]
-            steps.append(tuple(tuple(by_position[p][layer] for p in range(count)) for layer in range(shape.layers)))
+            by_position = [
+                tuple(route() for _ in range(shape.layers)) for _ in range(count)
+            ]
+            steps.append(
+                tuple(
+                    tuple(by_position[p][layer] for p in range(count))
+                    for layer in range(shape.layers)
+                )
+            )
         result.append(tuple(steps))
     assert cursor == needed
     return tuple(result)

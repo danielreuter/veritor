@@ -34,11 +34,17 @@ def test_theta_with_an_enormous_denominator_is_resource_limit(model, sec):
     assert run.transcript is None and run.report.sampled_replay_units == ()
     # the cap is the verifier's: a tighter limit rejects a coarser rate
     tight = VerificationLimits(max_probability_denominator_bits=2)
-    report = model.run(model.expectation(VerificationPolicy(Fraction(1, 5), 1)), model.values, limits=tight).report
+    report = model.run(
+        model.expectation(VerificationPolicy(Fraction(1, 5), 1)),
+        model.values,
+        limits=tight,
+    ).report
     assert report.code == VerificationCode.RESOURCE_LIMIT
     # ... and so is eta's denominator
     eta = VerifierParameters(Fraction(1, (1 << 65) + 1), max_capacity=None)
-    report = model.run(model.expectation(sec.HALVES, parameters=eta), model.values).report
+    report = model.run(
+        model.expectation(sec.HALVES, parameters=eta), model.values
+    ).report
     assert report.code == VerificationCode.RESOURCE_LIMIT
     # a recorded transcript with such a rate is refused by the decoder before anything else
     run, expectation = model.run(model.expectation(), model.values), model.expectation()
@@ -53,17 +59,23 @@ def test_theta_with_an_enormous_denominator_is_resource_limit(model, sec):
 def test_policy_whose_bound_exceeds_u_max_is_policy_rejected(model, sec):
     eta = Fraction(1, 4)
     leaky = bound(model.compiled, sec.HALVES, eta).bits
-    assert leaky == 2 * model.width == 16  # the whole interface (two 8-bit outputs) leaks
+    assert (
+        leaky == 2 * model.width == 16
+    )  # the whole interface (two 8-bit outputs) leaks
     parameters = VerifierParameters(eta, max_capacity=math.floor(leaky) - 1)
     run = model.run(model.expectation(sec.HALVES, parameters=parameters), model.values)
     assert run.report.code == VerificationCode.POLICY_REJECTED
     assert run.transcript is None and run.report.sampled_replay_units == ()
     # the client cannot lower the bar: only the verifier's parameters carry U_max and eta
-    admitted = model.run(model.expectation(sec.CHECK_EVERYTHING, parameters=parameters), model.values)
+    admitted = model.run(
+        model.expectation(sec.CHECK_EVERYTHING, parameters=parameters), model.values
+    )
     assert admitted.report.accepted
     assert bound(model.compiled, sec.CHECK_EVERYTHING, eta).bits == 0.0
     exact = VerifierParameters(eta, max_capacity=math.floor(leaky))
-    assert model.run(model.expectation(sec.HALVES, parameters=exact), model.values).report.accepted
+    assert model.run(
+        model.expectation(sec.HALVES, parameters=exact), model.values
+    ).report.accepted
 
 
 def test_run_whose_expected_work_exceeds_w_max_is_work_budget_exceeded(model, sec):
@@ -75,10 +87,17 @@ def test_run_whose_expected_work_exceeds_w_max_is_work_budget_exceeded(model, se
     assert run.report.code == VerificationCode.WORK_BUDGET_EXCEEDED
     assert run.transcript is None and run.report.sampled_replay_units == ()
     above = VerifierParameters(max_work=math.ceil(work), max_capacity=None)
-    assert model.run(model.expectation(sec.HALVES, parameters=above), model.values).report.accepted
+    assert model.run(
+        model.expectation(sec.HALVES, parameters=above), model.values
+    ).report.accepted
     # priced from the kinds: more sampling is more work, and checking everything is the most
     everything = expected_work(model.compiled, sec.CHECK_EVERYTHING, io)
-    assert everything > work > expected_work(model.compiled, VerificationPolicy(0, 0), io) > 0
+    assert (
+        everything
+        > work
+        > expected_work(model.compiled, VerificationPolicy(0, 0), io)
+        > 0
+    )
 
 
 def test_eta_is_the_verifiers_and_bound_into_the_header(model, sec):
@@ -94,14 +113,20 @@ def test_eta_is_the_verifiers_and_bound_into_the_header(model, sec):
     # a header (thus a transcript) recorded under another eta does not verify under this one
     run = model.run(expectation, model.values)
     assert run.report.accepted
-    other = model.expectation(sec.HALVES, parameters=VerifierParameters(Fraction(1, 16), max_capacity=None))
+    other = model.expectation(
+        sec.HALVES, parameters=VerifierParameters(Fraction(1, 16), max_capacity=None)
+    )
     report = model.verify(run.transcript, other)
-    assert report.code == VerificationCode.EXPECTATION_MISMATCH and "eta" in report.detail
+    assert (
+        report.code == VerificationCode.EXPECTATION_MISMATCH and "eta" in report.detail
+    )
 
     def rewrite_eta(document: dict) -> None:
         document["header"]["eta"] = [1, 16]
 
-    report = model.verify(sec.mutate_transcript(run.transcript, rewrite_eta), expectation)
+    report = model.verify(
+        sec.mutate_transcript(run.transcript, rewrite_eta), expectation
+    )
     assert report.code == VerificationCode.EXPECTATION_MISMATCH
 
 
@@ -123,12 +148,18 @@ def test_waiving_u_max_admits_a_policy_that_checks_nothing(model, sec):
         forged[address] = value
     run = model.run(model.expectation(nothing, claimed_outputs=false_claim), forged)
     assert run.report.code == VerificationCode.ACCEPTED
-    assert run.report.sampled_replay_units == () and run.report.sampled_verification_units == ()
+    assert (
+        run.report.sampled_replay_units == ()
+        and run.report.sampled_verification_units == ()
+    )
     result = bound(model.compiled, nothing, Fraction(1, 2))
     assert result.capped and result.bits == result.out_bits
     # with U_max set, the same proposal is refused before any commitment
     strict = VerifierParameters(Fraction(1, 2), max_capacity=result.out_bits - 1)
-    run = model.run(model.expectation(nothing, claimed_outputs=false_claim, parameters=strict), forged)
+    run = model.run(
+        model.expectation(nothing, claimed_outputs=false_claim, parameters=strict),
+        forged,
+    )
     assert run.report.code == VerificationCode.POLICY_REJECTED
     # and a verifier cannot forget to decide: there is no default
     with pytest.raises(TypeError, match="max_capacity"):
@@ -142,7 +173,10 @@ def test_admission_checks_unit_counts_against_the_limits(model, sec):
 
     few = VerificationLimits(max_units=model.index.verification_unit_count - 1)
     run = model.run(model.expectation(), model.values, limits=few)
-    assert run.report.code == VerificationCode.RESOURCE_LIMIT and "units" in run.report.detail
+    assert (
+        run.report.code == VerificationCode.RESOURCE_LIMIT
+        and "units" in run.report.detail
+    )
     narrow = VerificationLimits(max_positions_per_unit=1)
     run = model.run(model.expectation(), model.values, limits=narrow)
     assert run.report.code == VerificationCode.RESOURCE_LIMIT

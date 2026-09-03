@@ -86,13 +86,46 @@ from veritor.core.description import REPLAY, VERIFICATION
 ReplayLevel = Literal["request", "step", "layer", "matvec", "row", "cell"]
 VerificationLevel = Literal["layer", "row", "cell", "gate"]
 
-REPLAY_LEVELS: tuple[ReplayLevel, ...] = ("request", "step", "layer", "matvec", "row", "cell")
+REPLAY_LEVELS: tuple[ReplayLevel, ...] = (
+    "request",
+    "step",
+    "layer",
+    "matvec",
+    "row",
+    "cell",
+)
 VERIFICATION_LEVELS: tuple[VerificationLevel, ...] = ("layer", "row", "cell", "gate")
 
-_COARSENESS = {"gate": 0, "cell": 1, "row": 2, "matvec": 3, "layer": 4, "step": 5, "request": 5}
+_COARSENESS = {
+    "gate": 0,
+    "cell": 1,
+    "row": 2,
+    "matvec": 3,
+    "layer": 4,
+    "step": 5,
+    "request": 5,
+}
 
-_REPLAY_COST = {"add": 1, "sub": 1, "mul": 2, "lt": 1, "eq": 1, "shr": 1, "in": 0, "weight": 0}
-_PROOF_COST = {"add": 1, "sub": 1, "mul": 2, "lt": 1, "eq": 1, "shr": 1, "in": 1, "weight": 1}
+_REPLAY_COST = {
+    "add": 1,
+    "sub": 1,
+    "mul": 2,
+    "lt": 1,
+    "eq": 1,
+    "shr": 1,
+    "in": 0,
+    "weight": 0,
+}
+_PROOF_COST = {
+    "add": 1,
+    "sub": 1,
+    "mul": 2,
+    "lt": 1,
+    "eq": 1,
+    "shr": 1,
+    "in": 1,
+    "weight": 1,
+}
 _ARITY = {"add": 2, "sub": 2, "mul": 2, "lt": 2, "eq": 2, "shr": 2, "square": 1}
 _OP = {name: name for name in _ARITY} | {"square": "mul"}  # ``square`` is ``mul(x, x)``
 
@@ -209,7 +242,9 @@ W, A, SOURCE, COMPUTED = "w", "a", "source", "computed"
 type _Feed = dict[str, frozenset[str]]
 
 
-def _feed(w: str | tuple[str, ...] | None = None, a: str | tuple[str, ...] | None = None) -> _Feed:
+def _feed(
+    w: str | tuple[str, ...] | None = None, a: str | tuple[str, ...] | None = None
+) -> _Feed:
     """What a call site feeds the child's ``W`` and ``A`` groups (``None``: the child has none)."""
 
     feed: _Feed = {}
@@ -258,7 +293,9 @@ class _Row:
 class _Builder:
     """The kinds of one run under one pair of levels, defined once each by key."""
 
-    def __init__(self, shape: ServingShape, replay: ReplayLevel, verification: VerificationLevel) -> None:
+    def __init__(
+        self, shape: ServingShape, replay: ReplayLevel, verification: VerificationLevel
+    ) -> None:
         self.shape = shape
         self.ru = replay
         self.vu = verification
@@ -331,7 +368,9 @@ class _Builder:
             groups = {group for group, size in sub.ports.items() if size}
             feed = (feeds or {}).get(child, {})
             if set(feed) != groups:
-                raise ValueError(f"{name} feeds {sorted(feed)} of {child}, which has the groups {sorted(groups)}")
+                raise ValueError(
+                    f"{name} feeds {sorted(feed)} of {child}, which has the groups {sorted(groups)}"
+                )
             row.size += count * sub.size
             row.replay_cost += count * sub.replay_cost
             row.proof_cost += count * sub.proof_cost
@@ -344,7 +383,9 @@ class _Builder:
             if role != VERIFICATION:
                 row.verification_units += count * sub.verification_units
                 for kind, inner in sub.verification_kinds.items():
-                    row.verification_kinds[kind] = row.verification_kinds.get(kind, 0) + count * inner
+                    row.verification_kinds[kind] = (
+                        row.verification_kinds.get(kind, 0) + count * inner
+                    )
                 row.vu_outputs += count * sub.vu_outputs
                 row.interior_count += count * sub.interior_count
         if role == VERIFICATION:
@@ -394,10 +435,17 @@ class _Builder:
             assert self.ru == "cell", "a bare gate outside every unit"
             inner = self.pair(gate, _IN_REPLAY)
             return self.define(
-                ("cell_unit", gate), REPLAY, a=_ARITY[gate], outputs=1, calls={inner: 1}, feeds={inner: _feed(a=A)}
+                ("cell_unit", gate),
+                REPLAY,
+                a=_ARITY[gate],
+                outputs=1,
+                calls={inner: 1},
+                feeds={inner: _feed(a=A)},
             )
         role = None if ctx == _IN_VERIFICATION else VERIFICATION
-        return self.define(("pair", gate, role), role, a=_ARITY[gate], outputs=1, gates={_OP[gate]: 1})
+        return self.define(
+            ("pair", gate, role), role, a=_ARITY[gate], outputs=1, gates={_OP[gate]: 1}
+        )
 
     def source(self, gate: str, ctx: str) -> str:
         """An ``in`` or ``weight`` cell: always a verification unit, its one output pinned."""
@@ -417,7 +465,12 @@ class _Builder:
         if ctx == _FREE and self.ru == "cell":
             ((cell, _),) = self.cells(gate, 1, _IN_REPLAY).items()
             unit = self.define(
-                (gate + "_cell_unit",), REPLAY, a=_ARITY[gate], outputs=1, calls={cell: 1}, feeds={cell: _feed(a=A)}
+                (gate + "_cell_unit",),
+                REPLAY,
+                a=_ARITY[gate],
+                outputs=1,
+                calls={cell: 1},
+                feeds={cell: _feed(a=A)},
             )
             return {unit: count}
         if ctx == _FREE:
@@ -432,7 +485,13 @@ class _Builder:
             )
             return {block: 1}
         role = None if ctx == _IN_VERIFICATION else VERIFICATION
-        cell = self.define((gate + "_cell", role), role, a=_ARITY[gate], outputs=1, gates={_OP[gate]: 1})
+        cell = self.define(
+            (gate + "_cell", role),
+            role,
+            a=_ARITY[gate],
+            outputs=1,
+            gates={_OP[gate]: 1},
+        )
         return {cell: count}
 
     # -- rows ------------------------------------------------------------------------
@@ -457,7 +516,16 @@ class _Builder:
             calls[add] += carried  # every gate must lie in a verification unit
         # a product reads one activation and one weight of the dot; the sums read products
         feeds = {mul: _feed(a=(A, W)), add: _feed(a=COMPUTED)}
-        return self.define(("dot", k, role), role, w=k, a=k, outputs=1, gates=gates, calls=calls, feeds=feeds)
+        return self.define(
+            ("dot", k, role),
+            role,
+            w=k,
+            a=k,
+            outputs=1,
+            gates=gates,
+            calls=calls,
+            feeds=feeds,
+        )
 
     def onehot(self, ctx: str) -> str:
         """The token against the constant table: one ``eq`` per vocabulary entry."""
@@ -466,7 +534,13 @@ class _Builder:
         eq = self.pair("eq", self.within(role, ctx))
         vocab = self.shape.vocab
         return self.define(
-            ("onehot", role), role, w=vocab, a=1, outputs=vocab, calls={eq: vocab}, feeds={eq: _feed(a=(A, W))}
+            ("onehot", role),
+            role,
+            w=vocab,
+            a=1,
+            outputs=vocab,
+            calls={eq: vocab},
+            feeds={eq: _feed(a=(A, W))},
         )
 
     def attend_head(self, c: int, ctx: str) -> str:
@@ -482,7 +556,9 @@ class _Builder:
         dh = self.shape.d_head
         score, square = self.dot(dh, sub), self.pair("square", sub)
         mix, shift = self.dot(c, sub), self.pair("shr", sub)
-        calls = self.merge({score: c}, {square: c}, {mix: dh}, {shift: dh})  # one dot kind when ``c == dh``
+        calls = self.merge(
+            {score: c}, {square: c}, {mix: dh}, {shift: dh}
+        )  # one dot kind when ``c == dh``
         feeds = self.feeds(
             {score: _feed(w=A, a=A)},
             {square: _feed(a=COMPUTED)},
@@ -490,7 +566,13 @@ class _Builder:
             {shift: _feed(a=(COMPUTED, W))},
         )
         return self.define(
-            ("attend_head", c, role), role, w=1, a=dh + 2 * c * dh, outputs=dh, calls=calls, feeds=feeds
+            ("attend_head", c, role),
+            role,
+            w=1,
+            a=dh + 2 * c * dh,
+            outputs=dh,
+            calls=calls,
+            feeds=feeds,
         )
 
     def argmax(self, ctx: str) -> str:
@@ -499,17 +581,37 @@ class _Builder:
         role = self.role(("row",), ctx)
         sub = self.within(role, ctx)
         vocab = self.shape.vocab
-        counts = {"lt": vocab - 1, "sub": 2 * (vocab - 1), "mul": 2 * (vocab - 1), "add": 2 * (vocab - 1)}
+        counts = {
+            "lt": vocab - 1,
+            "sub": 2 * (vocab - 1),
+            "mul": 2 * (vocab - 1),
+            "add": 2 * (vocab - 1),
+        }
         # the selects compare and mix the logits (activations), the running best and index
         # (computed) and the constant table (weights)
-        reads = {"lt": (A, COMPUTED), "sub": (A, W, COMPUTED), "mul": (COMPUTED,), "add": (A, W, COMPUTED)}
+        reads = {
+            "lt": (A, COMPUTED),
+            "sub": (A, W, COMPUTED),
+            "mul": (COMPUTED,),
+            "add": (A, W, COMPUTED),
+        }
         if sub == _IN_VERIFICATION:
             gates, calls, feeds = counts, {}, {}
         else:
-            gates, calls = {}, {self.pair(gate, sub): count for gate, count in counts.items()}
+            gates, calls = (
+                {},
+                {self.pair(gate, sub): count for gate, count in counts.items()},
+            )
             feeds = {self.pair(gate, sub): _feed(a=reads[gate]) for gate in counts}
         return self.define(
-            ("argmax", role), role, w=vocab, a=vocab, outputs=1, gates=gates, calls=calls, feeds=feeds
+            ("argmax", role),
+            role,
+            w=vocab,
+            a=vocab,
+            outputs=1,
+            gates=gates,
+            calls=calls,
+            feeds=feeds,
         )
 
     # -- matvec-level -----------------------------------------------------------------
@@ -518,7 +620,13 @@ class _Builder:
         role = self.role(("matvec",), ctx)
         dot = self.dot(k, self.within(role, ctx))
         return self.define(
-            ("matvec", k, m, role), role, w=k * m, a=k, outputs=m, calls={dot: m}, feeds={dot: _feed(w=W, a=A)}
+            ("matvec", k, m, role),
+            role,
+            w=k * m,
+            a=k,
+            outputs=m,
+            calls={dot: m},
+            feeds={dot: _feed(w=W, a=A)},
         )
 
     def embed_row(self, ctx: str) -> str:
@@ -530,7 +638,13 @@ class _Builder:
         onehot, embed = self.onehot(sub), self.matvec(vocab, d, sub)
         feeds = {onehot: _feed(w=W, a=A), embed: _feed(w=W, a=COMPUTED)}
         return self.define(
-            ("embed_row", role), role, w=vocab + vocab * d, a=1, outputs=d, calls={onehot: 1, embed: 1}, feeds=feeds
+            ("embed_row", role),
+            role,
+            w=vocab + vocab * d,
+            a=1,
+            outputs=d,
+            calls={onehot: 1, embed: 1},
+            feeds=feeds,
         )
 
     # -- layers -----------------------------------------------------------------------
@@ -549,13 +663,22 @@ class _Builder:
         shape = self.shape
         d, hidden, heads = shape.d_model, shape.hidden, shape.heads
         project = self.matvec(d, d, ctx)
-        attend = {self.attend_head(cached + p + 1, ctx): heads for p in range(positions)}
+        attend = {
+            self.attend_head(cached + p + 1, ctx): heads for p in range(positions)
+        }
         residual = self.cells("add", positions * d, ctx)
         up = self.matvec(d, hidden, ctx)
         square = self.cells("square", positions * hidden, ctx)
         down = self.matvec(hidden, d, ctx)
         calls = self.merge(
-            {project: 3 * positions}, attend, {project: positions}, residual, {up: positions}, square, {down: positions}, residual
+            {project: 3 * positions},
+            attend,
+            {project: positions},
+            residual,
+            {up: positions},
+            square,
+            {down: positions},
+            residual,
         )
         attended = (COMPUTED, A) if cached else (COMPUTED,)
         feeds = self.feeds(
@@ -589,16 +712,23 @@ class _Builder:
             calls=calls,
             feeds=feeds,
         )
-        return {layer: shape.layers}, {layer: _feed(w=W, a=(COMPUTED, A) if cached else COMPUTED)}
+        return {layer: shape.layers}, {
+            layer: _feed(w=W, a=(COMPUTED, A) if cached else COMPUTED)
+        }
 
-    def head(self, ctx: str) -> tuple[dict[str, int], dict[str, dict[str, frozenset[str]]]]:
+    def head(
+        self, ctx: str
+    ) -> tuple[dict[str, int], dict[str, dict[str, frozenset[str]]]]:
         """The unembedding and the argmax: inlined as in the toy, or one ``lm_head`` unit."""
 
         shape = self.shape
         d, vocab = shape.d_model, shape.vocab
         if self.ru not in ("matvec", "layer") and self.vu != "layer":
             unembed, argmax = self.matvec(d, vocab, ctx), self.argmax(ctx)
-            return {unembed: 1, argmax: 1}, {unembed: _feed(w=W, a=COMPUTED), argmax: _feed(w=W, a=COMPUTED)}
+            return {unembed: 1, argmax: 1}, {
+                unembed: _feed(w=W, a=COMPUTED),
+                argmax: _feed(w=W, a=COMPUTED),
+            }
         role = self.role(("matvec", "layer"), ctx)
         sub = self.within(role, ctx)
         unembed, argmax = self.matvec(d, vocab, sub), self.argmax(sub)
@@ -637,7 +767,12 @@ class _Builder:
         calls = self.merge(self.prompt(ctx), {embed: n}, layer_calls, head_calls)
         feeds = self.feeds({embed: _feed(w=W, a=SOURCE)}, layer_feeds, head_feeds)
         return self.define(
-            ("prefill", n), None, w=shape.weight_count, outputs=shape.state_size(n) + 1, calls=calls, feeds=feeds
+            ("prefill", n),
+            None,
+            w=shape.weight_count,
+            outputs=shape.state_size(n) + 1,
+            calls=calls,
+            feeds=feeds,
         )
 
     def decode(self, c: int, ctx: str) -> str:
@@ -667,7 +802,9 @@ class _Builder:
 
     def weights(self) -> str:
         cell = self.source("weight", _IN_REPLAY)
-        return self.define(("weights",), REPLAY, outputs=0, calls={cell: self.shape.weight_count})
+        return self.define(
+            ("weights",), REPLAY, outputs=0, calls={cell: self.shape.weight_count}
+        )
 
     def request(self) -> str:
         """A request: its prefill then a decode step per further token; the unit at ``request``.
@@ -757,7 +894,12 @@ class _Builder:
             feeds[request] = _feed(w=SOURCE)
             reaches[request] = shape.generated * shape.width
         return self.define(
-            ("root",), None, outputs=shape.output_count, calls=calls, feeds=feeds, reaches=reaches
+            ("root",),
+            None,
+            outputs=shape.output_count,
+            calls=calls,
+            feeds=feeds,
+            reaches=reaches,
         )
 
     # -- the table -----------------------------------------------------------------------
@@ -789,7 +931,9 @@ class _Builder:
                 max_depth[child] = max(max_depth.get(child, depth), depth)
                 target = retained.setdefault(child, {})
                 for group, sources in row.feeds[child].items():
-                    fed = all(source == SOURCE or own.get(source, False) for source in sources)
+                    fed = all(
+                        source == SOURCE or own.get(source, False) for source in sources
+                    )
                     target[group] = target.get(group, True) and fed
                 site = min(reach[name], row.reaches.get(child, reach[name]))
                 reach[child] = max(reach.get(child, 0), site)
@@ -830,7 +974,11 @@ class _Builder:
             digest=Digest(
                 identity_digest(
                     TABLE_DIGEST_TAG,
-                    {"shape": self.shape.manifest, "replay": self.ru, "verification": self.vu},
+                    {
+                        "shape": self.shape.manifest,
+                        "replay": self.ru,
+                        "verification": self.vu,
+                    },
                 )
             ),
         )
@@ -873,14 +1021,18 @@ def _check_tiling(table: KindTable) -> None:
         covered = sum(row.copies * row.size for row in table.rows if row.role == role)
         if covered != table.n:
             raise ValueError(f"{role} units cover {covered} of {table.n} gates")
-    inside = sum(row.copies * row.verification_units for row in table.rows if row.role == REPLAY)
+    inside = sum(
+        row.copies * row.verification_units for row in table.rows if row.role == REPLAY
+    )
     units = sum(row.copies for row in table.rows if row.role == VERIFICATION)
     if inside != units:
         raise ValueError("verification units do not refine the replay units")
 
 
 def serving_table(
-    shape: ServingShape, replay: ReplayLevel = "request", verification: VerificationLevel = "row"
+    shape: ServingShape,
+    replay: ReplayLevel = "request",
+    verification: VerificationLevel = "row",
 ) -> KindTable:
     """The table of ``shape`` served with replay units at ``replay`` and verification units at ``verification``.
 

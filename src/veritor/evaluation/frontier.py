@@ -51,7 +51,11 @@ from .serving import (
 FRONTIER_OPTIONS = BoundOptions(knapsack=False, max_buckets=1 << 22)
 """Laplace only, with a grid fine enough that no admissible cost rounds to zero."""
 
-DEFAULT_ETAS: tuple[Fraction, ...] = (Fraction(1, 2), Fraction(1, 100), Fraction(1, 10**6))
+DEFAULT_ETAS: tuple[Fraction, ...] = (
+    Fraction(1, 2),
+    Fraction(1, 100),
+    Fraction(1, 10**6),
+)
 DEFAULT_GRID = PolicyGrid(
     q=tuple(Fraction(1, 2**k) for k in (1, 3, 5, 7, 9, 11, 13)),
     s=tuple(Fraction(1, 2**k) for k in (0, 3, 6, 9)),
@@ -199,7 +203,14 @@ def sweep(
         for policy in grid.policies():
             for eta in etas:
                 point = price(
-                    table, shape, replay, verification, policy, eta, parameters=parameters, options=options
+                    table,
+                    shape,
+                    replay,
+                    verification,
+                    policy,
+                    eta,
+                    parameters=parameters,
+                    options=options,
                 )
                 points.append(point)
                 if log is not None:
@@ -221,7 +232,11 @@ def certify(
     """
 
     eta = exact_fraction(eta, name="eta")
-    overhead = None if max_overhead is None else exact_fraction(max_overhead, name="max_overhead")
+    overhead = (
+        None
+        if max_overhead is None
+        else exact_fraction(max_overhead, name="max_overhead")
+    )
     work = None if max_work is None else exact_fraction(max_work, name="max_work")
     best: Point | None = None
     for point in points:
@@ -231,7 +246,11 @@ def certify(
             continue
         if work is not None and point.work > work:
             continue
-        if best is None or (point.bits, point.overhead, point.work) < (best.bits, best.overhead, best.work):
+        if best is None or (point.bits, point.overhead, point.work) < (
+            best.bits,
+            best.overhead,
+            best.work,
+        ):
             best = point
     return best
 
@@ -240,7 +259,10 @@ def certify(
 
 
 def save(
-    points: Sequence[Point], shape: ServingShape, path: Path, manifest: Mapping[str, object] | None = None
+    points: Sequence[Point],
+    shape: ServingShape,
+    path: Path,
+    manifest: Mapping[str, object] | None = None,
 ) -> None:
     """Write the points and the shape, and the run's ``manifest`` when there is one.
 
@@ -303,7 +325,11 @@ def calibration_table(
     partition and policy that achieve it, or a dash.
     """
 
-    header = "| verifier work \\ prover overhead | " + " | ".join(_percent(float(o)) for o in overheads) + " |"
+    header = (
+        "| verifier work \\ prover overhead | "
+        + " | ".join(_percent(float(o)) for o in overheads)
+        + " |"
+    )
     rule = "|---|" + "|".join("---" for _ in overheads) + "|"
     lines = [header, rule]
     for work in works:
@@ -321,7 +347,9 @@ def calibration_table(
     return "\n".join(lines)
 
 
-def partition_table(points: Sequence[Point], *, eta: ProbabilityInput, max_work: ProbabilityInput) -> str:
+def partition_table(
+    points: Sequence[Point], *, eta: ProbabilityInput, max_work: ProbabilityInput
+) -> str:
     """Per partition, the smallest capacity within the verifier budget and what it costs the prover."""
 
     eta = exact_fraction(eta, name="eta")
@@ -335,7 +363,10 @@ def partition_table(points: Sequence[Point], *, eta: ProbabilityInput, max_work:
             continue
         key = (point.replay, point.verification)
         current = seen.get(key)
-        if current is None or (point.bits, point.overhead) < (current.bits, current.overhead):
+        if current is None or (point.bits, point.overhead) < (
+            current.bits,
+            current.overhead,
+        ):
             seen[key] = point
     for (replay, verification), best in seen.items():
         lines.append(

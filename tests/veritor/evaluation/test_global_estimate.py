@@ -23,7 +23,13 @@ def test_defaults_land_in_the_terabyte_range_and_meet_the_budget(base) -> None:
 
 def test_the_reading_formula_matches_when_the_scattered_channel_binds(base) -> None:
     i = base.inputs
-    reading = i.lam * (base.rate.verification_bits + math.log2(base.verification_units) + 2) * i.alpha * math.log(2) / i.budget
+    reading = (
+        i.lam
+        * (base.rate.verification_bits + math.log2(base.verification_units) + 2)
+        * i.alpha
+        * math.log(2)
+        / i.budget
+    )
     assert base.rate.binding == 1
     assert abs(base.capacity_bits / reading - 1) < 0.05
 
@@ -45,6 +51,14 @@ def test_gate_granularity_is_priced_but_barely_matters_at_a_tiny_q(base) -> None
 def test_render_and_sensitivity_have_every_input() -> None:
     rows = sensitivity(replace(Inputs(), tokens_per_year=1e15))
     names = {name for name, _, _ in rows}
-    assert {"alpha", "budget", "lam", "hash_macs", "values_per_leaf", "interior", "tokens_per_year"} <= names
+    assert {
+        "alpha",
+        "budget",
+        "lam",
+        "hash_macs",
+        "values_per_leaf",
+        "interior",
+        "tokens_per_year",
+    } <= names
     text = render(rows[0][2], rows[:2], [])
     assert "U(lambda = 40)" in text and "| alpha |" in text

@@ -24,7 +24,11 @@ from veritor import (
 from veritor.constructors import MatmulG
 from veritor.protocol import assignment_replay, commit_weights, encode_transcript
 
-SEEDS = {"session_id": b"research-api/conformance", "q_seed": b"Q" * 32, "s_seed": b"S" * 32}
+SEEDS = {
+    "session_id": b"research-api/conformance",
+    "q_seed": b"Q" * 32,
+    "s_seed": b"S" * 32,
+}
 NO_CAPACITY = VerifierParameters(max_capacity=None)
 CHECK_EVERYTHING = VerificationPolicy(1, 1)
 WORKLOADS = {
@@ -34,7 +38,11 @@ WORKLOADS = {
         compile_demo_g,
         (),
     ),
-    "matmul": (MatmulCompileRequest(), compile_matmul, MatmulCompileRequest().weight_values),
+    "matmul": (
+        MatmulCompileRequest(),
+        compile_matmul,
+        MatmulCompileRequest().weight_values,
+    ),
 }
 
 
@@ -65,7 +73,10 @@ def test_honest_conformance_transcript_verifies_purely(name: str) -> None:
     assert run.expectation.advice == advice
     # the weights, if any, are bound to the header as kappa_W and never carried in the run
     if weights:
-        assert run.expectation.weights == commit_weights(compiled.circuit.gate_set, weights)[0]
+        assert (
+            run.expectation.weights
+            == commit_weights(compiled.circuit.gate_set, weights)[0]
+        )
         assert run.expectation.weights.count == len(weights)
     else:
         assert run.expectation.weights is None
@@ -85,7 +96,11 @@ def test_forged_sampled_demo_execution_is_rejected() -> None:
     compilation = compile_demo_g(request)
     compiled = compilation.compiled
     expectation = make_verification_expectation(
-        compilation, CHECK_EVERYTHING, request.expected_outputs, parameters=NO_CAPACITY, **SEEDS
+        compilation,
+        CHECK_EVERYTHING,
+        request.expected_outputs,
+        parameters=NO_CAPACITY,
+        **SEEDS,
     )
 
     values = list(compiled.circuit.evaluate(request.public_inputs))
@@ -124,8 +139,12 @@ def test_the_header_binds_the_constructor_and_the_advice() -> None:
     request = DemoGCompileRequest(advice=b"a", max_advice_bits=8)
     compilation = compile_demo_g(request)
     parameters = VerifierParameters(max_advice_bits=8, max_capacity=None)
-    honest = build_executable_conformance_transcript(compilation, parameters=parameters, **SEEDS)
-    assert Verify(honest.transcript_bytes, honest.expectation, compilation.compiled).accepted
+    honest = build_executable_conformance_transcript(
+        compilation, parameters=parameters, **SEEDS
+    )
+    assert Verify(
+        honest.transcript_bytes, honest.expectation, compilation.compiled
+    ).accepted
 
     def expecting(**changes) -> object:
         return make_verification_expectation(
@@ -154,7 +173,9 @@ def test_advice_over_the_verifiers_bound_is_rejected_at_admission() -> None:
     compiled = compilation.compiled
     values = dict(enumerate(compiled.circuit.evaluate(compilation.inputs)))
     admitted = build_executable_conformance_transcript(
-        compilation, parameters=VerifierParameters(max_advice_bits=32, max_capacity=None), **SEEDS
+        compilation,
+        parameters=VerifierParameters(max_advice_bits=32, max_capacity=None),
+        **SEEDS,
     )
     assert Verify(admitted.transcript_bytes, admitted.expectation, compiled).accepted
 
@@ -163,12 +184,16 @@ def test_advice_over_the_verifiers_bound_is_rejected_at_admission() -> None:
             compilation,
             CHECK_EVERYTHING,
             request.expected_outputs,
-            parameters=VerifierParameters(max_advice_bits=bound_bits, max_capacity=None),
+            parameters=VerifierParameters(
+                max_advice_bits=bound_bits, max_capacity=None
+            ),
             **SEEDS,
         )
         rejected = run_protocol(compiled, capped, values)
         assert rejected.report.code is VerificationCode.POLICY_REJECTED
-        assert f"32 bits, exceeding max_advice_bits {bound_bits}" in rejected.report.detail
+        assert (
+            f"32 bits, exceeding max_advice_bits {bound_bits}" in rejected.report.detail
+        )
         assert rejected.transcript is None
         assert Verify(admitted.transcript_bytes, capped, compiled) == rejected.report
     # the default verifier admits no advice at all
@@ -176,7 +201,11 @@ def test_advice_over_the_verifiers_bound_is_rejected_at_admission() -> None:
         run_protocol(
             compiled,
             make_verification_expectation(
-                compilation, CHECK_EVERYTHING, request.expected_outputs, parameters=NO_CAPACITY, **SEEDS
+                compilation,
+                CHECK_EVERYTHING,
+                request.expected_outputs,
+                parameters=NO_CAPACITY,
+                **SEEDS,
             ),
             values,
         ).report.code
@@ -199,7 +228,11 @@ def test_interactive_run_and_pure_verification_agree() -> None:
         weights=weights,
         **SEEDS,
     )
-    values = dict(enumerate(compiled.circuit.evaluate(request.public_inputs, request.weight_values)))
+    values = dict(
+        enumerate(
+            compiled.circuit.evaluate(request.public_inputs, request.weight_values)
+        )
+    )
 
     run = run_protocol(compiled, expectation, values, weight_tree=tree)
 

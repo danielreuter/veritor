@@ -191,7 +191,9 @@ class TestTamperedEvidence:
         # every VU sampled: the tampering below needs at least two proofs, whatever
         # the challenge the header digest derives
         verifier = VerifierSession(
-            expect(VerificationPolicy(1, 1), backend=RECORDING_BACKEND), compiled, backend=recording
+            expect(VerificationPolicy(1, 1), backend=RECORDING_BACKEND),
+            compiled,
+            backend=recording,
         )
         prover = ProverSession(
             compiled,

@@ -76,7 +76,9 @@ class VerifierParameters:
         checked = exact_fraction(eta, name="eta")
         if not 0 <= checked < 1:
             raise ProtocolError("eta must lie in [0, 1)")
-        if max_capacity is not None and (type(max_capacity) is not int or max_capacity < 0):
+        if max_capacity is not None and (
+            type(max_capacity) is not int or max_capacity < 0
+        ):
             raise ProtocolError("max_capacity must be None or a nonnegative integer")
         if type(max_advice_bits) is not int or max_advice_bits < 0:
             raise ProtocolError("max_advice_bits must be a nonnegative integer")

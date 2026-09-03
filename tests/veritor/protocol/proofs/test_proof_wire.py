@@ -41,7 +41,10 @@ def program(kind: str = "kind-a") -> KindProgram:
             GateOp("mul", (("port", 0), ("local", 0))),
             GateOp("add", (("local", 1), ("port", 1))),
         ),
-        (0, 2),  # the source gate and the declared sum are opened; the product is internal
+        (
+            0,
+            2,
+        ),  # the source gate and the declared sum are opened; the product is internal
     )
 
 
@@ -102,7 +105,11 @@ def test_witness_round_trips() -> None:
             16,
             [
                 KindProgram(
-                    digest("k"), 1, (0,), (GateOp("add", (("port", 0), ("port", 0))),), (0,)
+                    digest("k"),
+                    1,
+                    (0,),
+                    (GateOp("add", (("port", 0), ("port", 0))),),
+                    (0,),
                 )
             ],
             [
@@ -145,9 +152,13 @@ def test_statement_validation_is_strict() -> None:
     with pytest.raises(ProtocolError, match="outputs"):
         replace(obligation(), outputs=(2,)).check_program(program())
     with pytest.raises(ProtocolError, match="not earlier"):
-        KindProgram(digest("k"), 1, (), (GateOp("add", (("local", 0), ("local", 0))),), ())
+        KindProgram(
+            digest("k"), 1, (), (GateOp("add", (("local", 0), ("local", 0))),), ()
+        )
     with pytest.raises(ProtocolError, match="port index"):
-        KindProgram(digest("k"), 1, (), (GateOp("add", (("port", 0), ("port", 0))),), ())
+        KindProgram(
+            digest("k"), 1, (), (GateOp("add", (("port", 0), ("port", 0))),), ()
+        )
     with pytest.raises(ProtocolError, match="gate offsets"):
         KindProgram(digest("k"), 1, (), (GateOp("in", ()),), (1,))
     with pytest.raises(ProtocolError, match="strictly increasing"):
@@ -156,7 +167,10 @@ def test_statement_validation_is_strict() -> None:
         replace(obligation(), outputs=(2, 2))
     with pytest.raises(ProtocolError, match="commitment the obligation lacks"):
         replace(
-            obligation(), positions=(PositionRef(5, 0, 0, "u16"),), inputs=(), outputs=()
+            obligation(),
+            positions=(PositionRef(5, 0, 0, "u16"),),
+            inputs=(),
+            outputs=(),
         )
 
 

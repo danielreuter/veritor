@@ -60,12 +60,20 @@ def test_root_is_bound_to_binding_owner_position_set_and_count(model, sec, field
     if field == "binding":
         other = CommitmentDomain(bytes(32), domain.owner, domain.positions)
     elif field == "owner":
-        other = CommitmentDomain(domain.binding, model.replay_unit_of(0), domain.positions)
-    elif field == "positions":  # same count, one position swapped for an interior address
-        swapped = [model.interior_addresses[0] if p == positions[-1] else p for p in positions]
+        other = CommitmentDomain(
+            domain.binding, model.replay_unit_of(0), domain.positions
+        )
+    elif (
+        field == "positions"
+    ):  # same count, one position swapped for an interior address
+        swapped = [
+            model.interior_addresses[0] if p == positions[-1] else p for p in positions
+        ]
         other = CommitmentDomain(domain.binding, domain.owner, position_domain(swapped))
     else:  # one position fewer: the count changes with the position set
-        other = CommitmentDomain(domain.binding, domain.owner, position_domain(positions[:-1]))
+        other = CommitmentDomain(
+            domain.binding, domain.owner, position_domain(positions[:-1])
+        )
     assert other.domain_id != domain.domain_id
     schema = leaf_schema(model.circuit, address)
     # the honest opening under the honest root, but checked with the other domain
@@ -78,7 +86,9 @@ def test_root_is_bound_to_binding_owner_position_set_and_count(model, sec, field
         }
         foreign = MerkleTree(other, encoded, lambda a: leaf_schema(model.circuit, a))
         assert foreign.commitment.root != tree.commitment.root
-        assert not verify_opening(domain, tree.commitment, foreign.open(address), schema, sec.LIMITS)
+        assert not verify_opening(
+            domain, tree.commitment, foreign.open(address), schema, sec.LIMITS
+        )
     assert verify_opening(domain, tree.commitment, opening, schema, sec.LIMITS)
 
 
@@ -116,22 +126,32 @@ def test_padding_leaves_are_domain_bound_and_cannot_be_opened(model, sec):
         level, depth = leaves, 0
         while len(level) > 1:
             level = [
-                domain.node(depth, i // 2, level[i], level[i + 1]) for i in range(0, len(level), 2)
+                domain.node(depth, i // 2, level[i], level[i + 1])
+                for i in range(0, len(level), 2)
             ]
             depth += 1
         return level[0]
 
     leaves = [
         domain.leaf(
-            rank, p, leaf_schema(model.circuit, p), model.circuit.encode(p, model.values[p])
+            rank,
+            p,
+            leaf_schema(model.circuit, p),
+            model.circuit.encode(p, model.values[p]),
         )
         for rank, p in enumerate(positions)
     ]
-    padding = [merkle._hash(merkle._PAD, domain.domain_id, merkle._uint(r)) for r in range(count, width)]
+    padding = [
+        merkle._hash(merkle._PAD, domain.domain_id, merkle._uint(r))
+        for r in range(count, width)
+    ]
     assert root_of(leaves + padding) == tree.commitment.root
     # the same leaves with another domain's padding do not hash to this root
     other = CommitmentDomain(bytes(32), domain.owner, domain.positions)
-    foreign = [merkle._hash(merkle._PAD, other.domain_id, merkle._uint(r)) for r in range(count, width)]
+    foreign = [
+        merkle._hash(merkle._PAD, other.domain_id, merkle._uint(r))
+        for r in range(count, width)
+    ]
     assert root_of(leaves + foreign) != tree.commitment.root
     # an opening naming a position outside the domain (an address past n, an interior address)
     path = tree.open(positions[-1]).path
@@ -160,9 +180,13 @@ def test_interior_committed_under_the_boundary_domain_is_invalid_opening(model, 
             return domain
         return CommitmentDomain(header.digest, BOUNDARY_OWNER, domain.positions)
 
-    run = model.run(expectation, model.values, prover=sec.TamperingProver, domain_for=as_boundary)
+    run = model.run(
+        expectation, model.values, prover=sec.TamperingProver, domain_for=as_boundary
+    )
     assert run.report.code == VerificationCode.INVALID_OPENING
-    assert run.report.sampled_replay_units  # rejected at the evidence, where owners are checked
+    assert (
+        run.report.sampled_replay_units
+    )  # rejected at the evidence, where owners are checked
 
     # even the empty commitment (the source unit has no interior) is domain-bound
     def empty_as_boundary(domain: CommitmentDomain) -> CommitmentDomain:
@@ -171,7 +195,10 @@ def test_interior_committed_under_the_boundary_domain_is_invalid_opening(model, 
         return CommitmentDomain(header.digest, BOUNDARY_OWNER, domain.positions)
 
     run = model.run(
-        expectation, model.values, prover=sec.TamperingProver, domain_for=empty_as_boundary
+        expectation,
+        model.values,
+        prover=sec.TamperingProver,
+        domain_for=empty_as_boundary,
     )
     assert run.report.code == VerificationCode.INVALID_COMMITMENT
 
@@ -185,11 +212,17 @@ def test_boundary_committed_under_an_interior_domain_is_invalid_opening(model, s
     def as_interior(domain: CommitmentDomain) -> CommitmentDomain:
         if domain.owner != BOUNDARY_OWNER:
             return domain
-        return CommitmentDomain(header.digest, model.replay_unit_of(0), domain.positions)
+        return CommitmentDomain(
+            header.digest, model.replay_unit_of(0), domain.positions
+        )
 
-    run = model.run(expectation, model.values, prover=sec.TamperingProver, domain_for=as_interior)
+    run = model.run(
+        expectation, model.values, prover=sec.TamperingProver, domain_for=as_interior
+    )
     assert run.report.code == VerificationCode.INVALID_OPENING
-    assert run.report.sampled_replay_units == ()  # the I/O openings fail at the boundary phase
+    assert (
+        run.report.sampled_replay_units == ()
+    )  # the I/O openings fail at the boundary phase
 
 
 def test_boundary_message_replayed_from_another_session_is_invalid_opening(model, sec):
@@ -217,14 +250,18 @@ def test_commitment_count_disagreeing_with_the_domain_is_invalid_commitment(mode
         root, count = message.commitment.root, message.commitment.count
         return BoundaryMessage(Commitment(root, count + 1), message.io_openings)
 
-    run = model.run(expectation, model.values, prover=sec.TamperingProver, rewrite_boundary=inflate)
+    run = model.run(
+        expectation, model.values, prover=sec.TamperingProver, rewrite_boundary=inflate
+    )
     assert run.report.code == VerificationCode.INVALID_COMMITMENT
 
     def shrink(message: InteriorMessage) -> InteriorMessage:
         *rest, last = message.commitments  # the last stage's interior has two positions
         return InteriorMessage((*rest, Commitment(last.root, last.count - 1)))
 
-    run = model.run(expectation, model.values, prover=sec.TamperingProver, rewrite_interiors=shrink)
+    run = model.run(
+        expectation, model.values, prover=sec.TamperingProver, rewrite_interiors=shrink
+    )
     assert run.report.code == VerificationCode.INVALID_COMMITMENT
 
 
@@ -235,9 +272,13 @@ def test_equivocating_on_a_boundary_value_between_phases_is_invalid_opening(mode
     address = model.hidden_boundary_addresses[0]
     forged = dict(model.values)
     forged[address] = (model.values[address] + 1) % (1 << model.width)
-    run = model.run(expectation, model.values, prover=sec.TamperingProver, recommit_boundary=forged)
+    run = model.run(
+        expectation, model.values, prover=sec.TamperingProver, recommit_boundary=forged
+    )
     assert run.report.code == VerificationCode.INVALID_OPENING
-    assert run.report.sampled_verification_units  # at the evidence: the boundary root was fixed
+    assert (
+        run.report.sampled_verification_units
+    )  # at the evidence: the boundary root was fixed
 
 
 def test_two_units_reading_one_address_cannot_be_shown_different_values(model, sec):
@@ -253,12 +294,20 @@ def test_two_units_reading_one_address_cannot_be_shown_different_values(model, s
     assert len(readers) == 2
     seen: list[int] = []
 
-    def second_reader_sees_another_value(owner: int, opening: Opening, phase: str) -> Opening:
-        if phase == "evidence" and owner == BOUNDARY_OWNER and opening.position == address:
+    def second_reader_sees_another_value(
+        owner: int, opening: Opening, phase: str
+    ) -> Opening:
+        if (
+            phase == "evidence"
+            and owner == BOUNDARY_OWNER
+            and opening.position == address
+        ):
             seen.append(opening.position)
             if len(seen) == 2:
                 other = (model.values[address] + 1) % (1 << model.width)
-                return Opening(opening.position, model.circuit.encode(address, other), opening.path)
+                return Opening(
+                    opening.position, model.circuit.encode(address, other), opening.path
+                )
         return opening
 
     run = model.run(
@@ -271,7 +320,10 @@ def test_two_units_reading_one_address_cannot_be_shown_different_values(model, s
     honest = model.run(expectation, model.values).transcript
     assert honest is not None
     values = {
-        item.value for batch in honest.evidence.units for item in batch if item.position == address
+        item.value
+        for batch in honest.evidence.units
+        for item in batch
+        if item.position == address
     }
     assert len(values) == 1  # one owner, one leaf, one value
 
@@ -294,7 +346,8 @@ def test_every_committed_address_has_exactly_one_owner(sec, marks):
     weights = set(circuit.weights)
     boundary = set(iter_domain(index.boundary()))
     interiors = {
-        r: {int(a) for a in iter_domain(index.interior(r))} for r in range(index.replay_units.count)
+        r: {int(a) for a in iter_domain(index.interior(r))}
+        for r in range(index.replay_units.count)
     }
     assert not (weights & boundary)
     for r, interior in interiors.items():
@@ -310,7 +363,9 @@ def test_every_committed_address_has_exactly_one_owner(sec, marks):
         declared = set(circuit.Out(node))
         sources = {a for a in node.interval if circuit[a].is_source}
         required = layout.required(unit)
-        assert [a for _, a in required] == sorted(set(circuit.In(node)) | declared | sources)
+        assert [a for _, a in required] == sorted(
+            set(circuit.In(node)) | declared | sources
+        )
         for owner, address in required:
             assert owner == layout.owner(address)
             if owner >= 0:
@@ -321,9 +376,12 @@ def test_every_committed_address_has_exactly_one_owner(sec, marks):
                 assert owner == WEIGHT_OWNER and address in weights
         touched.update(address for _, address in required)
     assert covered == touched
-    assert all(circuit[a].is_source or index.boundary().contains(a) or any(
-        a in interior for interior in interiors.values()
-    ) for a in covered)
+    assert all(
+        circuit[a].is_source
+        or index.boundary().contains(a)
+        or any(a in interior for interior in interiors.values())
+        for a in covered
+    )
 
     internal = set(range(circuit.n)) - covered
     expected_internal = set()
@@ -332,7 +390,9 @@ def test_every_committed_address_has_exactly_one_owner(sec, marks):
         assert len(expected_internal) == 4
     assert internal == expected_internal
     for address in internal:
-        assert not index.boundary().contains(address) and not index.weights().contains(address)
+        assert not index.boundary().contains(address) and not index.weights().contains(
+            address
+        )
         assert not any(index.interior(r).contains(address) for r in interiors)
     # and the per-kind count the verifier prices from agrees with the enumeration
     kinds = {kind.kind: kind for kind in index.kinds()}
@@ -355,7 +415,9 @@ def test_the_wire_carries_no_prover_described_domain(honest_run, sec):
 # -- kappa_W ----------------------------------------------------------------------------
 
 
-def test_kappa_w_is_bound_to_the_gate_set_and_the_vector_not_the_description(model, sec):
+def test_kappa_w_is_bound_to_the_gate_set_and_the_vector_not_the_description(
+    model, sec
+):
     """One model, one root: the same weights under another description share kappa_W.
 
     The domain is the rank space of the weight vector bound to the gate set, so
@@ -365,10 +427,15 @@ def test_kappa_w_is_bound_to_the_gate_set_and_the_vector_not_the_description(mod
     """
 
     other = sec.Model(3, 2)  # the same weights under another description
-    assert other.weights == model.weights and other.compiled.digest != model.compiled.digest
+    assert (
+        other.weights == model.weights
+        and other.compiled.digest != model.compiled.digest
+    )
     assert other.kappa == model.kappa
     domain = weight_domain(model.gate_set, model.kappa.count)
-    assert domain.domain_id == weight_domain(other.gate_set, other.kappa.count).domain_id
+    assert (
+        domain.domain_id == weight_domain(other.gate_set, other.kappa.count).domain_id
+    )
     rank = 0
     schema = leaf_schema(model.circuit, model.circuit.weights[rank])
     opening = other.tree.open(rank)
@@ -377,9 +444,14 @@ def test_kappa_w_is_bound_to_the_gate_set_and_the_vector_not_the_description(mod
     wider = sec.Model(2, 2, width=16)
     foreign = weight_domain(wider.gate_set, model.kappa.count)
     assert foreign.domain_id != domain.domain_id
-    assert not verify_opening(foreign, model.kappa.commitment, opening, schema, sec.LIMITS)
+    assert not verify_opening(
+        foreign, model.kappa.commitment, opening, schema, sec.LIMITS
+    )
     # another vector length is another domain
-    assert weight_domain(model.gate_set, model.kappa.count + 1).domain_id != domain.domain_id
+    assert (
+        weight_domain(model.gate_set, model.kappa.count + 1).domain_id
+        != domain.domain_id
+    )
     # another vector: the honest prover refuses to run under a header binding its kappa_W
     different = sec.Model(2, 2, weights=tuple(w ^ 1 for w in model.weights))
     assert different.kappa != model.kappa
@@ -390,12 +462,17 @@ def test_kappa_w_is_bound_to_the_gate_set_and_the_vector_not_the_description(mod
 
 
 def test_kappa_w_with_another_count_is_rejected_before_any_commitment(model):
-    expectation = model.expectation(weights=Weights(model.kappa.count + 1, model.kappa.root))
+    expectation = model.expectation(
+        weights=Weights(model.kappa.count + 1, model.kappa.root)
+    )
     run = model.run(expectation, model.values)
     assert run.report.code == VerificationCode.INVALID_COMPILED_RESULT
     assert run.transcript is None
     missing = model.expectation(weights=None)
-    assert model.run(missing, model.values).report.code == VerificationCode.INVALID_COMPILED_RESULT
+    assert (
+        model.run(missing, model.values).report.code
+        == VerificationCode.INVALID_COMPILED_RESULT
+    )
 
 
 def test_weight_opened_with_another_value_is_invalid_opening(model, sec):
@@ -408,10 +485,17 @@ def test_weight_opened_with_another_value_is_invalid_opening(model, sec):
     def substitute(owner: int, opening: Opening, phase: str) -> Opening:
         if owner == WEIGHT_OWNER and opening.position == rank:
             other = (model.weights[0] + 1) % (1 << model.width)
-            return Opening(opening.position, model.circuit.encode(address, other), opening.path)
+            return Opening(
+                opening.position, model.circuit.encode(address, other), opening.path
+            )
         return opening
 
-    run = model.run(expectation, model.values, prover=sec.TamperingProver, rewrite_opening=substitute)
+    run = model.run(
+        expectation,
+        model.values,
+        prover=sec.TamperingProver,
+        rewrite_opening=substitute,
+    )
     assert run.report.code == VerificationCode.INVALID_OPENING
 
 
@@ -423,4 +507,7 @@ def test_interior_domain_is_bound_to_the_replay_phase(model):
     second = interior_domain(bytes([1]) + bytes(31), model.compiled, unit)
     assert first.domain_id != second.domain_id
     assert first.positions.identity_digest == second.positions.identity_digest
-    assert interior_domain(bytes(32), model.compiled, unit + 1).domain_id != first.domain_id
+    assert (
+        interior_domain(bytes(32), model.compiled, unit + 1).domain_id
+        != first.domain_id
+    )

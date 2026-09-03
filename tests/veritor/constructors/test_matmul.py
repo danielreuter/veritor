@@ -34,9 +34,14 @@ def _workload(*, width: int = 8) -> MatmulWorkload:
 def compile_workload(workload: MatmulWorkload) -> Compiled:
     gate_set = make_word_gate_set(workload.width)
     description, inputs = MatmulG(workload.width)(workload, b"")
-    assert inputs == workload.public_inputs  # the activations, as G lays out the `in` gates
+    assert (
+        inputs == workload.public_inputs
+    )  # the activations, as G lays out the `in` gates
     compiled = Compiler(gate_set).compile(description, inputs)
-    assert Compile(MatmulG(workload.width), workload, b"", gate_set).compiled.digest == compiled.digest
+    assert (
+        Compile(MatmulG(workload.width), workload, b"", gate_set).compiled.digest
+        == compiled.digest
+    )
     return compiled
 
 
@@ -62,7 +67,9 @@ def test_shared_weight_matmul_executes_in_canonical_order() -> None:
         compiled.circuit.evaluate(workload.public_inputs)
 
 
-def test_marks_make_source_units_rows_replay_units_and_dots_verification_units() -> None:
+def test_marks_make_source_units_rows_replay_units_and_dots_verification_units() -> (
+    None
+):
     workload = _workload()
     compiled = compile_workload(workload)
     index, circuit = compiled.index, compiled.circuit
@@ -74,13 +81,22 @@ def test_marks_make_source_units_rows_replay_units_and_dots_verification_units()
     assert index.replay_units.count == 2 + rows == 5
     assert index.verification_unit_count == x_cells + w_cells + rows * columns
     activations, weights = index.replay_units.unit(0), index.replay_units.unit(1)
-    assert activations.interval == range(x_cells) and weights.interval == range(x_cells, x_cells + w_cells)
+    assert activations.interval == range(x_cells) and weights.interval == range(
+        x_cells, x_cells + w_cells
+    )
     assert list(circuit.inputs) == list(activations.interval)
     assert list(circuit.weights) == list(weights.interval)
     for r, unit in enumerate((activations, weights)):
-        assert unit.role == "replay" and circuit.Out(unit) == () and index.interior(r).count == 0
+        assert (
+            unit.role == "replay"
+            and circuit.Out(unit) == ()
+            and index.interior(r).count == 0
+        )
         assert index.verification_units(r).count == unit.size
-        assert all(v.size == 1 and circuit[v.interval.start].is_source for v in index.verification_units(r))
+        assert all(
+            v.size == 1 and circuit[v.interval.start].is_source
+            for v in index.verification_units(r)
+        )
     for r in range(2, 2 + rows):
         unit = index.replay_units.unit(r)
         assert unit.role == "replay"
@@ -90,10 +106,20 @@ def test_marks_make_source_units_rows_replay_units_and_dots_verification_units()
         assert all(v.replay_unit == r for v in index.verification_units(r))
         assert len(circuit.Out(unit)) == columns
         # a row reads its activation row and all of W through ports
-        assert circuit.In(unit) == tuple(range((r - 2) * inner, (r - 1) * inner)) + tuple(weights.interval)
-    covered = [a for r in range(index.replay_units.count) for a in index.replay_units.unit(r).interval]
-    assert covered == list(range(circuit.n))  # every gate, source gates included, is in a unit
-    assert len(index.root.frame.definition.out_runs) == 1  # rows are pure dots: one run of outputs
+        assert circuit.In(unit) == tuple(
+            range((r - 2) * inner, (r - 1) * inner)
+        ) + tuple(weights.interval)
+    covered = [
+        a
+        for r in range(index.replay_units.count)
+        for a in index.replay_units.unit(r).interval
+    ]
+    assert covered == list(
+        range(circuit.n)
+    )  # every gate, source gates included, is in a unit
+    assert (
+        len(index.root.frame.definition.out_runs) == 1
+    )  # rows are pure dots: one run of outputs
 
 
 def test_shared_weight_gates_fan_out_across_replay_units() -> None:
@@ -103,10 +129,16 @@ def test_shared_weight_gates_fan_out_across_replay_units() -> None:
     weights = set(circuit.weights)
 
     reads_by_row = [
-        set(circuit.In(index.replay_units.unit(r))) & weights for r in range(2, index.replay_units.count)
+        set(circuit.In(index.replay_units.unit(r))) & weights
+        for r in range(2, index.replay_units.count)
     ]
 
-    assert workload.weight_values == (3, 5) and workload.public_inputs == (7, 11, 13, 17)
+    assert workload.weight_values == (3, 5) and workload.public_inputs == (
+        7,
+        11,
+        13,
+        17,
+    )
     assert weights == {4, 5}
     assert reads_by_row == [weights, weights]
 
@@ -125,7 +157,9 @@ def test_boundary_is_the_inputs_and_the_rows_outputs() -> None:
         interior = index.interior(r)
         # the interior is the dots' declared sums that are not the row's outputs: none, so a
         # sampled dot is checked from its opened inputs and its boundary output alone
-        declared = {a for node in index.verification_units(r) for a in circuit.Out(node)}
+        declared = {
+            a for node in index.verification_units(r) for a in circuit.Out(node)
+        }
         assert set(interior) == declared - io - set(circuit.weights) == set()
         assert set(circuit.Out(unit)) <= declared
         assert all(index.replay_units.owner(a) == r for a in interior)
@@ -171,7 +205,9 @@ def test_constructor_rejects_foreign_inputs_and_advice() -> None:
 def test_constructor_digest_names_the_class_version_and_width() -> None:
     assert MatmulG(8).digest == MatmulG(8).digest
     assert MatmulG(8).digest != MatmulG(16).digest
-    assert len(MatmulG(8).digest) == 64 and MatmulG(8).digest == MatmulG(8).digest.lower()
+    assert (
+        len(MatmulG(8).digest) == 64 and MatmulG(8).digest == MatmulG(8).digest.lower()
+    )
 
     class OtherG(MatmulG):
         pass
@@ -193,7 +229,9 @@ def test_digest_depends_on_shape_and_width_not_public_values() -> None:
 
 def description(rows: int, k: int, columns: int) -> bytes:
     weights = tuple((1,) * columns for _ in range(k))
-    return MatmulG(8)(MatmulWorkload(weights, (tuple((1,) * k for _ in range(rows)),)), b"")[0]
+    return MatmulG(8)(
+        MatmulWorkload(weights, (tuple((1,) * k for _ in range(rows)),)), b""
+    )[0]
 
 
 def test_description_size_does_not_grow_with_rows_or_columns() -> None:

@@ -38,7 +38,9 @@ from .conftest import (
 
 
 @pytest.fixture(scope="module")
-def demo() -> tuple[Compiled, Callable[[VerificationPolicy], Expectation], dict[int, object]]:
+def demo() -> tuple[
+    Compiled, Callable[[VerificationPolicy], Expectation], dict[int, object]
+]:
     """A DemoG run: chained multiply-accumulates, so every dot has an interior.
 
     The matmul fixture has none: each dot output is a row output, hence a
@@ -82,7 +84,9 @@ def forge_interior(compiled: Compiled, values: dict[int, object]) -> dict[int, o
     return forged
 
 
-def test_honest_run_accepts_and_transcript_round_trips(compiled, honest_values, expect) -> None:
+def test_honest_run_accepts_and_transcript_round_trips(
+    compiled, honest_values, expect
+) -> None:
     expectation = expect()
 
     run = run_protocol(compiled, expectation, honest_values)
@@ -90,7 +94,9 @@ def test_honest_run_accepts_and_transcript_round_trips(compiled, honest_values, 
     assert run.report.code is VerificationCode.ACCEPTED
     assert run.report.accepted
     assert run.transcript is not None
-    assert run.report.sampled_replay_units == tuple(range(compiled.index.replay_units.count))
+    assert run.report.sampled_replay_units == tuple(
+        range(compiled.index.replay_units.count)
+    )
     assert run.report.sampled_verification_units == tuple(
         range(compiled.index.verification_unit_count)
     )
@@ -103,7 +109,9 @@ def test_sessions_produce_identical_transcripts_on_both_sides(
     compiled, honest_values, expect, model_weights
 ) -> None:
     verifier = VerifierSession(expect(), compiled)
-    prover = ProverSession(compiled, verifier.header, honest_values, weight_tree=model_weights[1])
+    prover = ProverSession(
+        compiled, verifier.header, honest_values, weight_tree=model_weights[1]
+    )
 
     replay_challenge = verifier.receive_boundary(prover.boundary())
     sample_challenge = verifier.receive_interiors(prover.interiors(replay_challenge))
@@ -118,7 +126,10 @@ def test_forged_interior_is_rejected_when_every_unit_is_checked(demo) -> None:
     forged = forge_interior(compiled, honest)
 
     run = run_protocol(
-        compiled, expectation(CHECK_EVERYTHING), forged, replay=assignment_replay(forged)
+        compiled,
+        expectation(CHECK_EVERYTHING),
+        forged,
+        replay=assignment_replay(forged),
     )
 
     assert run.report.code is VerificationCode.RELATION_REJECTED
@@ -130,14 +141,19 @@ def test_forged_interior_survives_when_nothing_is_sampled(demo) -> None:
     forged = forge_interior(compiled, honest)
 
     run = run_protocol(
-        compiled, expectation(VerificationPolicy(1, 0)), forged, replay=assignment_replay(forged)
+        compiled,
+        expectation(VerificationPolicy(1, 0)),
+        forged,
+        replay=assignment_replay(forged),
     )
 
     assert run.report.code is VerificationCode.ACCEPTED
     assert run.report.sampled_verification_units == ()
 
 
-def test_matmul_commits_no_interior_because_every_dot_output_is_a_row_output(compiled) -> None:
+def test_matmul_commits_no_interior_because_every_dot_output_is_a_row_output(
+    compiled,
+) -> None:
     index = compiled.index
     assert all(index.interior(r).count == 0 for r in range(index.replay_units.count))
     assert all(kind.interior_count == 0 for kind in index.kinds())
@@ -154,7 +170,9 @@ def test_wrong_claimed_output_is_rejected_at_the_boundary(
     assert run.report.sampled_replay_units == ()
 
 
-def test_wrong_input_value_is_rejected_at_the_boundary(compiled, honest_values, expect) -> None:
+def test_wrong_input_value_is_rejected_at_the_boundary(
+    compiled, honest_values, expect
+) -> None:
     """Every ``in`` gate is opened at commit and compared to the public input of its rank."""
 
     address = compiled.circuit.inputs[2]

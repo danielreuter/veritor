@@ -28,7 +28,9 @@ class PolicyGrid:
     q: tuple[Fraction, ...]
     s: tuple[Fraction, ...]
 
-    def __init__(self, q: tuple[ProbabilityInput, ...], s: tuple[ProbabilityInput, ...]) -> None:
+    def __init__(
+        self, q: tuple[ProbabilityInput, ...], s: tuple[ProbabilityInput, ...]
+    ) -> None:
         for name, values in (("q", q), ("s", s)):
             checked = tuple(exact_fraction(value, name=name) for value in values)
             if not checked or any(not 0 <= value <= 1 for value in checked):
@@ -95,7 +97,11 @@ def optimize(
         result = bound(target, policy, eta, bound_options)
         if max_bits is not None and result.bits > max_bits:
             continue
-        key = (expected.total, result.bits) if budget is None else (result.bits, expected.total)
+        key = (
+            (expected.total, result.bits)
+            if budget is None
+            else (result.bits, expected.total)
+        )
         if best is None or key < best[0]:
             best = (key, Optimization(policy, result, expected, evaluated))
     if best is None:

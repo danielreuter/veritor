@@ -163,13 +163,16 @@ def rate(target: Compiled | KindTable, policy: VerificationPolicy) -> RateResult
     fallible = {
         kind
         for kind, row in rows.items()
-        if row.role == VERIFICATION and row.size > row.source_inputs + row.source_weights
+        if row.role == VERIFICATION
+        and row.size > row.source_inputs + row.source_weights
     }
     holders: list[tuple[KindSummary, int]] = []
     for row in rows.values():
         if row.role != REPLAY:
             continue
-        inside = sum(count for kind, count in row.verification_kinds if kind in fallible)
+        inside = sum(
+            count for kind, count in row.verification_kinds if kind in fallible
+        )
         if inside:
             holders.append((row, inside))
     if not holders:
@@ -179,10 +182,15 @@ def rate(target: Compiled | KindTable, policy: VerificationPolicy) -> RateResult
     replay_bits = max(row.cut_bits for row, _ in holders)
     verification_units = max(inside for _, inside in holders)
     verification_bits = max(
-        rows[kind].cut_bits for row, _ in holders for kind, _ in row.verification_kinds if kind in fallible
+        rows[kind].cut_bits
+        for row, _ in holders
+        for kind, _ in row.verification_kinds
+        if kind in fallible
     )
 
-    channels, lumped_at = _channels(replay_units, replay_bits, verification_bits, verification_units, policy)
+    channels, lumped_at = _channels(
+        replay_units, replay_bits, verification_bits, verification_units, policy
+    )
     binding = int(np.argmax(channels)) + 1
     return RateResult(
         rho=_up(float(channels[binding - 1])),
@@ -240,7 +248,9 @@ def _channels(
     if not crossing.size and lumped_at < verification_units:
         value[-1] = replay_bits  # the lumped class still needs the RU's cover
     errors = errors[:lumped_at]
-    position = _up_array(math.log2(replay_units) + np.log2(errors) + np.log2(errors + 1))
+    position = _up_array(
+        math.log2(replay_units) + np.log2(errors) + np.log2(errors + 1)
+    )
     numerator = position + value
     cost = _cost_bits(policy, errors)
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -261,7 +271,9 @@ def _cost_bits(policy: VerificationPolicy, errors: np.ndarray) -> np.ndarray:
     q, s = float(policy.q), float(policy.s)
     with np.errstate(divide="ignore"):
         surviving = np.log1p(-q) if q < 1 else -math.inf
-        caught = (math.log(q) if q > 0 else -math.inf) + errors * (np.log1p(-s) if s < 1 else -math.inf)
+        caught = (math.log(q) if q > 0 else -math.inf) + errors * (
+            np.log1p(-s) if s < 1 else -math.inf
+        )
         ln_f = np.logaddexp(surviving, caught)
     cost = -ln_f * LOG2E
     finite = np.isfinite(cost)

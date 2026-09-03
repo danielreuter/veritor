@@ -159,7 +159,9 @@ def chain_description(
         return [cell_gates(x[i], x[(i + 1) % cells], w[i]) for i in range(cells)]
 
     @tracer.definition(
-        input_count=2 * cells, key=("stage", cells, wide_units, split_cells), role="replay"
+        input_count=2 * cells,
+        key=("stage", cells, wide_units, split_cells),
+        role="replay",
     )
     def stage(v):
         x, w = v[:cells], v[cells:]
@@ -171,7 +173,9 @@ def chain_description(
     def sources(_v):
         return tracer.inputs(cells), tracer.weights(cells)
 
-    @tracer.definition(input_count=0, key=("root", stages, cells, wide_units, split_cells))
+    @tracer.definition(
+        input_count=0, key=("root", stages, cells, wide_units, split_cells)
+    )
     def root(_v):
         s = sources()
         x, w = s[0:cells], s[cells : 2 * cells]
@@ -215,7 +219,10 @@ def random_marked_compiled(
     inputs = graph.randint(2, 3)
     ops = [graph.choice(["add", "mul"]) for _ in range(gates)]
     args = [  # one argument is recent (so units have interior values), one is anything earlier
-        (graph.randrange(max(0, inputs + i - 2), inputs + i), graph.randrange(inputs + i))
+        (
+            graph.randrange(max(0, inputs + i - 2), inputs + i),
+            graph.randrange(inputs + i),
+        )
         for i in range(gates)
     ]
     # value ids: 0..inputs-1 are inputs, inputs+i is gate i
@@ -228,17 +235,32 @@ def random_marked_compiled(
 
     marks = random.Random(marking)
     cuts = sorted(marks.sample(range(1, gates), marks.randint(0, min(2, gates - 1))))
-    replay_blocks = [list(range(s, e)) for s, e in zip([0, *cuts], [*cuts, gates], strict=True)]
+    replay_blocks = [
+        list(range(s, e)) for s, e in zip([0, *cuts], [*cuts, gates], strict=True)
+    ]
     layout: list[list[list[int]]] = []
     for block in replay_blocks:
-        inner = sorted(marks.sample(range(1, len(block)), marks.randint(0, min(2, len(block) - 1))))
-        layout.append([block[s:e] for s, e in zip([0, *inner], [*inner, len(block)], strict=True)])
-    maximal = {(r, u): marks.random() < 0.3 for r, units in enumerate(layout) for u in range(len(units))}
+        inner = sorted(
+            marks.sample(range(1, len(block)), marks.randint(0, min(2, len(block) - 1)))
+        )
+        layout.append(
+            [block[s:e] for s, e in zip([0, *inner], [*inner, len(block)], strict=True)]
+        )
+    maximal = {
+        (r, u): marks.random() < 0.3
+        for r, units in enumerate(layout)
+        for u in range(len(units))
+    }
 
     gate_set = make_word_gate_set(width)
     tracer = Tracer(gate_set)
     gate_of = {"add": tracer.gate("add"), "mul": tracer.gate("mul")}
-    unit_of_gate = {g: (r, u) for r, units in enumerate(layout) for u, unit in enumerate(units) for g in unit}
+    unit_of_gate = {
+        g: (r, u)
+        for r, units in enumerate(layout)
+        for u, unit in enumerate(units)
+        for g in unit
+    }
 
     def outside(unit: list[int], scope) -> list[int]:
         """Value ids read by ``unit`` that are produced outside ``scope``."""
@@ -256,7 +278,9 @@ def random_marked_compiled(
         produced = [inputs + g for g in unit]
         if maximal_interface:
             return produced
-        return [v for v in produced if v in sinks or any(not scope(g) for g in read_by[v])]
+        return [
+            v for v in produced if v in sinks or any(not scope(g) for g in read_by[v])
+        ]
 
     def verification(r: int, u: int, exported: list[int]):
         unit = layout[r][u]
@@ -264,11 +288,15 @@ def random_marked_compiled(
         outs = declared(unit, lambda g: unit_of_gate[g] == (r, u), maximal[r, u])
         outs += [v for v in exported if v - inputs in unit and v not in outs]
 
-        @tracer.definition(input_count=len(ins), key=("v", seed, marking, r, u), role="verification")
+        @tracer.definition(
+            input_count=len(ins), key=("v", seed, marking, r, u), role="verification"
+        )
         def body(v):
             local = {value: v[k] for k, value in enumerate(ins)}
             for g in unit:
-                local[inputs + g] = gate_of[ops[g]](local[args[g][0]], local[args[g][1]])
+                local[inputs + g] = gate_of[ops[g]](
+                    local[args[g][0]], local[args[g][1]]
+                )
             return [local[value] for value in outs]
 
         return body, ins, outs
@@ -281,7 +309,9 @@ def random_marked_compiled(
         outs = declared(members, lambda g: unit_of_gate[g][0] == r, wide)
         pieces = [verification(r, u, outs) for u in range(len(units))]
 
-        @tracer.definition(input_count=len(ins), key=("r", seed, marking, r), role="replay")
+        @tracer.definition(
+            input_count=len(ins), key=("r", seed, marking, r), role="replay"
+        )
         def body(v):
             local = {value: v[k] for k, value in enumerate(ins)}
             for piece, piece_ins, piece_outs in pieces:
@@ -363,10 +393,14 @@ class Model:
         self.stages, self.cells = stages, cells
         mask = (1 << width) - 1
         self.inputs = (
-            tuple((3 * i + 2) & mask for i in range(cells)) if inputs is None else inputs
+            tuple((3 * i + 2) & mask for i in range(cells))
+            if inputs is None
+            else inputs
         )
         self.weights = (
-            tuple((5 * i + 3) & mask for i in range(cells)) if weights is None else weights
+            tuple((5 * i + 3) & mask for i in range(cells))
+            if weights is None
+            else weights
         )
         self.values: dict[int, int] = evaluate(self.compiled, self.inputs, self.weights)
         self.outputs = self.outputs_of(self.values)
@@ -440,7 +474,9 @@ class Model:
 
     # -- dishonest transcripts ----------------------------------------------
 
-    def corrupt(self, overrides: Mapping[int, int]) -> tuple[dict[int, int], tuple[int, ...]]:
+    def corrupt(
+        self, overrides: Mapping[int, int]
+    ) -> tuple[dict[int, int], tuple[int, ...]]:
         """Values with ``overrides`` injected and propagated, and their outputs."""
 
         values = evaluate(self.compiled, self.inputs, self.weights, overrides)
@@ -502,7 +538,11 @@ class Model:
         )
 
     def verify(self, transcript: Transcript | bytes, expectation: Expectation):
-        data = transcript if isinstance(transcript, bytes) else encode_transcript(transcript)
+        data = (
+            transcript
+            if isinstance(transcript, bytes)
+            else encode_transcript(transcript)
+        )
         return verify_transcript(data, expectation, self.compiled)
 
 
@@ -591,7 +631,9 @@ class TamperingProver(ProverSession):
                 encoded[address] = self.raw_leaves[address]
             else:
                 encoded[address] = circuit.encode(address, values[address])
-        tree = MerkleTree(domain, encoded, lambda address: leaf_schema(circuit, address))
+        tree = MerkleTree(
+            domain, encoded, lambda address: leaf_schema(circuit, address)
+        )
         self._trees[owner] = tree
         return tree
 
@@ -612,7 +654,8 @@ class TamperingProver(ProverSession):
     def interiors(self, challenge: ReplayChallenge) -> InteriorMessage:
         if self.recommit_boundary is not None:
             self._commit(
-                boundary_domain(self.header, self._layout.compiled), self.recommit_boundary
+                boundary_domain(self.header, self._layout.compiled),
+                self.recommit_boundary,
             )
         message = super().interiors(challenge)
         if self.rewrite_interiors is not None:
@@ -668,7 +711,9 @@ def rng(space: str, start: int, count: int = 1, stride: int = 0) -> list[object]
     return [space, start, count, stride]
 
 
-def jrng(space: str, start: int, count: int = 1, stride: int = 0, jstride: int = 0) -> list[object]:
+def jrng(
+    space: str, start: int, count: int = 1, stride: int = 0, jstride: int = 0
+) -> list[object]:
     return [space, start, count, stride, jstride]
 
 
@@ -690,7 +735,12 @@ def body(
     outputs: list[list[object]],
     role: str | None = None,
 ) -> dict[str, object]:
-    return {"input_count": input_count, "role": role, "steps": steps, "outputs": outputs}
+    return {
+        "input_count": input_count,
+        "role": role,
+        "steps": steps,
+        "outputs": outputs,
+    }
 
 
 class Doc:
@@ -733,12 +783,19 @@ class Phases:
 
 
 def replay_selection(
-    expectation: Expectation, header: Header, boundary: BoundaryMessage, compiled: Compiled
+    expectation: Expectation,
+    header: Header,
+    boundary: BoundaryMessage,
+    compiled: Compiled,
 ) -> tuple[int, ...]:
     """``J`` as the verifier derives it from ``q_seed`` and the boundary phase."""
 
     return derive_replay_selection(
-        expectation.q_seed, boundary_phase(header, boundary), compiled, expectation.policy, LIMITS
+        expectation.q_seed,
+        boundary_phase(header, boundary),
+        compiled,
+        expectation.policy,
+        LIMITS,
     )
 
 
@@ -752,9 +809,16 @@ def sample_selection(
 ) -> tuple[int, ...]:
     """``T`` as the verifier derives it from ``s_seed`` and the interior phase."""
 
-    phase = interior_phase(replay_phase(boundary_phase(header, boundary), challenge), interiors)
+    phase = interior_phase(
+        replay_phase(boundary_phase(header, boundary), challenge), interiors
+    )
     return derive_sample_selection(
-        expectation.s_seed, phase, compiled, challenge.selected, expectation.policy, LIMITS
+        expectation.s_seed,
+        phase,
+        compiled,
+        challenge.selected,
+        expectation.policy,
+        LIMITS,
     )
 
 

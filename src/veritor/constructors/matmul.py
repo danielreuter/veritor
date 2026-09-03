@@ -103,7 +103,10 @@ class MatmulWorkload:
         """The activations, row-major in activation order: the ``in`` gates by rank."""
 
         return tuple(
-            item for activation in self.activations for row in activation for item in row
+            item
+            for activation in self.activations
+            for row in activation
+            for item in row
         )
 
     @property
@@ -136,7 +139,8 @@ def expected_matmul_outputs(workload: MatmulWorkload) -> tuple[int, ...]:
     mask = (1 << workload.width) - 1
     inner, columns = workload.weight_shape
     return tuple(
-        sum(row[index] * workload.weights[index][column] for index in range(inner)) & mask
+        sum(row[index] * workload.weights[index][column] for index in range(inner))
+        & mask
         for activation in workload.activations
         for row in activation
         for column in range(columns)
@@ -172,7 +176,9 @@ class MatmulG:
         if type(width) is not int or width <= 0:
             raise ValueError("width must be a positive integer")
         self.width = width
-        self.digest = constructor_digest(type(self).__name__, self.VERSION, {"width": width})
+        self.digest = constructor_digest(
+            type(self).__name__, self.VERSION, {"width": width}
+        )
         self.tracer = Tracer(make_word_gate_set(width))
         mul, add = self.tracer.gate("mul"), self.tracer.gate("add")
         self.add = add
@@ -197,7 +203,9 @@ class MatmulG:
             while len(level) > 1:
                 if len(level) % 2:
                     carried.append(level[-1])
-                level = self.tracer.repeat(len(level) // 2, self.add_pair, level[0:2].by(2))
+                level = self.tracer.repeat(
+                    len(level) // 2, self.add_pair, level[0:2].by(2)
+                )
             result = level[0]
             for carry in carried:
                 result = self.add(result, carry)
@@ -213,7 +221,9 @@ class MatmulG:
         )
         def row(v: Wires) -> object:
             x, w = v[:k], v[k:]
-            return self.tracer.repeat(columns, self.dot(k), x, w[0 : k * columns : columns].by(1))
+            return self.tracer.repeat(
+                columns, self.dot(k), x, w[0 : k * columns : columns].by(1)
+            )
 
         return row
 
@@ -227,9 +237,9 @@ class MatmulG:
     def weights_unit(self, count: int) -> TracedDefinition:
         """The replay unit holding ``count`` weight gates, all declared."""
 
-        return self.tracer.definition(input_count=0, key=("weights", count), role="replay")(
-            lambda _v: self.tracer.weights(count)
-        )
+        return self.tracer.definition(
+            input_count=0, key=("weights", count), role="replay"
+        )(lambda _v: self.tracer.weights(count))
 
     def batch(
         self,
@@ -242,7 +252,9 @@ class MatmulG:
         activations = self.activations_unit(activation_cells)
         weights = self.weights_unit(weight_cells)
 
-        @self.tracer.definition(input_count=0, key=("batch", activation_shapes, weight_shape))
+        @self.tracer.definition(
+            input_count=0, key=("batch", activation_shapes, weight_shape)
+        )
         def batch(_v: Wires) -> object:
             x_all = activations()
             w = weights()
@@ -251,7 +263,9 @@ class MatmulG:
             for rows, k in activation_shapes:
                 x = x_all[offset : offset + rows * k]
                 offset += rows * k
-                outputs.append(self.tracer.repeat(rows, self.row(k, columns), x[0:k].by(k), w))
+                outputs.append(
+                    self.tracer.repeat(rows, self.row(k, columns), x[0:k].by(k), w)
+                )
             return outputs
 
         return batch
@@ -265,7 +279,9 @@ class MatmulG:
             raise TracerError("workload width differs from MatmulG")
         if a != b"":
             raise TracerError("MatmulG does not accept constructor advice")
-        description = self.tracer.serialize(self.batch(x.activation_shapes, x.weight_shape))
+        description = self.tracer.serialize(
+            self.batch(x.activation_shapes, x.weight_shape)
+        )
         return description, x.public_inputs
 
 
@@ -300,7 +316,9 @@ class MatmulCompileRequest:
     ) -> None:
         if limits is not None and not isinstance(limits, CompilationLimits):
             raise TypeError("limits must be CompilationLimits or None")
-        object.__setattr__(self, "workload", MatmulWorkload(weights, activations, width=width))
+        object.__setattr__(
+            self, "workload", MatmulWorkload(weights, activations, width=width)
+        )
         object.__setattr__(self, "limits", limits)
 
     @property

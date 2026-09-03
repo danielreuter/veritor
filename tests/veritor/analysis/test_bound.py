@@ -56,7 +56,9 @@ def relaxed(eta: Fraction, result: BoundResult, replay_units: int) -> Fraction:
 
 @pytest.mark.parametrize("sizes", FAMILIES)
 @pytest.mark.parametrize(("policy", "eta"), POLICIES)
-def test_fold_sits_between_the_union_and_the_relaxed_per_set_sum(make_compiled, sizes, policy, eta):
+def test_fold_sits_between_the_union_and_the_relaxed_per_set_sum(
+    make_compiled, sizes, policy, eta
+):
     compiled = make_compiled(sizes)
     result = bound(compiled, policy, eta)
 
@@ -88,7 +90,9 @@ def test_grid_is_exact_when_fine_enough(make_compiled, sizes):
 
     compiled = make_compiled(sizes)
     policy, eta = VerificationPolicy(Fraction(1, 2), Fraction(1, 2)), Fraction(1, 5)
-    result = bound(compiled, policy, eta, BoundOptions(resolution=256, max_buckets=1 << 16))
+    result = bound(
+        compiled, policy, eta, BoundOptions(resolution=256, max_buckets=1 << 16)
+    )
 
     assert result.errors_limit >= max(sizes)
     assert result.knapsack_bits == pytest.approx(
@@ -135,11 +139,16 @@ def test_the_three_cuts_of_a_cover_are_never_below_the_exact_cut(compiled: Compi
 def paper_outputs(make_paper_example):
     """Every transcript of the 8-gate fan-in circuit over 2-bit cells, once per marking."""
 
-    return {split: transcript_outputs(make_paper_example(2, split), [1, 2, 3]) for split in (False, True)}
+    return {
+        split: transcript_outputs(make_paper_example(2, split), [1, 2, 3])
+        for split in (False, True)
+    }
 
 
 @pytest.mark.parametrize("split", [False, True])
-def test_paper_fanin_example_union_is_below_the_fold(make_paper_example, paper_outputs, split):
+def test_paper_fanin_example_union_is_below_the_fold(
+    make_paper_example, paper_outputs, split
+):
     compiled = make_paper_example(2, split)
     outputs = paper_outputs[split]
     for policy, eta in POLICIES[:4]:
@@ -169,7 +178,9 @@ def test_random_small_circuits_union_is_below_the_fold(make_random_compiled, see
         assert result.bits <= per_set + TOLERANCE
 
 
-def test_all_outputs_are_reachable_when_nothing_is_checked(make_paper_example, paper_outputs):
+def test_all_outputs_are_reachable_when_nothing_is_checked(
+    make_paper_example, paper_outputs
+):
     compiled = make_paper_example(2, False)
     outputs = paper_outputs[False]
     everything = accepted_outputs(outputs, VerificationPolicy(0, 1), Fraction(1, 2))
@@ -199,7 +210,9 @@ def source_only_units(inputs: int, weights: int) -> Compiled:
     gate_set = make_word_gate_set(8)
     tracer = Tracer(gate_set)
     add = tracer.gate("add")
-    pair = tracer.definition(input_count=2, key="pair", role="verification")(lambda v: add(v[0], v[1]))
+    pair = tracer.definition(input_count=2, key="pair", role="verification")(
+        lambda v: add(v[0], v[1])
+    )
 
     @tracer.definition(input_count=0, key=("sources", inputs, weights), role="replay")
     def sources(_v):
@@ -229,7 +242,9 @@ def test_a_unit_of_source_gates_has_no_capacity(make_compiled):
     assert index.interior(0).count == 0
     # the error set may name the source cells: they cover nothing, and the exact cut is empty
     for errors in error_sets(index):
-        expected = 8 if any(index.verification_unit(u).replay_unit == 1 for u in errors) else 0
+        expected = (
+            8 if any(index.verification_unit(u).replay_unit == 1 for u in errors) else 0
+        )
         assert cover_bits(compiled, errors) == cut_bits(compiled, errors) == expected
     for policy, eta in POLICIES[:4]:
         result = bound(compiled, policy, eta)
@@ -243,17 +258,23 @@ def test_a_unit_of_source_gates_has_no_capacity(make_compiled):
     outputs = transcript_outputs(compiled, [1, 2, 3], [4, 5])
     everything = accepted_outputs(outputs, VerificationPolicy(0, 1), Fraction(1, 2))
     honest = accepted_outputs(outputs, VerificationPolicy(1, 1), Fraction(0))
-    assert len(everything) == 256 and honest == {(5,)}  # 1 + 4: the sources hold their values
+    assert len(everything) == 256 and honest == {
+        (5,)
+    }  # 1 + 4: the sources hold their values
 
 
 def test_bound_on_the_matmul_counts_the_dots_and_not_the_source_units():
-    compiled = compile_matmul().compiled  # activations and weights units, 3 rows of 2 dots
+    compiled = (
+        compile_matmul().compiled
+    )  # activations and weights units, 3 rows of 2 dots
     index = compiled.index
     rows = {row.kind: row for row in index.kinds()}
     activations, weights = index.replay_units.unit(0), index.replay_units.unit(1)
 
     assert rows[activations.kind].out_bits == rows[weights.kind].out_bits == 0
-    assert all(rows[index.replay_units.unit(r).kind].out_bits == 16 for r in range(2, 5))
+    assert all(
+        rows[index.replay_units.unit(r).kind].out_bits == 16 for r in range(2, 5)
+    )
     for policy, eta in POLICIES[:4]:
         result = bound(compiled, policy, eta)
         assert result.out_bits == 6 * 8 and 0 <= result.bits <= 48
@@ -294,7 +315,9 @@ def synthetic_transformer_shape() -> Compiled:
 
     @tracer.definition(input_count=width, key="head", role="verification")
     def head(v):
-        return [add(mul(v[i], v[(i + 1) % width]), v[(i + 2) % width]) for i in range(width)]
+        return [
+            add(mul(v[i], v[(i + 1) % width]), v[(i + 2) % width]) for i in range(width)
+        ]
 
     @tracer.definition(input_count=width, key="block", role="replay")
     def block(v):
@@ -327,7 +350,9 @@ def synthetic_transformer_shape() -> Compiled:
 def test_fold_never_enumerates_copies():
     compiled = synthetic_transformer_shape()
     assert compiled.circuit.n > 10**8
-    assert compiled.index.verification_unit_count == 12 * 1024 * 64 + 64  # the heads and the input cells
+    assert (
+        compiled.index.verification_unit_count == 12 * 1024 * 64 + 64
+    )  # the heads and the input cells
 
     for policy, eta in (
         (VerificationPolicy(Fraction(1, 2), Fraction(1, 2)), Fraction(1, 4)),
@@ -354,7 +379,13 @@ def widened(table: KindTable, **cuts: bool) -> KindTable:
     fields = {f"{name}_bits": root.out_bits for name, wide in cuts.items() if wide}
     rows = tuple(replace(row, **fields) for row in table.rows)
     return KindTable(
-        rows, table.root, table.n, table.input_count, table.weight_count, table.replay_unit_count, table.digest
+        rows,
+        table.root,
+        table.n,
+        table.input_count,
+        table.weight_count,
+        table.replay_unit_count,
+        table.digest,
     )
 
 
@@ -364,7 +395,9 @@ def interface_only(table: KindTable) -> KindTable:
     return widened(table, reach=True, ancestor=True)
 
 
-TOY = ServingShape(vocab=8, d_model=4, heads=2, layers=1, prompt=2, generated=3, requests=4, batch=2)
+TOY = ServingShape(
+    vocab=8, d_model=4, heads=2, layers=1, prompt=2, generated=3, requests=4, batch=2
+)
 
 
 @pytest.mark.parametrize(
@@ -373,7 +406,10 @@ TOY = ServingShape(vocab=8, d_model=4, heads=2, layers=1, prompt=2, generated=3,
     + [paper_example(2, split).kind_table() for split in (False, True)]
     + [random_compiled(seed).kind_table() for seed in range(6)]
     + [compile_matmul().compiled.kind_table()]
-    + [serving_table(TOY, replay, verification) for replay, verification in (("request", "row"), ("step", "row"))],
+    + [
+        serving_table(TOY, replay, verification)
+        for replay, verification in (("request", "row"), ("step", "row"))
+    ],
 )
 def test_the_reach_never_raises_the_bound(table: KindTable):
     """Charging a node the narrowest of three downstream cuts is never worse than charging one of them."""
@@ -454,7 +490,9 @@ def chained_requests(requests: int) -> Compiled:
         x = sources()
         return [request(x[2 * r], x[2 * r + 1]) for r in range(requests)]
 
-    return Compiler(gate_set).compile(tracer.serialize(root), list(range(1, 2 * requests + 1)))
+    return Compiler(gate_set).compile(
+        tracer.serialize(root), list(range(1, 2 * requests + 1))
+    )
 
 
 def test_a_wide_unit_inside_a_request_is_charged_the_requests_word():
@@ -471,21 +509,39 @@ def test_a_wide_unit_inside_a_request_is_charged_the_requests_word():
 
     compiled = chained_requests(4)
     rows = {row.kind: row for row in compiled.index.kinds()}
-    steps = next(row for row in rows.values() if row.role == REPLAY and row.out_bits == 16)
-    tails = next(row for row in rows.values() if row.role == REPLAY and row.out_bits == 8)
-    pairs = next(row for row in rows.values() if row.role == "verification" and row.out_bits == 16)
+    steps = next(
+        row for row in rows.values() if row.role == REPLAY and row.out_bits == 16
+    )
+    tails = next(
+        row for row in rows.values() if row.role == REPLAY and row.out_bits == 8
+    )
+    pairs = next(
+        row
+        for row in rows.values()
+        if row.role == "verification" and row.out_bits == 16
+    )
     assert (steps.copies, tails.copies, pairs.copies) == (8, 4, 16)
     assert steps.reach_bits == tails.reach_bits == pairs.reach_bits == 8
-    assert kind_cut_bits(steps) == kind_cut_bits(pairs) == 8 and kind_cut_bits(tails) == 8
+    assert (
+        kind_cut_bits(steps) == kind_cut_bits(pairs) == 8 and kind_cut_bits(tails) == 8
+    )
 
     policy, eta = VerificationPolicy(Fraction(1, 2), 1), Fraction(1, 3)
     result = bound(compiled, policy, eta)
     before = bound(interface_only(compiled.kind_table()), policy, eta)
 
-    assert result.out_bits == before.out_bits == 32 and not result.capped and not before.capped
+    assert (
+        result.out_bits == before.out_bits == 32
+        and not result.capped
+        and not before.capped
+    )
     assert result.errors_limit == before.errors_limit == 1
-    assert before.bits == pytest.approx(math.log2(1 + 8 * 2 * 2**16 + 4 * 2**8), abs=0.001)
-    assert result.bits == pytest.approx(math.log2(1 + 8 * 2 * 2**8 + 4 * 2**8), abs=0.001)
+    assert before.bits == pytest.approx(
+        math.log2(1 + 8 * 2 * 2**16 + 4 * 2**8), abs=0.001
+    )
+    assert result.bits == pytest.approx(
+        math.log2(1 + 8 * 2 * 2**8 + 4 * 2**8), abs=0.001
+    )
     assert result.bits < before.bits - 7
 
 

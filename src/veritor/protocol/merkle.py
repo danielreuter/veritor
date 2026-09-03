@@ -64,7 +64,9 @@ class CommitmentDomain:
         if type(self.binding) is not bytes or len(self.binding) != 32:
             raise ProtocolError("binding must be 32 bytes")
         if type(self.owner) is not int or self.owner < -2:
-            raise ProtocolError("owner must be -2 (weights), -1 (boundary) or a replay unit")
+            raise ProtocolError(
+                "owner must be -2 (weights), -1 (boundary) or a replay unit"
+            )
         object.__setattr__(
             self,
             "domain_id",

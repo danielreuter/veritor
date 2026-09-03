@@ -89,10 +89,14 @@ def _object(value: object, keys: set[str], where: str) -> dict[str, object]:
     return value
 
 
-def _list[T](value: object, item: Callable[[object, str], T], where: str) -> tuple[T, ...]:
+def _list[T](
+    value: object, item: Callable[[object, str], T], where: str
+) -> tuple[T, ...]:
     if type(value) is not list:
         raise MalformedTranscript(f"{where} must be a list")
-    return tuple(item(element, f"{where}[{index}]") for index, element in enumerate(value))
+    return tuple(
+        item(element, f"{where}[{index}]") for index, element in enumerate(value)
+    )
 
 
 def _int(value: object, where: str) -> int:
@@ -122,7 +126,9 @@ def _fraction(value: object, where: str, limits: VerificationLimits) -> Fraction
 
 def _commitment(value: object, where: str) -> Commitment:
     fields = _object(value, {"count", "root"}, where)
-    return Commitment(_hex(fields["root"], f"{where}.root"), _int(fields["count"], f"{where}.count"))
+    return Commitment(
+        _hex(fields["root"], f"{where}.root"), _int(fields["count"], f"{where}.count")
+    )
 
 
 def _opening(value: object, where: str) -> Opening:
@@ -142,10 +148,14 @@ def _weights(value: object, where: str) -> Weights | None:
     if value is None:
         return None
     fields = _object(value, {"count", "root"}, where)
-    return Weights(_int(fields["count"], f"{where}.count"), _hex(fields["root"], f"{where}.root"))
+    return Weights(
+        _int(fields["count"], f"{where}.count"), _hex(fields["root"], f"{where}.root")
+    )
 
 
-def _optional_key(value: object, keys: set[str], optional: str, where: str) -> dict[str, object]:
+def _optional_key(
+    value: object, keys: set[str], optional: str, where: str
+) -> dict[str, object]:
     """An object with ``keys``, plus ``optional`` if present (its absence is the default)."""
 
     return _optional_keys(value, keys, {optional}, where)
@@ -163,7 +173,9 @@ def _optional_keys(
 
 def _proof(value: object, where: str) -> ProofMessage:
     fields = _optional_key(value, {"proof", "units"}, "foreign", where)
-    foreign = _hex(fields["foreign"], f"{where}.foreign") if "foreign" in fields else b""
+    foreign = (
+        _hex(fields["foreign"], f"{where}.foreign") if "foreign" in fields else b""
+    )
     if "foreign" in fields and not foreign:
         raise NoncanonicalTranscript(f"{where}.foreign is empty; it must be omitted")
     return ProofMessage(
@@ -175,7 +187,9 @@ def _proof(value: object, where: str) -> ProofMessage:
 
 def _evidence(value: object, where: str) -> EvidenceMessage:
     fields = _optional_key(value, {"units"}, "proofs", where)
-    proofs = _list(fields["proofs"], _proof, f"{where}.proofs") if "proofs" in fields else ()
+    proofs = (
+        _list(fields["proofs"], _proof, f"{where}.proofs") if "proofs" in fields else ()
+    )
     if "proofs" in fields and not proofs:
         raise NoncanonicalTranscript(f"{where}.proofs is empty; it must be omitted")
     return EvidenceMessage(_list(fields["units"], _openings, f"{where}.units"), proofs)
@@ -204,7 +218,9 @@ def _reject_float(text: str) -> object:
     raise MalformedTranscript(f"floating point value {text!r} is not allowed")
 
 
-def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> Transcript:
+def decode_transcript(
+    data: bytes, limits: VerificationLimits | None = None
+) -> Transcript:
     checked = VerificationLimits() if limits is None else limits
     if type(data) is not bytes:
         raise MalformedTranscript("transcript must be bytes")
@@ -218,7 +234,12 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
         )
     except MalformedTranscript:
         raise
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as error:
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+    ) as error:
         raise MalformedTranscript("transcript is not valid JSON") from error
     top = _object(
         document,
@@ -260,16 +281,22 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
     if type(backend) is not str or not backend:
         raise MalformedTranscript("header.backend must be a nonempty string")
     if backend == TRANSPARENT_BACKEND and "backend" in header_fields:
-        raise NoncanonicalTranscript("header.backend names the default; it must be omitted")
+        raise NoncanonicalTranscript(
+            "header.backend names the default; it must be omitted"
+        )
     max_faults = _int(header_fields.get("max_faults", 0), "header.max_faults")
     if max_faults == 0 and "max_faults" in header_fields:
         raise NoncanonicalTranscript("header.max_faults is zero; it must be omitted")
-    interior_fields = _optional_key(top["interiors"], {"commitments"}, "declarations", "interiors")
+    interior_fields = _optional_key(
+        top["interiors"], {"commitments"}, "declarations", "interiors"
+    )
     declarations = _list(
         interior_fields.get("declarations", []), _int, "interiors.declarations"
     )
     if not declarations and "declarations" in interior_fields:
-        raise NoncanonicalTranscript("interiors.declarations is empty; it must be omitted")
+        raise NoncanonicalTranscript(
+            "interiors.declarations is empty; it must be omitted"
+        )
     try:
         policy = VerificationPolicy(
             _fraction(policy_fields["q"], "header.policy.q", checked),
@@ -289,7 +316,9 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
             max_faults,
             _int(header_fields["advice_bits"], "header.advice_bits"),
         )
-        boundary_fields = _object(top["boundary"], {"commitment", "io_openings"}, "boundary")
+        boundary_fields = _object(
+            top["boundary"], {"commitment", "io_openings"}, "boundary"
+        )
         transcript = Transcript(
             header,
             BoundaryMessage(
@@ -298,7 +327,9 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
             ),
             _challenge(ReplayChallenge, top["replay_challenge"], "replay_challenge"),
             InteriorMessage(
-                _list(interior_fields["commitments"], _commitment, "interiors.commitments"),
+                _list(
+                    interior_fields["commitments"], _commitment, "interiors.commitments"
+                ),
                 declarations,
             ),
             _challenge(SampleChallenge, top["sample_challenge"], "sample_challenge"),

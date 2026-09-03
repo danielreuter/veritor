@@ -113,11 +113,18 @@ class _Plan:
     def shape_of(self, occupant: Occupant) -> OccupantShape:
         """What the occupant's step computes for it, from its progress and its join."""
 
-        prompt, join = len(self.requests[occupant.request].prompt), self.schedule.joins[occupant.join]
+        prompt, join = (
+            len(self.requests[occupant.request].prompt),
+            self.schedule.joins[occupant.join],
+        )
         if occupant.prefilled < prompt:
             left = prompt - occupant.prefilled
             positions = left if join.chunk == 0 else min(join.chunk, left)
-            return (PREFILL if positions == left else CHUNK, positions, occupant.prefilled)
+            return (
+                PREFILL if positions == left else CHUNK,
+                positions,
+                occupant.prefilled,
+            )
         return (DECODE, 1, prompt + occupant.generated - 1)
 
 
@@ -156,14 +163,28 @@ class ClusterG:
             self.lm = ToyLM(shape)
             self.models: dict[str | None, ToyLM] = {None: self.lm}
         else:
-            if type(arches) is not tuple or len(arches) != pods or not all(type(a) is str for a in arches):
+            if (
+                type(arches) is not tuple
+                or len(arches) != pods
+                or not all(type(a) is str for a in arches)
+            ):
                 raise ValueError("arches must name one architecture per pod")
-            members = {arch: make_isa_gate_set(shape.width) for arch in sorted(set(arches))}
-            tracer = Tracer(union_gate_set(members, name=FLEET_GATE_SET[0], version=FLEET_GATE_SET[1]))
-            self.models = {arch: ToyLM(shape, tracer=tracer, namespace=arch) for arch in members}
+            members = {
+                arch: make_isa_gate_set(shape.width) for arch in sorted(set(arches))
+            }
+            tracer = Tracer(
+                union_gate_set(
+                    members, name=FLEET_GATE_SET[0], version=FLEET_GATE_SET[1]
+                )
+            )
+            self.models = {
+                arch: ToyLM(shape, tracer=tracer, namespace=arch) for arch in members
+            }
             self.lm = self.models[arches[0]]
         self.gate_set = self.lm.tracer.gate_set
-        self.digest: Digest = constructor_digest(type(self).__name__, self.VERSION, self.manifest)
+        self.digest: Digest = constructor_digest(
+            type(self).__name__, self.VERSION, self.manifest
+        )
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
@@ -180,11 +201,17 @@ class ClusterG:
     # -- validation -----------------------------------------------------------------
 
     def _requests(self, x: object) -> tuple[Request, ...]:
-        if type(x) is not tuple or not x or any(type(item) is not Request for item in x):
+        if (
+            type(x) is not tuple
+            or not x
+            or any(type(item) is not Request for item in x)
+        ):
             raise TracerError("ClusterG expects a nonempty tuple of Request")
         for index, request in enumerate(x):
             if any(token >= self.shape.vocab for token in request.prompt):
-                raise TracerError(f"request {index} has a prompt token outside the vocabulary")
+                raise TracerError(
+                    f"request {index} has a prompt token outside the vocabulary"
+                )
             if request.banned:
                 raise TracerError(
                     f"request {index} bans tokens: ClusterG steps carry no mask; use RequestsG"
@@ -199,8 +226,14 @@ class ClusterG:
         requests = self._requests(x)
         if not isinstance(schedule, Schedule):
             raise TracerError("the advice must decode to a Schedule")
-        if (schedule.pods, schedule.slots, schedule.steps) != (self.pods, self.slots, self.steps):
-            raise TracerError("the schedule is for another cluster (pods, slots, steps)")
+        if (schedule.pods, schedule.slots, schedule.steps) != (
+            self.pods,
+            self.slots,
+            self.steps,
+        ):
+            raise TracerError(
+                "the schedule is for another cluster (pods, slots, steps)"
+            )
         try:
             active = schedule.active_steps(requests)
             before = schedule.streamed_before(requests)
@@ -235,7 +268,9 @@ class ClusterG:
 
     # -- layouts ---------------------------------------------------------------------
 
-    def output_layout(self, x: object, schedule: Schedule) -> tuple[tuple[int, int], ...]:
+    def output_layout(
+        self, x: object, schedule: Schedule
+    ) -> tuple[tuple[int, int], ...]:
         """``(request, generated position)`` of every circuit output, in output order.
 
         A request streams ``max(length)`` positions over its attempts; each
@@ -243,7 +278,9 @@ class ClusterG:
         """
 
         plan = self._plan(x, schedule)
-        return tuple((r, g) for r in range(len(plan.requests)) for g in range(plan.active[r]))
+        return tuple(
+            (r, g) for r in range(len(plan.requests)) for g in range(plan.active[r])
+        )
 
     def flatten_inputs(self, x: object, schedule: Schedule) -> tuple[int, ...]:
         """The public inputs in ``in``-gate address order: by step, then pod, then slot.
@@ -280,7 +317,9 @@ class ClusterG:
         kind, positions, _ = occupant
         return self.shape.state_size(positions) + (0 if kind == CHUNK else 1)
 
-    def step(self, shapes: tuple[OccupantShape, ...], arch: str | None = None) -> TracedDefinition:
+    def step(
+        self, shapes: tuple[OccupantShape, ...], arch: str | None = None
+    ) -> TracedDefinition:
         """One decode step of one pod: its occupants over the shared weights.
 
         Ports: the weights, then per occupant its cache (a decode's token
@@ -317,13 +356,20 @@ class ClusterG:
         """The run: the weights, then every step in time order, wired through the caches."""
 
         layers, d = self.shape.layers, self.shape.d_model
-        requests, occupancy, before, joins = plan.requests, plan.occupancy, plan.streamed_before, plan.schedule.joins
+        requests, occupancy, before, joins = (
+            plan.requests,
+            plan.occupancy,
+            plan.streamed_before,
+            plan.schedule.joins,
+        )
 
         @self.lm.tracer.definition(input_count=0)
         def root(_v: Wires) -> object:
             w = self.lm.weights_unit()()
             slots: dict[tuple[int, int], _Slot] = {}
-            parked: dict[int, _Slot] = {}  # request -> the cache its latest attempt left
+            parked: dict[
+                int, _Slot
+            ] = {}  # request -> the cache its latest attempt left
             tokens: dict[tuple[int, int], Wire] = {}
             for key in plan.order:
                 pod, step_index = key
@@ -333,7 +379,11 @@ class ClusterG:
                 for occupant in occupants:
                     join: Join = joins[occupant.join]
                     if step_index == join.step:  # the attempt's first step
-                        slot = parked.pop(occupant.request) if join.resume else _Slot.fresh(occupant.request, layers)
+                        slot = (
+                            parked.pop(occupant.request)
+                            if join.resume
+                            else _Slot.fresh(occupant.request, layers)
+                        )
                         slots[(pod, occupant.slot)] = slot
                     else:
                         slot = slots[(pod, occupant.slot)]
@@ -358,17 +408,25 @@ class ClusterG:
                     for layer in range(layers):
                         start = 2 * layer * positions * d
                         slot.keys[layer].append(block[start : start + positions * d])
-                        slot.values[layer].append(block[start + positions * d : start + 2 * positions * d])
+                        slot.values[layer].append(
+                            block[start + positions * d : start + 2 * positions * d]
+                        )
                     if kind != CHUNK:
                         token = block[-1]
                         assert isinstance(token, Wire)
                         slot.token = token
-                        if occupant.generated >= before[occupant.join]:  # streamed by this attempt
+                        if (
+                            occupant.generated >= before[occupant.join]
+                        ):  # streamed by this attempt
                             streamed = (occupant.request, occupant.generated)
-                            assert streamed not in tokens, "a position is streamed by one attempt only"
+                            assert streamed not in tokens, (
+                                "a position is streamed by one attempt only"
+                            )
                             tokens[streamed] = token
                     join = joins[occupant.join]
-                    if step_index == join.step + join.length - 1:  # the attempt's last step
+                    if (
+                        step_index == join.step + join.length - 1
+                    ):  # the attempt's last step
                         parked[occupant.request] = slots.pop((pod, occupant.slot))
             return [tokens[key] for key in self.output_layout(requests, plan.schedule)]
 

@@ -52,7 +52,9 @@ OTHER_UNIT = 12
 SOURCE_UNIT = 0
 """An ``in`` gate's VU: nothing to declare."""
 
-BASELINE_TRANSCRIPT_SHA256 = "724bcd775fbe67a25078785ab8a1294a419d99d24f1a57d8883c6b66b0057a02"
+BASELINE_TRANSCRIPT_SHA256 = (
+    "724bcd775fbe67a25078785ab8a1294a419d99d24f1a57d8883c6b66b0057a02"
+)
 """SHA-256 of the fixture's honest transcript under protocol v8 (VU-output interior,
 header ``advice_bits``).
 
@@ -65,7 +67,9 @@ def faults(max_faults: int = 0) -> VerifierParameters:
     return VerifierParameters(max_capacity=None, max_faults=max_faults)
 
 
-def flip_output(compiled: Compiled, values: dict[int, object], unit: int, bit: int = 0) -> int:
+def flip_output(
+    compiled: Compiled, values: dict[int, object], unit: int, bit: int = 0
+) -> int:
     """Flip ``bit`` of VU ``unit``'s output word in ``values`` (in place); return the address.
 
     The matmul VUs' outputs are circuit outputs, so this is a fault the users saw.
@@ -77,7 +81,9 @@ def flip_output(compiled: Compiled, values: dict[int, object], unit: int, bit: i
     return address
 
 
-def faulty_run(compiled: Compiled, honest_values: dict[int, object], *units: int) -> tuple[dict[int, object], tuple[int, ...]]:
+def faulty_run(
+    compiled: Compiled, honest_values: dict[int, object], *units: int
+) -> tuple[dict[int, object], tuple[int, ...]]:
     """The assignment an honest server holds after faults at ``units``, and its outputs."""
 
     values = dict(honest_values)
@@ -113,7 +119,9 @@ def test_header_binds_max_faults_and_omits_the_default(compiled, expect) -> None
         replace(header, max_faults=-1)
 
 
-def test_declarations_are_sorted_unique_and_bound_into_the_s_challenge(compiled, expect) -> None:
+def test_declarations_are_sorted_unique_and_bound_into_the_s_challenge(
+    compiled, expect
+) -> None:
     verifier = VerifierSession(expect(), compiled)
     commitments = ()
     plain = InteriorMessage(commitments)
@@ -122,7 +130,9 @@ def test_declarations_are_sorted_unique_and_bound_into_the_s_challenge(compiled,
     assert declared.manifest["declarations"] == [3, 7]
     previous = verifier.header.digest
     assert interior_phase(previous, plain) != interior_phase(previous, declared)
-    assert interior_phase(previous, declared) != interior_phase(previous, InteriorMessage(commitments, (3,)))
+    assert interior_phase(previous, declared) != interior_phase(
+        previous, InteriorMessage(commitments, (3,))
+    )
     for bad in ((7, 3), (3, 3), (-1,), [3]):
         with pytest.raises(ProtocolError):
             InteriorMessage(commitments, bad)  # type: ignore[arg-type]
@@ -149,24 +159,34 @@ def test_wire_round_trips_declarations_and_rejects_noncanonical_defaults(
     document = json.loads(data)
     document["header"]["max_faults"] = 0
     with pytest.raises(NoncanonicalTranscript):
-        decode_transcript(json.dumps(document, sort_keys=True, separators=(",", ":")).encode())
+        decode_transcript(
+            json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+        )
     document = json.loads(data)
     document["interiors"]["declarations"] = []
     with pytest.raises(NoncanonicalTranscript):
-        decode_transcript(json.dumps(document, sort_keys=True, separators=(",", ":")).encode())
+        decode_transcript(
+            json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+        )
     for header_value in (-1, "2", 2.0):
         document = json.loads(data)
         document["header"]["max_faults"] = header_value
         with pytest.raises(MalformedTranscript):
-            decode_transcript(json.dumps(document, sort_keys=True, separators=(",", ":")).encode())
+            decode_transcript(
+                json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+            )
     for declarations in ([12, 10], [10, 10], [-1], "10"):
         document = json.loads(data)
         document["interiors"]["declarations"] = declarations
         with pytest.raises(MalformedTranscript):
-            decode_transcript(json.dumps(document, sort_keys=True, separators=(",", ":")).encode())
+            decode_transcript(
+                json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+            )
 
 
-def test_transcripts_without_faults_are_byte_identical_to_before(compiled, honest_values, expect) -> None:
+def test_transcripts_without_faults_are_byte_identical_to_before(
+    compiled, honest_values, expect
+) -> None:
     """The fixture's honest transcript under fixed seeds carries no fault keys and is pinned."""
 
     run = run_protocol(compiled, expect(), honest_values)
@@ -208,7 +228,10 @@ def test_faulty_run_is_rejected_at_zero_faults_and_accepted_when_declared(
     )
     assert rejected.report.code is VerificationCode.FAULTS_EXCEEDED
     silent = run_protocol(
-        compiled, expect(claimed_outputs=outputs), values, replay=assignment_replay(values)
+        compiled,
+        expect(claimed_outputs=outputs),
+        values,
+        replay=assignment_replay(values),
     )
     assert silent.report.code is VerificationCode.RELATION_REJECTED
     assert f"address {address}" in silent.report.detail
@@ -229,9 +252,13 @@ def test_faulty_run_is_rejected_at_zero_faults_and_accepted_when_declared(
         assert accepted.transcript.header.max_faults == max_faults
 
 
-def test_declared_unit_is_obliged_under_the_vacuous_program(compiled, honest_values, expect) -> None:
+def test_declared_unit_is_obliged_under_the_vacuous_program(
+    compiled, honest_values, expect
+) -> None:
     values, outputs = faulty_run(compiled, honest_values, FAULTY_UNIT)
-    verifier = VerifierSession(expect(parameters=faults(1), claimed_outputs=outputs), compiled)
+    verifier = VerifierSession(
+        expect(parameters=faults(1), claimed_outputs=outputs), compiled
+    )
     prover = ProverSession(
         compiled,
         verifier.header,
@@ -246,7 +273,9 @@ def test_declared_unit_is_obliged_under_the_vacuous_program(compiled, honest_val
     # the accepted roots and the address layout, as the verifier holds them
     commitments = verifier._commitments
     layout = verifier._layout
-    checked, kinds = derive_obligations(layout, verifier.header, commitments, sample_challenge.selected)
+    checked, kinds = derive_obligations(
+        layout, verifier.header, commitments, sample_challenge.selected
+    )
     skipped, kinds_with_declared = derive_obligations(
         layout, verifier.header, commitments, sample_challenge.selected, {FAULTY_UNIT}
     )
@@ -255,8 +284,15 @@ def test_declared_unit_is_obliged_under_the_vacuous_program(compiled, honest_val
         if plain.unit != FAULTY_UNIT:
             assert plain == declared
             continue
-        assert declared.kind == DECLARED_KIND and declared.outputs == () and declared.inputs == ()
-        assert declared.positions == plain.positions and declared.commitments == plain.commitments
+        assert (
+            declared.kind == DECLARED_KIND
+            and declared.outputs == ()
+            and declared.inputs == ()
+        )
+        assert (
+            declared.positions == plain.positions
+            and declared.commitments == plain.commitments
+        )
         assert plain.outputs and plain.kind != DECLARED_KIND
     assert verifier.receive_evidence(prover.evidence(sample_challenge)).accepted
 
@@ -265,14 +301,17 @@ def _weight_tree(compiled, values):
     from veritor.protocol import commit_weights
 
     return commit_weights(
-        compiled.circuit.gate_set, [values[address] for address in compiled.circuit.weights]
+        compiled.circuit.gate_set,
+        [values[address] for address in compiled.circuit.weights],
     )[1]
 
 
 # -- what the verifier refuses ----------------------------------------------------------
 
 
-def test_declaring_more_than_max_faults_is_rejected(compiled, honest_values, expect) -> None:
+def test_declaring_more_than_max_faults_is_rejected(
+    compiled, honest_values, expect
+) -> None:
     values, outputs = faulty_run(compiled, honest_values, FAULTY_UNIT, OTHER_UNIT)
     both = run_protocol(
         compiled,
@@ -302,7 +341,9 @@ def test_declaring_more_than_max_faults_is_rejected(compiled, honest_values, exp
         ((SOURCE_UNIT,), "no relation to disclaim"),
     ],
 )
-def test_invalid_declarations_are_rejected(compiled, honest_values, expect, declared, detail) -> None:
+def test_invalid_declarations_are_rejected(
+    compiled, honest_values, expect, declared, detail
+) -> None:
     run = run_protocol(
         compiled,
         expect(parameters=faults(4)),
@@ -314,7 +355,9 @@ def test_invalid_declarations_are_rejected(compiled, honest_values, expect, decl
     assert run.transcript is None
 
 
-def test_a_declaration_outside_the_opened_rus_is_rejected(compiled, honest_values, expect) -> None:
+def test_a_declaration_outside_the_opened_rus_is_rejected(
+    compiled, honest_values, expect
+) -> None:
     """Some RUs are opened; a VU of an unopened one is not the prover's to declare."""
 
     index = compiled.index
@@ -333,7 +376,10 @@ def test_a_declaration_outside_the_opened_rus_is_rejected(compiled, honest_value
             compiled,
         )
         prover = ProverSession(
-            compiled, verifier.header, honest_values, weight_tree=_weight_tree(compiled, honest_values)
+            compiled,
+            verifier.header,
+            honest_values,
+            weight_tree=_weight_tree(compiled, honest_values),
         )
         replay_challenge = verifier.receive_boundary(prover.boundary())
         opened = set(replay_challenge.selected)
@@ -341,7 +387,9 @@ def test_a_declaration_outside_the_opened_rus_is_rejected(compiled, honest_value
             break
     else:
         pytest.fail("no seed opened some compute RUs but not all")
-    outside = index.verification_units(next(u for u in compute if u not in opened)).first
+    outside = index.verification_units(
+        next(u for u in compute if u not in opened)
+    ).first
     interiors = prover.interiors(replay_challenge)
     with pytest.raises(Reject) as caught:
         verifier.receive_interiors(InteriorMessage(interiors.commitments, (outside,)))
@@ -349,7 +397,9 @@ def test_a_declaration_outside_the_opened_rus_is_rejected(compiled, honest_value
     assert "lies in no opened replay unit" in caught.value.detail
 
 
-def test_declarations_cannot_hide_an_undeclared_corruption(compiled, honest_values, expect) -> None:
+def test_declarations_cannot_hide_an_undeclared_corruption(
+    compiled, honest_values, expect
+) -> None:
     values, outputs = faulty_run(compiled, honest_values, FAULTY_UNIT, OTHER_UNIT)
     other_address = compiled.index.verification_unit(OTHER_UNIT).interval[-1]
 
@@ -373,9 +423,13 @@ def test_declarations_cannot_hide_an_undeclared_corruption(compiled, honest_valu
     assert misdirected.report.code is VerificationCode.RELATION_REJECTED
 
 
-def test_a_declared_units_openings_are_still_authenticated(compiled, honest_values, expect) -> None:
+def test_a_declared_units_openings_are_still_authenticated(
+    compiled, honest_values, expect
+) -> None:
     values, outputs = faulty_run(compiled, honest_values, FAULTY_UNIT)
-    verifier = VerifierSession(expect(parameters=faults(1), claimed_outputs=outputs), compiled)
+    verifier = VerifierSession(
+        expect(parameters=faults(1), claimed_outputs=outputs), compiled
+    )
     prover = ProverSession(
         compiled,
         verifier.header,
@@ -397,7 +451,9 @@ def test_a_declared_units_openings_are_still_authenticated(compiled, honest_valu
     )
     tampered = replace(
         evidence,
-        units=evidence.units[:slot] + ((forged,) + batch[1:],) + evidence.units[slot + 1 :],
+        units=evidence.units[:slot]
+        + ((forged,) + batch[1:],)
+        + evidence.units[slot + 1 :],
     )
     with pytest.raises(Reject) as caught:
         verifier.receive_evidence(tampered)
@@ -413,7 +469,9 @@ def test_bound_grows_by_the_fault_allowance_under_full_verification(compiled) ->
 
     unit = unit_fault_bits(compiled)
     table = compiled.kind_table()
-    assert unit == pytest.approx(8 + 4, abs=1e-3)  # W_V = 8 (one output word), |S| = 16 VUs
+    assert unit == pytest.approx(
+        8 + 4, abs=1e-3
+    )  # W_V = 8 (one output word), |S| = 16 VUs
     full = VerificationPolicy(1, 1)
     base = bound(table, full, Fraction(1, 2**40))
     assert base.bits == 0.0

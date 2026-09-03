@@ -27,11 +27,16 @@ SERIAL = {"grid": SMALL_GRID, "etas": (Fraction(1, 2),)}
 """``frontier.sweep``'s arguments for the same grid and eta as ``SPEC``."""
 
 SPEC = SweepSpec(
-    shape=TOY_SHAPE, levels=(("request", "row"), ("cell", "gate")), grid=SMALL_GRID, etas=(Fraction(1, 2),)
+    shape=TOY_SHAPE,
+    levels=(("request", "row"), ("cell", "gate")),
+    grid=SMALL_GRID,
+    etas=(Fraction(1, 2),),
 )
 
 
-def test_the_manifest_records_the_run_and_round_trips_through_save_and_load(tmp_path: Path) -> None:
+def test_the_manifest_records_the_run_and_round_trips_through_save_and_load(
+    tmp_path: Path,
+) -> None:
     out = tmp_path / "points.json"
 
     points, computed = parallel_sweep(SPEC, out, workers=1)
@@ -42,19 +47,31 @@ def test_the_manifest_records_the_run_and_round_trips_through_save_and_load(tmp_
     assert shape == TOY_SHAPE and back == points
     assert manifest is not None
     assert manifest["shape"] == TOY_SHAPE.manifest
-    assert manifest["options"] == {"max_buckets": 1 << 22, "resolution": 16, "max_errors": 256, "knapsack": False}
+    assert manifest["options"] == {
+        "max_buckets": 1 << 22,
+        "resolution": 16,
+        "max_errors": 256,
+        "knapsack": False,
+    }
     assert manifest["etas"] == ["1/2"]
     assert manifest["grid"] == {"q": ["1/2", "1/8"], "s": ["1", "1/8"]}
     assert manifest["partitions"] == ["request/row", "cell/gate"]
-    assert manifest["points"] == 8 and manifest["runs"] == 1 and manifest["workers"] == 1
+    assert (
+        manifest["points"] == 8 and manifest["runs"] == 1 and manifest["workers"] == 1
+    )
     assert isinstance(manifest["wall_seconds"], float) and manifest["wall_seconds"] >= 0
     assert manifest["version"] == "0.2.0"
     # in a checkout the commit is known and the tree may be dirty; from a wheel neither is
     assert (manifest["commit"] is None) == (manifest["dirty"] is None)
-    assert manifest["commit"] is None or (len(manifest["commit"]) == 40 and isinstance(manifest["dirty"], bool))
+    assert manifest["commit"] is None or (
+        len(manifest["commit"]) == 40 and isinstance(manifest["dirty"], bool)
+    )
     # the manifest is JSON of the file itself, next to the shape and the points
     record = json.loads(out.read_text())
-    assert set(record) == {"shape", "manifest", "points"} and record["manifest"] == manifest
+    assert (
+        set(record) == {"shape", "manifest", "points"}
+        and record["manifest"] == manifest
+    )
 
 
 def test_files_without_a_manifest_still_load(tmp_path: Path) -> None:
@@ -64,12 +81,17 @@ def test_files_without_a_manifest_still_load(tmp_path: Path) -> None:
     save(points, TOY_SHAPE, out)
 
     record = json.loads(out.read_text())
-    assert set(record) == {"shape", "points"}  # the file format before manifests, byte for byte
+    assert set(record) == {
+        "shape",
+        "points",
+    }  # the file format before manifests, byte for byte
     assert load(out) == (TOY_SHAPE, points)
     assert load_manifest(out) is None
 
 
-def test_the_points_are_those_of_the_serial_sweep_in_canonical_order(tmp_path: Path) -> None:
+def test_the_points_are_those_of_the_serial_sweep_in_canonical_order(
+    tmp_path: Path,
+) -> None:
     points, _ = parallel_sweep(SPEC, tmp_path / "points.json", workers=2)
 
     serial = sweep(TOY_SHAPE, levels=SPEC.levels, **SERIAL)
@@ -77,7 +99,9 @@ def test_the_points_are_those_of_the_serial_sweep_in_canonical_order(tmp_path: P
     assert [_priced(p) for p in points] == [_priced(p) for p in serial]
 
 
-def test_a_rerun_computes_nothing_and_a_partial_file_is_completed(tmp_path: Path) -> None:
+def test_a_rerun_computes_nothing_and_a_partial_file_is_completed(
+    tmp_path: Path,
+) -> None:
     out = tmp_path / "points.json"
     full, _ = parallel_sweep(SPEC, out, workers=1)
     manifest = load_manifest(out)
@@ -112,7 +136,11 @@ def test_a_file_of_another_shape_is_refused(tmp_path: Path) -> None:
 
 def test_a_worker_prices_a_key_as_the_frontier_does() -> None:
     key = ("request", "row", Fraction(1, 2), Fraction(1, 8), Fraction(1, 2))
-    (point,) = [p for p in sweep(TOY_SHAPE, levels=(("request", "row"),), **SERIAL) if key_of(p) == key]
+    (point,) = [
+        p
+        for p in sweep(TOY_SHAPE, levels=(("request", "row"),), **SERIAL)
+        if key_of(p) == key
+    ]
 
     assert _priced(price_key(TOY_SHAPE, key)) == _priced(point)
 
@@ -120,4 +148,11 @@ def test_a_worker_prices_a_key_as_the_frontier_does() -> None:
 def _priced(point: Point) -> tuple[object, ...]:
     """A point without its timing, which differs run to run."""
 
-    return (*key_of(point), point.bits, point.out_bits, point.overhead, point.work, point.recompute)
+    return (
+        *key_of(point),
+        point.bits,
+        point.out_bits,
+        point.overhead,
+        point.work,
+        point.recompute,
+    )

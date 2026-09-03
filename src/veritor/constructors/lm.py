@@ -242,7 +242,9 @@ class LMShape:
                 raise ValueError("an argmax model takes no randomness")
             return
         if len(request.randomness) != request.max_new:
-            raise ValueError("a sampled request needs one random word per generated position")
+            raise ValueError(
+                "a sampled request needs one random word per generated position"
+            )
         if any(word >= 1 << self.random_bits for word in request.randomness):
             raise ValueError(f"random words must have at most {self.random_bits} bits")
 
@@ -274,7 +276,9 @@ class LMShape:
         return manifest
 
 
-def _check_matrix(value: object, rows: int, columns: int, width: int, name: str) -> Matrix:
+def _check_matrix(
+    value: object, rows: int, columns: int, width: int, name: str
+) -> Matrix:
     if type(value) is not tuple or len(value) != rows:
         raise ValueError(f"{name} must be a tuple of {rows} rows")
     limit = 1 << width
@@ -283,7 +287,9 @@ def _check_matrix(value: object, rows: int, columns: int, width: int, name: str)
             raise ValueError(f"{name}[{index}] must be a tuple of {columns} values")
         for column, item in enumerate(row):
             if type(item) is not int or not 0 <= item < limit:
-                raise ValueError(f"{name}[{index}][{column}] must be a {width}-bit value")
+                raise ValueError(
+                    f"{name}[{index}][{column}] must be a {width}-bit value"
+                )
     return value
 
 
@@ -355,23 +361,36 @@ class Parameters:
         d, hidden, vocab, width = shape.d_model, shape.hidden, shape.vocab, shape.width
         _check_matrix(self.embedding, vocab, d, width, "embedding")
         if type(self.layers) is not tuple or len(self.layers) != shape.layers:
-            raise ValueError(f"layers must be a tuple of {shape.layers} LayerParameters")
+            raise ValueError(
+                f"layers must be a tuple of {shape.layers} LayerParameters"
+            )
         for index, layer in enumerate(self.layers):
             if not isinstance(layer, LayerParameters):
                 raise TypeError(f"layers[{index}] must be LayerParameters")
             for name in ("w_q", "w_k", "w_v", "w_o"):
-                _check_matrix(getattr(layer, name), d, d, width, f"layers[{index}].{name}")
+                _check_matrix(
+                    getattr(layer, name), d, d, width, f"layers[{index}].{name}"
+                )
             if shape.experts:
                 if layer.w_1 is not None or layer.w_2 is not None:
-                    raise ValueError(f"layers[{index}] of a mixture-of-experts shape has no dense w_1, w_2")
-                _check_matrix(layer.w_r, d, shape.experts, width, f"layers[{index}].w_r")
-                if type(layer.experts) is not tuple or len(layer.experts) != shape.experts:
+                    raise ValueError(
+                        f"layers[{index}] of a mixture-of-experts shape has no dense w_1, w_2"
+                    )
+                _check_matrix(
+                    layer.w_r, d, shape.experts, width, f"layers[{index}].w_r"
+                )
+                if (
+                    type(layer.experts) is not tuple
+                    or len(layer.experts) != shape.experts
+                ):
                     raise ValueError(
                         f"layers[{index}].experts must be a tuple of {shape.experts} ExpertParameters"
                     )
                 for e, expert in enumerate(layer.experts):
                     if not isinstance(expert, ExpertParameters):
-                        raise TypeError(f"layers[{index}].experts[{e}] must be ExpertParameters")
+                        raise TypeError(
+                            f"layers[{index}].experts[{e}] must be ExpertParameters"
+                        )
                     _check_matrix(
                         expert.w_1,
                         d,
@@ -388,7 +407,9 @@ class Parameters:
                     )
             else:
                 if layer.w_r is not None or layer.experts:
-                    raise ValueError(f"layers[{index}] of a dense shape has no router or experts")
+                    raise ValueError(
+                        f"layers[{index}] of a dense shape has no router or experts"
+                    )
                 _check_matrix(layer.w_1, d, hidden, width, f"layers[{index}].w_1")
                 _check_matrix(layer.w_2, hidden, d, width, f"layers[{index}].w_2")
         _check_matrix(self.unembedding, d, vocab, width, "unembedding")
@@ -426,14 +447,19 @@ def random_parameters(shape: LMShape, seed: int) -> Parameters:
     d, hidden, vocab = shape.d_model, shape.hidden, shape.vocab
 
     def matrix(rows: int, columns: int) -> Matrix:
-        return tuple(tuple(rng.randrange(limit) for _ in range(columns)) for _ in range(rows))
+        return tuple(
+            tuple(rng.randrange(limit) for _ in range(columns)) for _ in range(rows)
+        )
 
     def layer() -> LayerParameters:
         attention = (matrix(d, d), matrix(d, d), matrix(d, d), matrix(d, d))
         if not shape.experts:
             return LayerParameters(*attention, matrix(d, hidden), matrix(hidden, d))
         router = matrix(d, shape.experts)
-        experts = tuple(ExpertParameters(matrix(d, hidden), matrix(hidden, d)) for _ in range(shape.experts))
+        experts = tuple(
+            ExpertParameters(matrix(d, hidden), matrix(hidden, d))
+            for _ in range(shape.experts)
+        )
         return LayerParameters(*attention, None, None, router, experts)
 
     return Parameters(
@@ -449,7 +475,10 @@ def random_parameters(shape: LMShape, seed: int) -> Parameters:
 
 
 def _matvec(x: Sequence[int], matrix: Matrix, mask: int) -> list[int]:
-    return [sum(x[i] * matrix[i][o] for i in range(len(x))) & mask for o in range(len(matrix[0]))]
+    return [
+        sum(x[i] * matrix[i][o] for i in range(len(x))) & mask
+        for o in range(len(matrix[0]))
+    ]
 
 
 def allowed_mask(vocab: int, banned: Sequence[int]) -> tuple[bool, ...] | None:
@@ -478,7 +507,9 @@ def argmax_token(logits: Sequence[int], allowed: Sequence[bool] | None = None) -
         raise ValueError("constrained decoding needs at least one allowed token")
     best, index = 0, 0
     for candidate in reversed(range(len(logits))):
-        if allowed[candidate] and best <= logits[candidate]:  # scanning down: ties keep the first
+        if (
+            allowed[candidate] and best <= logits[candidate]
+        ):  # scanning down: ties keep the first
             best, index = logits[candidate], candidate
     return index
 
@@ -505,7 +536,9 @@ def top_k_route(logits: Sequence[int], k: int) -> Route:
     return tuple(e for e, rank in enumerate(expert_ranks(logits)) if rank < k)
 
 
-def sample_token(shape: LMShape, logits: Sequence[int], r: int, allowed: Sequence[bool] | None = None) -> int:
+def sample_token(
+    shape: LMShape, logits: Sequence[int], r: int, allowed: Sequence[bool] | None = None
+) -> int:
     """The token the ``sample`` unit draws from ``logits`` with the public word ``r``.
 
     Scores are the logits' top ``score_bits``, weights their squares plus
@@ -568,7 +601,9 @@ class Decoder:
             del self.values[layer][keep:]
             del self.routes[layer][keep:]
 
-    def forward(self, token: int, r: int | None = None, allowed: Sequence[bool] | None = None) -> int:
+    def forward(
+        self, token: int, r: int | None = None, allowed: Sequence[bool] | None = None
+    ) -> int:
         """Feed ``token`` at the next position; return the next token (argmax, or sampled
         with ``r``), among the ``allowed`` tokens when a mask is given."""
 
@@ -595,16 +630,22 @@ class Decoder:
             attention: list[int] = []
             for head in range(shape.heads):
                 low, high = head * dh, (head + 1) * dh
-                scores = [sum(q[i] * key[i] for i in range(low, high)) & mask for key in keys]
+                scores = [
+                    sum(q[i] * key[i] for i in range(low, high)) & mask for key in keys
+                ]
                 weights = [(s * s) & mask for s in scores]
                 for i in range(low, high):
-                    mixed = sum(w * value[i] for w, value in zip(weights, values)) & mask
+                    mixed = (
+                        sum(w * value[i] for w, value in zip(weights, values)) & mask
+                    )
                     attention.append(mixed >> p.shift if p.shift < shape.width else 0)
             x = [(a + b) & mask for a, b in zip(x, _matvec(attention, layer.w_o, mask))]
             if layer.w_r is None:
                 assert layer.w_1 is not None and layer.w_2 is not None
                 hidden = [(h * h) & mask for h in _matvec(x, layer.w_1, mask)]
-                x = [(a + b) & mask for a, b in zip(x, _matvec(hidden, layer.w_2, mask))]
+                x = [
+                    (a + b) & mask for a, b in zip(x, _matvec(hidden, layer.w_2, mask))
+                ]
             else:
                 route = top_k_route(_matvec(x, layer.w_r, mask), shape.top_k)
                 self.routes[index].append(route)
@@ -612,7 +653,10 @@ class Decoder:
                 for e in route:
                     expert = layer.experts[e]
                     hidden = [(h * h) & mask for h in _matvec(x, expert.w_1, mask)]
-                    mixture = [(a + b) & mask for a, b in zip(mixture, _matvec(hidden, expert.w_2, mask))]
+                    mixture = [
+                        (a + b) & mask
+                        for a, b in zip(mixture, _matvec(hidden, expert.w_2, mask))
+                    ]
                 x = [(a + b) & mask for a, b in zip(x, mixture)]
         return _matvec(x, p.unembedding, mask)
 
@@ -710,7 +754,9 @@ def expert_ports(experts: Wires, e: int, d: int, hidden: int) -> tuple[Wires, Wi
     """Expert ``e``'s ``w_1`` (``d x hidden``) and ``w_2`` (``hidden x d``) in a block of expert weights."""
 
     start = e * 2 * d * hidden
-    return experts[start : start + d * hidden], experts[start + d * hidden : start + 2 * d * hidden]
+    return experts[start : start + d * hidden], experts[
+        start + d * hidden : start + 2 * d * hidden
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -797,7 +843,9 @@ class ToyLM:
         self.namespace = namespace
         self.tensor_parallel = tensor_parallel
         qualifiers = (prefix, namespace, tensor_parallel)
-        self._tag: tuple[Hashable, ...] | None = None if qualifiers == (None, None, 1) else qualifiers
+        self._tag: tuple[Hashable, ...] | None = (
+            None if qualifiers == (None, None, 1) else qualifiers
+        )
 
         def gate_name(name: str) -> str:
             return name if namespace is None else namespaced(name, namespace)
@@ -811,7 +859,9 @@ class ToyLM:
         def gate(name: str) -> TracerGate:
             return self.tracer.gate(gate_name(name))
 
-        add, mul, sub, lt, eq, shr = (gate(name) for name in ("add", "mul", "sub", "lt", "eq", "shr"))
+        add, mul, sub, lt, eq, shr = (
+            gate(name) for name in ("add", "mul", "sub", "lt", "eq", "shr")
+        )
         self.add, self.mul, self.sub, self.lt, self.eq, self.shr = (
             add,
             mul,
@@ -829,8 +879,12 @@ class ToyLM:
         self.square_cell = define(input_count=1, key="square_cell", role=VERIFICATION)(
             lambda v: mul(v[0], v[0])
         )
-        self.add_cell = define(input_count=2, key="add_cell", role=VERIFICATION)(lambda v: add(v[0], v[1]))
-        self.mul_cell = define(input_count=2, key="mul_cell", role=VERIFICATION)(lambda v: mul(v[0], v[1]))
+        self.add_cell = define(input_count=2, key="add_cell", role=VERIFICATION)(
+            lambda v: add(v[0], v[1])
+        )
+        self.mul_cell = define(input_count=2, key="mul_cell", role=VERIFICATION)(
+            lambda v: mul(v[0], v[1])
+        )
 
     def key(self, *parts: Hashable) -> Hashable:
         """A tracer cache key: as given for a lone model; qualified by the prefix, the namespace and
@@ -846,7 +900,9 @@ class ToyLM:
         """:meth:`Tracer.definition` under this model's :meth:`key`."""
 
         parts = key if isinstance(key, tuple) else (key,)
-        return self.tracer.definition(input_count=input_count, key=self.key(*parts), role=role)
+        return self.tracer.definition(
+            input_count=input_count, key=self.key(*parts), role=role
+        )
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
@@ -909,15 +965,22 @@ class ToyLM:
         role = VERIFICATION if marked else None
         shards = self.tensor_parallel if marked else 1
         if k % shards:
-            raise TracerError("tensor_parallel must divide the length of every marked dot")
+            raise TracerError(
+                "tensor_parallel must divide the length of every marked dot"
+            )
 
         @self.define(input_count=2 * k, key=("dot", k, role), role=role)
         def dot(v: Wires) -> object:
             x, w = v[:k], v[k:]
-            if shards > 1:  # tensor parallel: a partial dot per shard, then a fixed-order reduction
+            if (
+                shards > 1
+            ):  # tensor parallel: a partial dot per shard, then a fixed-order reduction
                 part = k // shards
                 partial = self.dot(part, marked=False)
-                partials = [partial(x[i * part : (i + 1) * part], w[i * part : (i + 1) * part]) for i in range(shards)]
+                partials = [
+                    partial(x[i * part : (i + 1) * part], w[i * part : (i + 1) * part])
+                    for i in range(shards)
+                ]
                 total = partials[0]
                 for term in partials[1:]:
                     total = self.add(total, term)
@@ -927,7 +990,9 @@ class ToyLM:
             while len(level) > 1:
                 if len(level) % 2:
                     carried.append(level[-1])
-                level = self.tracer.repeat(len(level) // 2, self.add_pair, level[0:2].by(2))
+                level = self.tracer.repeat(
+                    len(level) // 2, self.add_pair, level[0:2].by(2)
+                )
             result = level[0]
             for carry in carried:
                 result = self.add(result, carry)
@@ -974,7 +1039,9 @@ class ToyLM:
         @self.define(input_count=vocab + b + 1, key=("allowed", b))
         def allowed(v: Wires) -> object:
             constants, banned, one = v[:vocab], v[vocab : vocab + b], v[vocab + b]
-            return self.tracer.repeat(vocab, self.allowed_row(b), constants[0].by(1), banned, one)
+            return self.tracer.repeat(
+                vocab, self.allowed_row(b), constants[0].by(1), banned, one
+            )
 
         return allowed
 
@@ -989,7 +1056,9 @@ class ToyLM:
         dh = self.shape.d_head
         repeat = self.tracer.repeat
 
-        @self.define(input_count=dh + 2 * c * dh + 1, key=("attend_head", c), role=VERIFICATION)
+        @self.define(
+            input_count=dh + 2 * c * dh + 1, key=("attend_head", c), role=VERIFICATION
+        )
         def attend_head(v: Wires) -> object:
             q, keys, values, shift = (
                 v[:dh],
@@ -999,7 +1068,9 @@ class ToyLM:
             )
             scores = repeat(c, self.dot(dh, marked=False), q, keys[0:dh].by(dh))
             weights = repeat(c, self.square, scores[0].by(1))
-            mixed = repeat(dh, self.dot(c, marked=False), weights, values[0 : c * dh : dh].by(1))
+            mixed = repeat(
+                dh, self.dot(c, marked=False), weights, values[0 : c * dh : dh].by(1)
+            )
             return repeat(dh, self.shr_pair, mixed[0].by(1), shift)
 
         return attend_head
@@ -1060,7 +1131,9 @@ class ToyLM:
         cdf = [weights[0]]
         for weight in weights[1:]:
             cdf.append(add(cdf[-1], weight))
-        bound = add(shr(mul(r, cdf[-1]), random_bits), one)  # t + 1 with t = (r * total) >> random_bits
+        bound = add(
+            shr(mul(r, cdf[-1]), random_bits), one
+        )  # t + 1 with t = (r * total) >> random_bits
         below = [lt(entry, bound) for entry in cdf]  # cdf_j <= t
         index = below[0]
         for flag in below[1:]:
@@ -1097,7 +1170,9 @@ class ToyLM:
 
     # -- mixture of experts ----------------------------------------------------------
 
-    def _ranks(self, logits: Wires, one: Wire, chosen: Sequence[int]) -> dict[int, Wire]:
+    def _ranks(
+        self, logits: Wires, one: Wire, chosen: Sequence[int]
+    ) -> dict[int, Wire]:
         """``rank_e`` of every expert in ``chosen`` (see :func:`expert_ranks`), by ``lt`` gates.
 
         A pair ``f < e`` shares one ``lt(g_f, g_e)``: it counts towards
@@ -1115,8 +1190,12 @@ class ToyLM:
                     continue
                 low, high = min(e, f), max(e, f)
                 if (low, high) not in beaten:
-                    beaten[(low, high)] = lt(logits[low], logits[high])  # g_high beats g_low
-                terms.append(beaten[(low, high)] if f > e else sub(one, beaten[(low, high)]))
+                    beaten[(low, high)] = lt(
+                        logits[low], logits[high]
+                    )  # g_high beats g_low
+                terms.append(
+                    beaten[(low, high)] if f > e else sub(one, beaten[(low, high)])
+                )
             rank = terms[0]
             for term in terms[1:]:
                 rank = add(rank, term)
@@ -1135,7 +1214,9 @@ class ToyLM:
         if experts < 2:
             raise TracerError("routing needs at least two experts")
 
-        @self.define(input_count=experts + 2, key=("router_topk", experts, k), role=VERIFICATION)
+        @self.define(
+            input_count=experts + 2, key=("router_topk", experts, k), role=VERIFICATION
+        )
         def router_topk(v: Wires) -> object:
             logits, one, kconst = v[:experts], v[experts], v[experts + 1]
             ranks = self._ranks(logits, one, range(experts))
@@ -1162,7 +1243,11 @@ class ToyLM:
         if experts < 2:
             raise TracerError("routing needs at least two experts")
 
-        @self.define(input_count=2 * experts + 2, key=("route_check", experts, k), role=VERIFICATION)
+        @self.define(
+            input_count=2 * experts + 2,
+            key=("route_check", experts, k),
+            role=VERIFICATION,
+        )
         def route_check(v: Wires) -> object:
             logits, ids = v[:experts], v[experts : 2 * experts]
             kconst, ok = v[2 * experts], v[2 * experts + 1]
@@ -1172,7 +1257,10 @@ class ToyLM:
                 for f in range(experts):
                     if f == j:
                         continue
-                    beats = add(lt(logits[j], logits[f]), mul(eq(logits[f], logits[j]), lt(ids[f], ids[j])))
+                    beats = add(
+                        lt(logits[j], logits[f]),
+                        mul(eq(logits[f], logits[j]), lt(ids[f], ids[j])),
+                    )
                     rank = beats if rank is None else add(rank, beats)
                 assert rank is not None
                 ok = mul(ok, lt(rank, kconst))
@@ -1215,7 +1303,9 @@ class ToyLM:
         if not experts:
             raise TracerError("a dense shape has no routes")
         if experts > shape.vocab:
-            raise TracerError("advised routing names experts by the constant table: experts <= vocab")
+            raise TracerError(
+                "advised routing names experts by the constant table: experts <= vocab"
+            )
         if len(routes) != shape.layers:
             raise TracerError(f"routes must give {shape.layers} layers")
         args: list[Wires] = []
@@ -1225,7 +1315,10 @@ class ToyLM:
                 order = self.route_order(route)
                 args.extend(layer.w_r[e : d * experts : experts] for e in order)
                 args.extend(ports.constants[e] for e in order)
-                args.extend(layer.experts[e * 2 * d * hidden : (e + 1) * 2 * d * hidden] for e in route)
+                args.extend(
+                    layer.experts[e * 2 * d * hidden : (e + 1) * 2 * d * hidden]
+                    for e in route
+                )
         return args
 
     def check_route(self, route: object) -> Route:
@@ -1235,9 +1328,13 @@ class ToyLM:
         if type(route) is not tuple or len(route) != k:
             raise TracerError(f"a route names exactly {k} experts")
         if any(type(e) is not int or not 0 <= e < experts for e in route):
-            raise TracerError(f"route {route!r} names an expert outside 0..{experts - 1}")
+            raise TracerError(
+                f"route {route!r} names an expert outside 0..{experts - 1}"
+            )
         if any(a >= b for a, b in pairwise(route)):
-            raise TracerError(f"route {route!r} must list distinct experts in ascending order")
+            raise TracerError(
+                f"route {route!r} must list distinct experts in ascending order"
+            )
         return route
 
     def masked_sum(self) -> TracedDefinition:
@@ -1245,7 +1342,9 @@ class ToyLM:
 
         experts = self.shape.experts
 
-        @self.define(input_count=2 * experts, key=("masked_sum", experts), role=VERIFICATION)
+        @self.define(
+            input_count=2 * experts, key=("masked_sum", experts), role=VERIFICATION
+        )
         def masked_sum(v: Wires) -> object:
             flags, values = v[:experts], v[experts:]
             total = self.mul(flags[0], values[0])
@@ -1263,7 +1362,9 @@ class ToyLM:
         @self.define(input_count=experts + experts * d, key=("combine", experts, d))
         def combine(v: Wires) -> object:
             flags, values = v[:experts], v[experts:]
-            return self.tracer.repeat(d, self.masked_sum(), flags, values[0 : experts * d : d].by(1))
+            return self.tracer.repeat(
+                d, self.masked_sum(), flags, values[0 : experts * d : d].by(1)
+            )
 
         return combine
 
@@ -1276,7 +1377,9 @@ class ToyLM:
         h = repeat(positions * hidden, self.square_cell, h[0].by(1))
         return repeat(positions, self.matvec(hidden, d), h[0:hidden].by(hidden), w_2)
 
-    def moe_padded(self, layer: _LayerPorts, x: Wires, positions: int, constants: Wires) -> Wires:
+    def moe_padded(
+        self, layer: _LayerPorts, x: Wires, positions: int, constants: Wires
+    ) -> Wires:
         """The padded mixture: every position through every expert, combined by the in-circuit route."""
 
         shape = self.shape
@@ -1291,7 +1394,10 @@ class ToyLM:
             constants[1],
             constants[k],
         )
-        outputs = [self.expert_mlp(*layer.expert(e, d, shape.hidden), x, positions) for e in range(experts)]
+        outputs = [
+            self.expert_mlp(*layer.expert(e, d, shape.hidden), x, positions)
+            for e in range(experts)
+        ]
         mixture = repeat(
             positions,
             self.combine(),
@@ -1342,7 +1448,11 @@ class ToyLM:
                 for j in range(k):
                     w_1, w_2 = expert_ports(chosen, j, d, hidden)
                     y = self.expert_mlp(w_1, w_2, x_p, 1)
-                    mixture = y if mixture is None else repeat(d, self.add_cell, mixture[0].by(1), y[0].by(1))
+                    mixture = (
+                        y
+                        if mixture is None
+                        else repeat(d, self.add_cell, mixture[0].by(1), y[0].by(1))
+                    )
                 assert mixture is not None
                 new.append(repeat(d, self.add_cell, x_p[0].by(1), mixture[0].by(1)))
             return [*new, ok]
@@ -1365,7 +1475,11 @@ class ToyLM:
         return result[: positions * shape.d_model], result[positions * shape.d_model]
 
     def head(
-        self, logits: Wire | Wires, ports: _WeightPorts, r: Wire | None, allowed: Wires | None = None
+        self,
+        logits: Wire | Wires,
+        ports: _WeightPorts,
+        r: Wire | None,
+        allowed: Wires | None = None,
     ) -> Wire | Wires:
         """The LM head's decision: the argmax, or a sample with the position's random word;
         among the ``allowed`` tokens when a request is constrained."""
@@ -1378,7 +1492,9 @@ class ToyLM:
         assert r is not None and ports.sampler is not None
         if allowed is None:
             return self.sample()(logits, r, ports.constants[1], ports.sampler)
-        return self.masked_sample()(logits, allowed, r, ports.constants[1], ports.sampler)
+        return self.masked_sample()(
+            logits, allowed, r, ports.constants[1], ports.sampler
+        )
 
     def randomness(self) -> Wire | None:
         """The ``in`` gate of a position's public random word, for a sampling shape."""
@@ -1441,7 +1557,9 @@ class ToyLM:
         shape = self.shape
         d, dh, heads = shape.d_model, shape.d_head, shape.heads
         if route_ports is not None and (ok is None or not shape.experts):
-            raise TracerError("advised routes need a mixture-of-experts shape and an ok word")
+            raise TracerError(
+                "advised routes need a mixture-of-experts shape and an ok word"
+            )
         if route_ports is not None and len(route_ports) != shape.layers:
             raise TracerError(f"route ports must give {shape.layers} layers")
         repeat = self.tracer.repeat
@@ -1450,7 +1568,11 @@ class ToyLM:
         def head_slices(blocks: Sequence[Wires], count: int) -> list[Wires]:
             """Head ``0``'s ``dh`` values at each of ``count`` positions, shifting by head."""
 
-            return [block[j * d : j * d + dh].by(dh) for block in blocks for j in range(count)]
+            return [
+                block[j * d : j * d + dh].by(dh)
+                for block in blocks
+                for j in range(count)
+            ]
 
         state: list[Wires] = []
         for index, (layer, cache) in enumerate(zip(ports.layers, caches, strict=True)):
@@ -1484,7 +1606,9 @@ class ToyLM:
                 x = self.moe_padded(layer, x, positions, ports.constants)
             else:
                 assert ok is not None
-                x, ok = self.moe_advice(x, positions, ports.constants, route_ports[index], ok)
+                x, ok = self.moe_advice(
+                    x, positions, ports.constants, route_ports[index], ok
+                )
             state += [k, v]
         return state, x, ok
 
@@ -1517,7 +1641,9 @@ class ToyLM:
         shape = self.shape
         d, vocab, weights = shape.d_model, shape.vocab, shape.weight_count
         if heads not in (0, 1, new):
-            raise TracerError("the head decides no position, the last position or every position")
+            raise TracerError(
+                "the head decides no position, the last position or every position"
+            )
         if heads > 1 and shape.sampling:
             raise TracerError("a sampling shape decides one position per step")
         if masked and heads != 1:
@@ -1543,28 +1669,50 @@ class ToyLM:
                     caches.append(None)
                     continue
                 start = weights + token_ports + layer * 2 * cache
-                caches.append((v[start : start + cache], v[start + cache : start + 2 * cache]))
+                caches.append(
+                    (v[start : start + cache], v[start + cache : start + 2 * cache])
+                )
             allowed = v[mask_start : mask_start + vocab] if masked else None
             ok = v[route_start - 1] if advised else None
             route_ports = (
-                [v[route_start + i * per_layer : route_start + (i + 1) * per_layer] for i in range(shape.layers)]
+                [
+                    v[route_start + i * per_layer : route_start + (i + 1) * per_layer]
+                    for i in range(shape.layers)
+                ]
                 if advised
                 else None
             )
             r = self.randomness() if heads == 1 else None
             embed = self.embed_row()
             if not inside and new == 1:
-                x = embed(tokens[0], ports.constants, ports.embedding)  # a lone token is a call
+                x = embed(
+                    tokens[0], ports.constants, ports.embedding
+                )  # a lone token is a call
             else:
-                x = self.tracer.repeat(new, embed, tokens[0].by(1), ports.constants, ports.embedding)
+                x = self.tracer.repeat(
+                    new, embed, tokens[0].by(1), ports.constants, ports.embedding
+                )
             state, x, ok = self.forward(ports, x, new, caches, route_ports, ok)
             unembed = self.matvec(d, vocab)
             decided: list[Wire | Wires] = []
             if heads == 1:
-                decided.append(self.head(unembed(x[(new - 1) * d : new * d], ports.unembedding), ports, r, allowed))
+                decided.append(
+                    self.head(
+                        unembed(x[(new - 1) * d : new * d], ports.unembedding),
+                        ports,
+                        r,
+                        allowed,
+                    )
+                )
             elif heads:
-                logits = self.tracer.repeat(new, unembed, x[0:d].by(d), ports.unembedding)
-                decided.append(self.tracer.repeat(new, self.argmax(), logits[0:vocab].by(vocab), ports.constants))
+                logits = self.tracer.repeat(
+                    new, unembed, x[0:d].by(d), ports.unembedding
+                )
+                decided.append(
+                    self.tracer.repeat(
+                        new, self.argmax(), logits[0:vocab].by(vocab), ports.constants
+                    )
+                )
             return [*state, *decided, *([ok] if advised else [])]
 
         return step
@@ -1598,8 +1746,21 @@ class ToyLM:
             raise TracerError("prompt length must be positive")
         if type(cached) is not int or cached < 0:
             raise TracerError("cached positions must be nonnegative")
-        key: tuple[Hashable, ...] = ("prefill", n, *((cached,) if cached else ()), *(("masked",) if masked else ()))
-        return self._step(cached=cached, new=n, inside=True, heads=1, advised=advised, key=key, masked=masked)
+        key: tuple[Hashable, ...] = (
+            "prefill",
+            n,
+            *((cached,) if cached else ()),
+            *(("masked",) if masked else ()),
+        )
+        return self._step(
+            cached=cached,
+            new=n,
+            inside=True,
+            heads=1,
+            advised=advised,
+            key=key,
+            masked=masked,
+        )
 
     def chunk(self, n: int, cached: int) -> TracedDefinition:
         """``n`` prompt tokens that do not end the prompt (chunked prefill): :meth:`prefill`
@@ -1612,7 +1773,14 @@ class ToyLM:
             raise TracerError("chunk length must be positive")
         if type(cached) is not int or cached < 0:
             raise TracerError("cached positions must be nonnegative")
-        return self._step(cached=cached, new=n, inside=True, heads=0, advised=False, key=("chunk", n, cached))
+        return self._step(
+            cached=cached,
+            new=n,
+            inside=True,
+            heads=0,
+            advised=False,
+            key=("chunk", n, cached),
+        )
 
     def prefill_ports(self, n: int) -> TracedDefinition:
         """:meth:`prefill` with the ``n`` prompt tokens as ports after the weights instead of ``in`` gates.
@@ -1623,9 +1791,18 @@ class ToyLM:
 
         if type(n) is not int or n <= 0:
             raise TracerError("prompt length must be positive")
-        return self._step(cached=0, new=n, inside=False, heads=1, advised=False, key=("prefill_ports", n))
+        return self._step(
+            cached=0,
+            new=n,
+            inside=False,
+            heads=1,
+            advised=False,
+            key=("prefill_ports", n),
+        )
 
-    def decode(self, c: int, *, advised: bool = False, masked: bool = False) -> TracedDefinition:
+    def decode(
+        self, c: int, *, advised: bool = False, masked: bool = False
+    ) -> TracedDefinition:
         """One token at context ``c``: ports are the weights, the token, then per layer
         the cached ``K`` and ``V`` of the ``c - 1`` earlier positions (then, when
         ``masked``, the request's ``vocab`` allowed flags).
@@ -1639,9 +1816,19 @@ class ToyLM:
         if type(c) is not int or c < 2:
             raise TracerError("a decode step needs at least one cached position")
         key: tuple[Hashable, ...] = ("decode", c, *(("masked",) if masked else ()))
-        return self._step(cached=c - 1, new=1, inside=False, heads=1, advised=advised, key=key, masked=masked)
+        return self._step(
+            cached=c - 1,
+            new=1,
+            inside=False,
+            heads=1,
+            advised=advised,
+            key=key,
+            masked=masked,
+        )
 
-    def extend(self, cached: int, new: int, *, advised: bool = False) -> TracedDefinition:
+    def extend(
+        self, cached: int, new: int, *, advised: bool = False
+    ) -> TracedDefinition:
         """``new`` tokens after ``cached`` cached positions, the head deciding every one of them.
 
         Ports: the weights, the ``new`` tokens, per layer the cached ``K`` then
@@ -1653,7 +1840,9 @@ class ToyLM:
         """
 
         if type(cached) is not int or cached < 0 or type(new) is not int or new < 1:
-            raise TracerError("extend needs a nonnegative cache and at least one new token")
+            raise TracerError(
+                "extend needs a nonnegative cache and at least one new token"
+            )
         return self._step(
             cached=cached,
             new=new,

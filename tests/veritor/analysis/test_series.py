@@ -84,11 +84,21 @@ def test_log2_binomials_match_math_comb():
 
 def test_convolve_matches_integer_convolution_across_chunk_boundaries():
     rng = random.Random(1)
-    for size_a, size_b, limit in [(3, 2, 10), (3, 2, 2), (600, 700, 1000), (300, 5, 299), (1, 1, 0)]:
+    for size_a, size_b, limit in [
+        (3, 2, 10),
+        (3, 2, 2),
+        (600, 700, 1000),
+        (300, 5, 299),
+        (1, 1, 0),
+    ]:
         a = [rng.randint(0, 1 << 20) for _ in range(size_a)]
         b = [rng.randint(0, 1 << 20) for _ in range(size_b)]
         exact = poly_multiply(a, b)[: limit + 1]
-        got = convolve(np.array([log2_int(x) for x in a]), np.array([log2_int(x) for x in b]), limit)
+        got = convolve(
+            np.array([log2_int(x) for x in a]),
+            np.array([log2_int(x) for x in b]),
+            limit,
+        )
         assert_upper(got, exact)
     assert len(convolve(np.array([]), np.array([0.0]), 5)) == 0
 
@@ -103,7 +113,9 @@ def exact_unit_power(out_bits: int, copies: int) -> list[int]:
     return poly_power([1, 1 << out_bits], copies)
 
 
-@pytest.mark.parametrize(("copies", "limit"), [(3, 5), (10, 4), (200, 4), (5, 5), (0, 3)])
+@pytest.mark.parametrize(
+    ("copies", "limit"), [(3, 5), (10, 4), (200, 4), (5, 5), (0, 3)]
+)
 def test_power_of_a_unit_is_the_binomial_expansion(copies, limit):
     exact = exact_unit_power(2, copies)
     result = power(unit_series(2), copies, limit)
@@ -156,14 +168,19 @@ def test_cap_leaves_the_empty_subset_alone():
         ((0, 9), (1, 1), 3, 6),  # terms beyond the limit vanish
     ],
 )
-def test_sparse_power_matches_exact_polynomial_powers(exponents, coefficients, copies, limit):
+def test_sparse_power_matches_exact_polynomial_powers(
+    exponents, coefficients, copies, limit
+):
     dense = [0] * (max(exponents) + 1)
     for exponent, coefficient in zip(exponents, coefficients, strict=True):
         dense[exponent] = coefficient
     exact = poly_power(dense, copies)
     exact = (exact + [0] * (limit + 1))[: limit + 1]
     got = sparse_power(
-        np.array(exponents), np.array([log2_int(c) for c in coefficients]), copies, limit
+        np.array(exponents),
+        np.array([log2_int(c) for c in coefficients]),
+        copies,
+        limit,
     )
     assert len(got) == limit + 1
     assert_upper(got, exact)
@@ -176,5 +193,7 @@ def test_sparse_power_requires_a_constant_term():
 
 def test_sparse_multiply_is_a_truncated_product():
     dense = [1, 2, 3, 4]
-    got = sparse_multiply(np.array([log2_int(v) for v in dense]), np.array([0, 2]), np.array([0.0, 1.0]))
+    got = sparse_multiply(
+        np.array([log2_int(v) for v in dense]), np.array([0, 2]), np.array([0.0, 1.0])
+    )
     assert_upper(got, poly_multiply(dense, [1, 0, 2])[:4])

@@ -89,7 +89,9 @@ def test_selection_is_deterministic_and_bound_to_seed_stage_and_phase() -> None:
     ("count", "probability"),
     [(1, HALF), (7, Fraction(1, 3)), (100, Fraction(9, 10)), (1000, Fraction(1, 50))],
 )
-def test_selection_is_sorted_unique_and_in_range(count: int, probability: Fraction) -> None:
+def test_selection_is_sorted_unique_and_in_range(
+    count: int, probability: Fraction
+) -> None:
     for index in range(10):
         selected = select(count, probability, index)
 
@@ -149,7 +151,9 @@ def test_exceeds_matches_the_exact_comparison() -> None:
     for _ in range(3000):
         total = rng.getrandbits(rng.randint(1, 512))
         shift = rng.randint(200, 900)
-        uniform = rng.getrandbits(rng.randint(0, _UNIFORM_BITS)) if rng.random() < 0.9 else 0
+        uniform = (
+            rng.getrandbits(rng.randint(0, _UNIFORM_BITS)) if rng.random() < 0.9 else 0
+        )
         exact = Fraction(total, 2**shift) > Fraction(uniform, 2**_UNIFORM_BITS)
 
         assert _exceeds(total, shift, uniform) is exact
@@ -179,14 +183,18 @@ def test_marginals_pairs_and_counts_match_independent_coins(
     for observed in pairs.values():
         assert within_noise(observed, trials * float(probability) ** 2, trials)
     for k, observed in enumerate(sizes):
-        assert within_noise(observed, trials * float(pmf(count, probability, k)), trials)
+        assert within_noise(
+            observed, trials * float(pmf(count, probability, k)), trials
+        )
 
 
 def stub_compiled(replay_units: int, units_per_replay_unit: int) -> SimpleNamespace:
     """Just enough of a ``Compiled`` for the derivations; nothing materialized."""
 
     def verification_units(unit: int) -> SimpleNamespace:
-        return SimpleNamespace(first=unit * units_per_replay_unit, count=units_per_replay_unit)
+        return SimpleNamespace(
+            first=unit * units_per_replay_unit, count=units_per_replay_unit
+        )
 
     return SimpleNamespace(
         index=SimpleNamespace(
@@ -221,7 +229,9 @@ def test_derivations_touch_only_selected_units_at_scale() -> None:
 
     selected_replay = tuple(range(0, 10**7, 1000))  # 10^4 replay units, 10^7 candidates
     start = time.perf_counter()
-    sample = derive_sample_selection(seed(3), PHASE, compiled, selected_replay, policy, limits)
+    sample = derive_sample_selection(
+        seed(3), PHASE, compiled, selected_replay, policy, limits
+    )
     assert time.perf_counter() - start < 0.5
     assert 700 <= len(sample) <= 1300
     assert list(sample) == sorted(set(sample))
@@ -243,14 +253,27 @@ def test_sample_selection_ranks_the_selected_replay_units_blocks() -> None:
 
     def sample(policy: VerificationPolicy, index: int = 0) -> tuple[int, ...]:
         return derive_sample_selection(
-            seed(index), PHASE, compiled, selected_replay, policy, LIMITS  # type: ignore[arg-type]
+            seed(index),
+            PHASE,
+            compiled,
+            selected_replay,
+            policy,
+            LIMITS,  # type: ignore[arg-type]
         )
 
     assert sample(everything) == tuple(candidates)
     assert sample(VerificationPolicy(1, 0)) == ()
-    assert derive_sample_selection(
-        seed(0), PHASE, compiled, (), everything, LIMITS  # type: ignore[arg-type]
-    ) == ()
+    assert (
+        derive_sample_selection(
+            seed(0),
+            PHASE,
+            compiled,
+            (),
+            everything,
+            LIMITS,  # type: ignore[arg-type]
+        )
+        == ()
+    )
 
     trials = 3000
     hits = dict.fromkeys(candidates, 0)
@@ -288,9 +311,12 @@ def test_fractional_policy_runs_and_matches_independent_derivation(
         assert run.report.sampled_replay_units == replay
         assert run.report.sampled_verification_units == sample
         assert all(
-            compiled.index.verification_unit(unit).replay_unit in replay for unit in sample
+            compiled.index.verification_unit(unit).replay_unit in replay
+            for unit in sample
         )
         recorded = encode_transcript(transcript)
         assert verify_transcript(recorded, expectation, compiled) == run.report
-        nontrivial |= 0 < len(replay) < compiled.index.replay_units.count and 0 < len(sample)
+        nontrivial |= 0 < len(replay) < compiled.index.replay_units.count and 0 < len(
+            sample
+        )
     assert nontrivial

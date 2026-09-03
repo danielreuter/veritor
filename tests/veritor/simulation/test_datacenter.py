@@ -64,7 +64,9 @@ def test_the_honest_run_is_accepted(summary):
     honest = summary.honest
     assert honest.accepted and honest.code == VerificationCode.ACCEPTED.name
     assert honest.replay_units_opened > 0 and honest.verification_units_opened > 0
-    assert honest.openings > honest.verification_units_opened  # every VU opens its gates and inputs
+    assert (
+        honest.openings > honest.verification_units_opened
+    )  # every VU opens its gates and inputs
     assert len(honest.interior_roots) == honest.replay_units_opened
     assert honest.prover_seconds > 0 and honest.verifier_seconds > 0
     assert honest.transcript_bytes > sum(honest.message_bytes.values())
@@ -76,8 +78,12 @@ def test_every_response_is_the_reference_despite_eos_and_restarts(config, summar
 
     w = summary.workload
     assert w.matches_reference
-    assert w.eos_stops >= 1, "no request stopped at EOS: the control flow was not exercised"
-    assert w.restarts >= 1 and any(f.aborted for f in w.failures), "no failure restarted a request"
+    assert w.eos_stops >= 1, (
+        "no request stopped at EOS: the control flow was not exercised"
+    )
+    assert w.restarts >= 1 and any(f.aborted for f in w.failures), (
+        "no failure restarted a request"
+    )
     shape, workload = config.shape, config.workload
     parameters = random_parameters(shape, config.parameters_seed)
     simulation = simulate(workload, shape, parameters)
@@ -99,7 +105,9 @@ def test_a_restarted_request_streams_each_position_exactly_once(summary):
     restarted = {a.request for a in w.attempts if a.outcome == FAILED}
     assert restarted
     for request in restarted:
-        attempts = sorted((a for a in w.attempts if a.request == request), key=lambda a: a.step)
+        attempts = sorted(
+            (a for a in w.attempts if a.request == request), key=lambda a: a.step
+        )
         assert len(attempts) >= 2
         streamed = [position for a in attempts for position in a.streamed]
         assert streamed == list(range(len(w.responses[request])))
@@ -116,12 +124,16 @@ def test_the_secret_decodes_from_the_streamed_tokens(summary):
     assert a.kappa_per_vu == summary.compile.head_vu_cut_bits == summary.model.width
     for row in a.rows:
         assert row.bits == row.carriers * a.bits_per_vu
-        assert row.vus_corrupted <= row.carriers  # a carrier already spelling its chunk is free
+        assert (
+            row.vus_corrupted <= row.carriers
+        )  # a carrier already spelling its chunk is free
         assert row.decoded == row.secret and len(row.secret) == row.bits
         assert row.honest_tokens_unchanged
         assert sum(row.errors_per_replay_unit) == row.vus_corrupted
         assert len(row.errors_per_replay_unit) == row.replay_units_touched
-    assert [row.carriers for row in a.rows] == list(attack_sizes(summary.workload.tokens))
+    assert [row.carriers for row in a.rows] == list(
+        attack_sizes(summary.workload.tokens)
+    )
     assert a.rows[-1].carriers == summary.workload.tokens
     assert a.rows[-1].vus_corrupted >= summary.workload.tokens // 2
 
@@ -159,12 +171,21 @@ def test_the_advice_is_charged_at_the_encoded_schedule(config, summary):
     parameters = random_parameters(shape, config.parameters_seed)
     simulation = simulate(workload, shape, parameters)
     advice = simulation.schedule.encode()
-    assert len(advice) == w.advice_bytes == summary.compile.advice_bytes == -(-w.advice_bits // 8)
+    assert (
+        len(advice)
+        == w.advice_bytes
+        == summary.compile.advice_bytes
+        == -(-w.advice_bits // 8)
+    )
     assert w.advice_bits == simulation.schedule.bit_length() < 8 * w.advice_bytes + 8
     gate_set = make_isa_gate_set(shape.width)
     constructor = ClusterG(shape, workload.pods, workload.slots, workload.steps)
     compilation = Compile(
-        constructor, simulation.requests, advice, gate_set, max_advice_bits=8 * len(advice)
+        constructor,
+        simulation.requests,
+        advice,
+        gate_set,
+        max_advice_bits=8 * len(advice),
     )
     assert compilation.advice_bits == w.advice_bits
     kappa, _tree = commit_weights(gate_set, parameters.flatten())
@@ -191,7 +212,9 @@ def test_bound_and_cost_are_reported(summary):
     assert b.vus_to_eta == math.ceil(b.budget_nats / b.unit_cost_nats)
     assert b.bits_charged_to_eta == b.vus_to_eta * c.head_vu_cut_bits
     assert b.bits_realized_to_eta == b.vus_to_eta * summary.model.vocab_bits
-    assert k.total == pytest.approx(k.boundary + k.recompute + k.commit_interior + k.proof)
+    assert k.total == pytest.approx(
+        k.boundary + k.recompute + k.commit_interior + k.proof
+    )
     assert k.weights_per_epoch == summary.model.weights
     assert (
         c.W_R > 0 and c.W_V > 0 and c.positions_per_vu > c.head_vu_gates * 0
@@ -199,14 +222,19 @@ def test_bound_and_cost_are_reported(summary):
     assert c.gates_per_token_step * summary.workload.token_steps == pytest.approx(
         c.n - c.weight_gates
     )
-    assert c.replay_units == 1 + sum(1 for row in summary.workload.occupancy for n in row if n > 0)
+    assert c.replay_units == 1 + sum(
+        1 for row in summary.workload.occupancy for n in row if n > 0
+    )
 
 
 def test_the_summary_dumps_to_json_and_renders(summary):
     document = json.loads(summary.to_json())
     assert document["honest"]["accepted"] is True
     assert document["workload"]["tokens"] == summary.workload.tokens
-    assert document["adversary"]["rows"][-1]["decoded"] == summary.adversary.rows[-1].secret
+    assert (
+        document["adversary"]["rows"][-1]["decoded"]
+        == summary.adversary.rows[-1].secret
+    )
     report = render(summary)
     for heading in (
         "1. Workload",
@@ -216,7 +244,9 @@ def test_the_summary_dumps_to_json_and_renders(summary):
         "8. Bound",
     ):
         assert heading in report
-    assert "ACCEPTED" in report and "unit" not in report.replace("units", "").replace("unit_", "")
+    assert "ACCEPTED" in report and "unit" not in report.replace("units", "").replace(
+        "unit_", ""
+    )
 
 
 def test_the_command_line_runs_a_reduced_configuration(tmp_path):
@@ -241,7 +271,9 @@ def test_the_command_line_runs_a_reduced_configuration(tmp_path):
     )
     assert code == 0
     document = json.loads(target.read_text())
-    assert document["model"]["sampling"] is False and document["model"]["random_bits"] == 0
+    assert (
+        document["model"]["sampling"] is False and document["model"]["random_bits"] == 0
+    )
     assert document["honest"]["accepted"] is True
     assert document["workload"]["steps"] == 10 and document["workload"]["arrivals"] == 6
     assert any("argmax" in note for note in document["notes"])
@@ -259,8 +291,8 @@ def test_the_sampled_head_consumes_the_published_randomness(config):
         assert len(request.randomness) == request.max_new
         shape.check_randomness(request)
     with pytest.raises(ValueError):
-        LMShape(vocab=8, d_model=4, heads=2, layers=1, context=16, width=16).check_randomness(
-            simulation.requests[0]
-        )
+        LMShape(
+            vocab=8, d_model=4, heads=2, layers=1, context=16, width=16
+        ).check_randomness(simulation.requests[0])
     assert simulation.eos_stops == sum(a.outcome == EOS for a in simulation.attempts)
     assert Request((1,), 1, (0,)).randomness == (0,)

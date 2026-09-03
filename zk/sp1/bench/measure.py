@@ -66,7 +66,9 @@ def word(value: int) -> bytes:
     return value.to_bytes(WIDTH // 8, "big")
 
 
-def chain_program(op: str, gates: int, kind_seed: int, *, open_all: bool = False) -> KindProgram:
+def chain_program(
+    op: str, gates: int, kind_seed: int, *, open_all: bool = False
+) -> KindProgram:
     """A kind with two ports and ``gates`` gates: g0 = op(p0, p1), gj = op(p0, g(j-1)).
 
     It opens its last gate (its one declared output), or every gate with

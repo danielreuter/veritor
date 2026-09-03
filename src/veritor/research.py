@@ -93,7 +93,9 @@ def Compile(
     """
 
     if not isinstance(G, Constructor):
-        raise TypeError("expected a Constructor: an object with a digest, called as G(x, a)")
+        raise TypeError(
+            "expected a Constructor: an object with a digest, called as G(x, a)"
+        )
     if type(max_advice_bits) is not int or max_advice_bits < 0:
         raise ValueError("max_advice_bits must be a nonnegative integer")
     if type(a) is not bytes:
@@ -297,14 +299,20 @@ def build_executable_conformance_transcript(
         s_seed=s_seed,
     )
     run = run_protocol(
-        compiled, expectation, dict(enumerate(values)), limits=limits, weight_tree=weight_tree
+        compiled,
+        expectation,
+        dict(enumerate(values)),
+        limits=limits,
+        weight_tree=weight_tree,
     )
     if run.transcript is None:
         raise RuntimeError(
             f"honest conformance run was rejected: {run.report.code.value}: "
             f"{run.report.detail}"
         )
-    return ExecutableConformanceTranscript(encode_transcript(run.transcript), expectation)
+    return ExecutableConformanceTranscript(
+        encode_transcript(run.transcript), expectation
+    )
 
 
 __all__ = [

@@ -268,10 +268,14 @@ def _definition(
 ) -> Definition:
     where = f"definition {digest[:12]}"
     if type(body) is dict and "checks" in body:
-        raw = _object(body, {"input_count", "role", "steps", "outputs", "checks"}, where)
+        raw = _object(
+            body, {"input_count", "role", "steps", "outputs", "checks"}, where
+        )
         raw_checks = _list(raw["checks"], f"{where} checks")
         if not raw_checks:
-            raise CompileError(f"{where} declares an empty checks list; the key must be omitted")
+            raise CompileError(
+                f"{where} declares an empty checks list; the key must be omitted"
+            )
     else:
         raw = _object(body, {"input_count", "role", "steps", "outputs"}, where)
         raw_checks = []
@@ -369,7 +373,9 @@ def _checks(value: list[object], where: str, output_count: int) -> tuple[Check, 
         tuple(Run(check.start, check.count, check.stride, 0) for check in checks)
     )
     if repeated is not None:
-        raise CompileError(f"{where} mark output ordinal {repeated} as a check more than once")
+        raise CompileError(
+            f"{where} mark output ordinal {repeated} as a check more than once"
+        )
     return tuple(checks)
 
 
@@ -420,7 +426,9 @@ def _repeated_output(runs: tuple[Run, ...]) -> int | None:
             return run.start  # the same gate ``count`` times
         ordered.append(run if run.count > 1 else Run(run.start, 1, 0, run.width))
     ordered.sort(key=lambda run: run.start)
-    reaching: list[Run] = []  # earlier runs whose last element is not before the current start
+    reaching: list[
+        Run
+    ] = []  # earlier runs whose last element is not before the current start
     for run in ordered:
         reaching = [other for other in reaching if other.last >= run.start]
         for other in reaching:

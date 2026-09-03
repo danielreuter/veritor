@@ -31,12 +31,19 @@ def circuits(sec):
 def test_every_gate_is_in_exactly_one_replay_unit_and_one_verification_unit(sec):
     for compiled in circuits(sec):
         index, n = compiled.index, compiled.circuit.n
-        replay_intervals = [index.replay_units.unit(r).interval for r in range(index.replay_units.count)]
-        assert sorted(a for interval in replay_intervals for a in interval) == list(range(n))
-        verification_intervals = [
-            index.verification_unit(u).interval for u in range(index.verification_unit_count)
+        replay_intervals = [
+            index.replay_units.unit(r).interval for r in range(index.replay_units.count)
         ]
-        assert sorted(a for interval in verification_intervals for a in interval) == list(range(n))
+        assert sorted(a for interval in replay_intervals for a in interval) == list(
+            range(n)
+        )
+        verification_intervals = [
+            index.verification_unit(u).interval
+            for u in range(index.verification_unit_count)
+        ]
+        assert sorted(
+            a for interval in verification_intervals for a in interval
+        ) == list(range(n))
         for address in range(n):
             r = index.replay_units.owner(address)
             assert address in replay_intervals[r]
@@ -51,8 +58,14 @@ def test_verification_units_refine_replay_units(sec):
         for r in range(index.replay_units.count):
             outer = index.replay_units.unit(r).interval
             block = index.verification_units(r)
-            inner = [index.verification_unit(block.first + k).interval for k in range(block.count)]
-            assert all(index.verification_unit(block.first + k).replay_unit == r for k in range(block.count))
+            inner = [
+                index.verification_unit(block.first + k).interval
+                for k in range(block.count)
+            ]
+            assert all(
+                index.verification_unit(block.first + k).replay_unit == r
+                for k in range(block.count)
+            )
             assert all(set(i) <= set(outer) for i in inner)
             assert sorted(a for i in inner for a in i) == list(outer)
 
@@ -74,8 +87,13 @@ def test_cross_unit_reads_go_only_through_declared_outputs(sec):
             r = index.replay_units.owner(address)
             for argument in circuit[address].args:
                 if index.replay_units.owner(argument) != r:
-                    assert argument in boundary or argument in weights, (address, argument)
-        assert boundary == declared  # and the boundary is nothing but In and the Out(R_r)
+                    assert argument in boundary or argument in weights, (
+                        address,
+                        argument,
+                    )
+        assert (
+            boundary == declared
+        )  # and the boundary is nothing but In and the Out(R_r)
         layout = _Layout(compiled)
         for unit in range(index.verification_unit_count):
             layout.required(unit)  # never rejects a compiler-produced (C, I)
@@ -85,7 +103,9 @@ def test_marks_leaving_a_gate_uncovered_are_a_compile_error():
     gate_set = make_word_gate_set(8)
     tracer = Tracer(gate_set)
     add = tracer.gate("add")
-    cell = tracer.definition(input_count=1, key="cell", role="verification")(lambda v: add(v[0], v[0]))
+    cell = tracer.definition(input_count=1, key="cell", role="verification")(
+        lambda v: add(v[0], v[0])
+    )
 
     @tracer.definition(input_count=0, key="leaky-replay", role="replay")
     def leaky(_v):
@@ -112,7 +132,9 @@ def test_nested_or_straddling_marks_are_a_compile_error():
     gate_set = make_word_gate_set(8)
     tracer = Tracer(gate_set)
     add = tracer.gate("add")
-    cell = tracer.definition(input_count=1, key="cell", role="verification")(lambda v: add(v[0], v[0]))
+    cell = tracer.definition(input_count=1, key="cell", role="verification")(
+        lambda v: add(v[0], v[0])
+    )
 
     @tracer.definition(input_count=0, key="replay-in-replay", role="replay")
     def inner(_v):
@@ -125,7 +147,9 @@ def test_nested_or_straddling_marks_are_a_compile_error():
     with pytest.raises(CompileError, match="contains a replay mark"):
         Compiler(gate_set).compile(tracer.serialize(outer), [1])
 
-    @tracer.definition(input_count=1, key="verification-in-verification", role="verification")
+    @tracer.definition(
+        input_count=1, key="verification-in-verification", role="verification"
+    )
     def nested(v):
         return add(cell(v[0]), v[0])
 
@@ -145,7 +169,9 @@ def test_nested_or_straddling_marks_are_a_compile_error():
     def root(_v):
         return straddle(tracer.inputs(1)[0])
 
-    with pytest.raises(CompileError, match="marked verification and contains a replay mark"):
+    with pytest.raises(
+        CompileError, match="marked verification and contains a replay mark"
+    ):
         Compiler(gate_set).compile(tracer.serialize(root), [1, 1])
 
 
@@ -161,13 +187,24 @@ def test_layout_rejects_a_circuit_that_reads_across_the_cut(model, sec):
     circuit = model.circuit
     stage0_mul, stage0_add = model.cell_addresses(0, 0)
     stage1_mul, _ = model.cell_addresses(1, 0)
-    assert stage0_add in circuit[stage1_mul].args and stage0_add in model.hidden_boundary_addresses
+    assert (
+        stage0_add in circuit[stage1_mul].args
+        and stage0_add in model.hidden_boundary_addresses
+    )
     gates = []
     for address in range(circuit.n):
         ref = circuit[address]
-        args = tuple(stage0_mul if a == stage0_add else a for a in ref.args) if address == stage1_mul else ref.args
+        args = (
+            tuple(stage0_mul if a == stage0_add else a for a in ref.args)
+            if address == stage1_mul
+            else ref.args
+        )
         gates.append(GateRef(ref.op, args, ref.width, ref.source))
-    forged = Compiled(FlatCircuit(gates, circuit.outputs, circuit.gate_set), model.index, model.compiled.digest)
+    forged = Compiled(
+        FlatCircuit(gates, circuit.outputs, circuit.gate_set),
+        model.index,
+        model.compiled.digest,
+    )
     layout = _Layout(forged)
     unit = model.unit_of(stage1_mul)
     with pytest.raises(Reject) as rejection:

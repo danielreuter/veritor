@@ -76,7 +76,9 @@ def pack_fields(values: Sequence[int], widths: Sequence[int]) -> bytes:
         bits = (bits << width) | value
         total += width
     padding = -total % 8
-    return ((bits << padding) & ((1 << (total + padding)) - 1)).to_bytes((total + padding) // 8, "big")
+    return ((bits << padding) & ((1 << (total + padding)) - 1)).to_bytes(
+        (total + padding) // 8, "big"
+    )
 
 
 def unpack_fields(data: bytes, widths: Sequence[int]) -> tuple[int, ...]:
@@ -124,7 +126,9 @@ class TruncatedRequestsG:
             raise ValueError("the blank slot is the word vocab, so vocab < 2**width")
         self.inner = RequestsG(shape)
         self.shape = shape
-        self.digest: Digest = constructor_digest(type(self).__name__, self.VERSION, self.manifest)
+        self.digest: Digest = constructor_digest(
+            type(self).__name__, self.VERSION, self.manifest
+        )
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
@@ -170,7 +174,9 @@ class TruncatedRequestsG:
         lengths = tuple(field + 1 for field in fields)
         for length, request in zip(lengths, self.requests(x), strict=True):
             if length > request.max_new:
-                raise TracerError(f"advice names {length} tokens, more than max_new {request.max_new}")
+                raise TracerError(
+                    f"advice names {length} tokens, more than max_new {request.max_new}"
+                )
         return lengths
 
     def truncated(self, x: object, a: bytes) -> tuple[Request, ...]:
@@ -178,17 +184,23 @@ class TruncatedRequestsG:
 
         return tuple(
             Request(request.prompt, length, request.randomness[:length], request.banned)
-            for request, length in zip(self.requests(x), self.lengths(x, a), strict=True)
+            for request, length in zip(
+                self.requests(x), self.lengths(x, a), strict=True
+            )
         )
 
     # -- layouts ---------------------------------------------------------------------
 
-    def groups(self, x: object, a: bytes) -> tuple[tuple[TruncatedKind, tuple[int, ...]], ...]:
+    def groups(
+        self, x: object, a: bytes
+    ) -> tuple[tuple[TruncatedKind, tuple[int, ...]], ...]:
         """The requests' indices grouped by kind -- ``(prompt length, t, banned length, max_new)``
         -- kinds in order of first appearance; a group is one ``repeat`` of its kind."""
 
         groups: dict[TruncatedKind, list[int]] = {}
-        for index, (request, length) in enumerate(zip(self.requests(x), self.lengths(x, a), strict=True)):
+        for index, (request, length) in enumerate(
+            zip(self.requests(x), self.lengths(x, a), strict=True)
+        ):
             kind = (len(request.prompt), length, len(request.banned), request.max_new)
             groups.setdefault(kind, []).append(index)
         return tuple((kind, tuple(members)) for kind, members in groups.items())
@@ -202,13 +214,17 @@ class TruncatedRequestsG:
         """``(request, position)`` of every output: ``max_new`` slots per request, the blanks last."""
 
         requests = self.requests(x)
-        return tuple((r, g) for r in self.order(x, a) for g in range(requests[r].max_new))
+        return tuple(
+            (r, g) for r in self.order(x, a) for g in range(requests[r].max_new)
+        )
 
     def blank_positions(self, x: object, a: bytes) -> tuple[int, ...]:
         """The output ordinals of the blank slots: those the root's checks fix at :attr:`blank`."""
 
         lengths = self.lengths(x, a)
-        return tuple(i for i, (r, g) in enumerate(self.output_layout(x, a)) if g >= lengths[r])
+        return tuple(
+            i for i, (r, g) in enumerate(self.output_layout(x, a)) if g >= lengths[r]
+        )
 
     def flatten_inputs(self, x: object, a: bytes) -> tuple[int, ...]:
         """The public inputs in ``in``-gate order: request by request in circuit order, the banned
@@ -218,7 +234,11 @@ class TruncatedRequestsG:
         return tuple(
             value
             for r in self.order(x, a)
-            for value in (*truncated[r].banned, *truncated[r].prompt, *truncated[r].randomness)
+            for value in (
+                *truncated[r].banned,
+                *truncated[r].prompt,
+                *truncated[r].randomness,
+            )
         )
 
     def root(self, x: object, a: bytes) -> TracedDefinition:
@@ -233,10 +253,19 @@ class TruncatedRequestsG:
             w = lm.weights_unit()()
             outputs: list[Wires] = []
             for (prompt, length, banned, max_new), members in groups:
-                request = self.inner.request(prompt, length, banned, blanks=max_new - length)
-                block = request(w) if len(members) == 1 else lm.tracer.repeat(len(members), request, w)
+                request = self.inner.request(
+                    prompt, length, banned, blanks=max_new - length
+                )
+                block = (
+                    request(w)
+                    if len(members) == 1
+                    else lm.tracer.repeat(len(members), request, w)
+                )
                 for copy in range(len(members) if length < max_new else 0):
-                    lm.tracer.check(block[copy * max_new + length : (copy + 1) * max_new], self.blank)
+                    lm.tracer.check(
+                        block[copy * max_new + length : (copy + 1) * max_new],
+                        self.blank,
+                    )
                 outputs.append(block)
             return outputs
 
@@ -245,7 +274,9 @@ class TruncatedRequestsG:
     def __call__(self, x: object, a: bytes) -> tuple[bytes, tuple[int, ...]]:
         if type(a) is not bytes:
             raise TracerError("advice must be bytes")
-        return self.inner.lm.tracer.serialize(self.root(x, a)), self.flatten_inputs(x, a)
+        return self.inner.lm.tracer.serialize(self.root(x, a)), self.flatten_inputs(
+            x, a
+        )
 
 
 __all__ = ["TruncatedRequestsG", "field_width", "pack_fields", "unpack_fields"]

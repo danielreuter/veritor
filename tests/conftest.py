@@ -10,7 +10,9 @@ from __future__ import annotations
 import pytest
 
 
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
     if "slow" in (config.getoption("-m") or ""):
         return
     skip = pytest.mark.skip(reason="slow: select with -m slow")

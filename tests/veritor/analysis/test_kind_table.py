@@ -18,17 +18,32 @@ from veritor.protocol.parameters import expected_work
 
 from .conftest import build_compiled, paper_example
 
-POLICIES = (VerificationPolicy(1, 1), VerificationPolicy(Fraction(1, 2), Fraction(1, 3)), VerificationPolicy(Fraction(1, 5), 1))
+POLICIES = (
+    VerificationPolicy(1, 1),
+    VerificationPolicy(Fraction(1, 2), Fraction(1, 3)),
+    VerificationPolicy(Fraction(1, 5), 1),
+)
 
 
-@pytest.mark.parametrize("compiled", (build_compiled((3, 5, 2)), paper_example(split=True)), ids=("units", "paper"))
+@pytest.mark.parametrize(
+    "compiled",
+    (build_compiled((3, 5, 2)), paper_example(split=True)),
+    ids=("units", "paper"),
+)
 @pytest.mark.parametrize("policy", POLICIES)
-def test_the_folds_agree_on_the_artifact_and_its_table(compiled, policy: VerificationPolicy) -> None:
+def test_the_folds_agree_on_the_artifact_and_its_table(
+    compiled, policy: VerificationPolicy
+) -> None:
     table = compiled.kind_table()
 
     assert isinstance(table, KindTable)
     assert table.rows == compiled.index.kinds() and table.digest == compiled.digest
-    assert (table.n, table.input_count, table.weight_count, table.replay_unit_count) == (
+    assert (
+        table.n,
+        table.input_count,
+        table.weight_count,
+        table.replay_unit_count,
+    ) == (
         compiled.index.n,
         compiled.index.input_count,
         compiled.index.weight_count,
@@ -67,9 +82,25 @@ def test_a_table_checks_its_kinds() -> None:
     rows = table.rows
 
     with pytest.raises(ValueError, match="distinct kinds"):
-        KindTable(rows + rows[:1], table.root, table.n, table.input_count, table.weight_count, 2, table.digest)
+        KindTable(
+            rows + rows[:1],
+            table.root,
+            table.n,
+            table.input_count,
+            table.weight_count,
+            2,
+            table.digest,
+        )
     with pytest.raises(ValueError, match="root must be one of its rows"):
-        KindTable(rows, "nope", table.n, table.input_count, table.weight_count, 2, table.digest)
+        KindTable(
+            rows,
+            "nope",
+            table.n,
+            table.input_count,
+            table.weight_count,
+            2,
+            table.digest,
+        )
     # drop a kind the root calls: the root then calls an unknown kind
     root = next(row for row in rows if row.kind == table.root)
     dropped = root.children[0][0]
@@ -93,13 +124,32 @@ def test_a_table_checks_the_reach_against_the_root() -> None:
     other = next(row for row in table.rows if row.kind != table.root)
 
     def rebuild(rows: tuple) -> KindTable:
-        return KindTable(rows, table.root, table.n, table.input_count, table.weight_count, 2, table.digest)
+        return KindTable(
+            rows,
+            table.root,
+            table.n,
+            table.input_count,
+            table.weight_count,
+            2,
+            table.digest,
+        )
 
     assert root.reach_bits == root.out_bits == 40
     with pytest.raises(ValueError, match="reaches exactly its own outputs"):
-        rebuild(tuple(replace(row, reach_bits=8) if row is root else row for row in table.rows))
+        rebuild(
+            tuple(
+                replace(row, reach_bits=8) if row is root else row for row in table.rows
+            )
+        )
     for bad in (root.out_bits + 1, -1):
         with pytest.raises(ValueError, match=r"reaches .* bits of a 40-bit output"):
-            rebuild(tuple(replace(row, reach_bits=bad) if row is other else row for row in table.rows))
+            rebuild(
+                tuple(
+                    replace(row, reach_bits=bad) if row is other else row
+                    for row in table.rows
+                )
+            )
     # anything in between is a table
-    rebuild(tuple(replace(row, reach_bits=0) if row is other else row for row in table.rows))
+    rebuild(
+        tuple(replace(row, reach_bits=0) if row is other else row for row in table.rows)
+    )

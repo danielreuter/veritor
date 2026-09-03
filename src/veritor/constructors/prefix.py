@@ -180,18 +180,14 @@ class PrefixG:
                     )
                 return produced[-1]
 
-            token = remember(
-                self.lm.prefill(length, cached=prefix)(w, kv), length
-            )
+            token = remember(self.lm.prefill(length, cached=prefix)(w, kv), length)
             tokens = [token]
             for step in range(1, max_new):
                 args: list[Wire | Wires] = [w, token]
                 for layer in range(layers):
                     args.extend(keys[layer])
                     args.extend(values[layer])
-                token = remember(
-                    self.lm.decode(prefix + length + step)(*args), 1
-                )
+                token = remember(self.lm.decode(prefix + length + step)(*args), 1)
                 tokens.append(token)
             return tokens
 

@@ -49,7 +49,11 @@ from veritor.research import Compile
 SHAPE = GPT2Shape(layers=2, d_model=32, heads=2, d_ff=64, vocab=11, context=8)
 REQUEST = Request((1, 2, 3), 3)
 PARAMETERS = VerifierParameters(Fraction(1, 2**40), max_capacity=None)
-SEEDS = {"session_id": b"gpt2-reference-s".ljust(16, b"\0"), "q_seed": b"q" * 32, "s_seed": b"s" * 32}
+SEEDS = {
+    "session_id": b"gpt2-reference-s".ljust(16, b"\0"),
+    "q_seed": b"q" * 32,
+    "s_seed": b"s" * 32,
+}
 
 
 @pytest.fixture(scope="module")
@@ -61,8 +65,16 @@ def run():
     constructor = GPT2G(SHAPE)
     compilation = Compile(constructor, (REQUEST,), b"", constructor.gate_set)
     compiled = compilation.compiled
-    addresses = address_map(compiled, constructor.model, request_frames(compiled)[0], len(REQUEST.prompt), REQUEST.max_new)
-    values = SparseValues(compiled, result.capture, addresses, weights.flat(), compilation.inputs)
+    addresses = address_map(
+        compiled,
+        constructor.model,
+        request_frames(compiled)[0],
+        len(REQUEST.prompt),
+        REQUEST.max_new,
+    )
+    values = SparseValues(
+        compiled, result.capture, addresses, weights.flat(), compilation.inputs
+    )
     return weights, result, compilation, addresses, values
 
 
@@ -80,7 +92,9 @@ def test_the_reference_forward_records_every_gate_granular_tensor(run) -> None:
     for name, address in addresses.items():
         for a in address[address >= 0].reshape(-1).tolist():
             assert a in request_unit, name
-            assert compiled.circuit[a].is_source == (name == "tokens" and a in addresses["tokens"][: len(REQUEST.prompt)]), name
+            assert compiled.circuit[a].is_source == (
+                name == "tokens" and a in addresses["tokens"][: len(REQUEST.prompt)]
+            ), name
     assert weights.flat().shape == (SHAPE.weight_count,)
 
 
@@ -98,8 +112,16 @@ def test_every_verification_unit_re_executes_to_the_recorded_words(run) -> None:
         agreeing += a
         if c:
             kinds.add(node.kind)
-    assert checked == agreeing == values.recorded_count - 3  # the three tokens are read as inputs, not checked here
-    computed = {row.kind for row in compiled.kind_table().rows if row.role == VERIFICATION and row.source_weights == 0 and row.source_inputs == 0}
+    assert (
+        checked == agreeing == values.recorded_count - 3
+    )  # the three tokens are read as inputs, not checked here
+    computed = {
+        row.kind
+        for row in compiled.kind_table().rows
+        if row.role == VERIFICATION
+        and row.source_weights == 0
+        and row.source_inputs == 0
+    }
     assert kinds == computed  # every computed VU kind of the run has a recorded output
     # ``Circuit.evaluate`` on a VU's definition, from its inputs alone, equals the recorded output
     for u in (index.verification_units(1).first, index.verification_unit_count - 1):
@@ -108,48 +130,91 @@ def test_every_verification_unit_re_executes_to_the_recorded_words(run) -> None:
         assert all(known[a] == values[a] for a in known if a in values)
 
 
-def test_the_request_replay_reproduces_the_recorded_interior_and_the_tokens(run) -> None:
+def test_the_request_replay_reproduces_the_recorded_interior_and_the_tokens(
+    run,
+) -> None:
     weights, result, compilation, addresses, values = run
     compiled = compilation.compiled
 
-    replayed = replay_unit(compiled, 1, values)  # every computed gate of the request, its tokens included
+    replayed = replay_unit(
+        compiled, 1, values
+    )  # every computed gate of the request, its tokens included
     recorded = [a for a in replayed if a in values]
-    assert len(recorded) == values.recorded_count - 3  # minus the prompt: ``in`` gates are read, not replayed
+    assert (
+        len(recorded) == values.recorded_count - 3
+    )  # minus the prompt: ``in`` gates are read, not replayed
     assert all(replayed[a] == values[a] for a in recorded)
     outputs = compiled.circuit.outputs
-    assert tuple(values[a] for a in outputs) == tuple(replayed[a] for a in outputs) == result.tokens
+    assert (
+        tuple(values[a] for a in outputs)
+        == tuple(replayed[a] for a in outputs)
+        == result.tokens
+    )
     # and the whole circuit, from the prompt and the weights alone
     assignment = compiled.circuit.evaluate(compilation.inputs, weights.flat().tolist())
     assert tuple(assignment[a] for a in outputs) == result.tokens
-    assert all(assignment[a] == values[a] for a in addresses["L1.x2"].reshape(-1).tolist())
+    assert all(
+        assignment[a] == values[a] for a in addresses["L1.x2"].reshape(-1).tolist()
+    )
 
 
 def test_the_protocol_accepts_the_run_and_rejects_one_flipped_dot_bit() -> None:
     """A smaller model (one layer, ``d`` 16, five tokens) so that ``s = 1`` opens every VU in a second."""
 
-    shape = GPT2Shape(layers=1, d_model=16, heads=1, d_ff=32, vocab=5, context=4, argmax_block=2)
+    shape = GPT2Shape(
+        layers=1, d_model=16, heads=1, d_ff=32, vocab=5, context=4, argmax_block=2
+    )
     request = Request((1,), 3)
     weights = GPT2Weights.random(shape, seed=3)
     result = forward(weights, request.prompt, request.max_new, NumpyOps())
     constructor = GPT2G(shape)
     compilation = Compile(constructor, (request,), b"", constructor.gate_set)
     compiled = compilation.compiled
-    addresses = address_map(compiled, constructor.model, request_frames(compiled)[0], 1, request.max_new)
-    values = SparseValues(compiled, result.capture, addresses, weights.flat(), compilation.inputs)
+    addresses = address_map(
+        compiled, constructor.model, request_frames(compiled)[0], 1, request.max_new
+    )
+    values = SparseValues(
+        compiled, result.capture, addresses, weights.flat(), compilation.inputs
+    )
     kappa, tree = commit_weights(constructor.gate_set, weights.flat().tolist())
     assert result.tokens == (1, 1, 2) and compiled.circuit.n == 5_352
 
     def expectation(policy: VerificationPolicy, claimed: tuple[int, ...]):
-        return make_expectation(compilation, policy, claimed, parameters=PARAMETERS, weights=kappa, **SEEDS)
+        return make_expectation(
+            compilation, policy, claimed, parameters=PARAMETERS, weights=kappa, **SEEDS
+        )
 
-    honest = run_protocol(compiled, expectation(VerificationPolicy(1, 1), result.tokens), values, weight_tree=tree)
+    honest = run_protocol(
+        compiled,
+        expectation(VerificationPolicy(1, 1), result.tokens),
+        values,
+        weight_tree=tree,
+    )
     assert honest.report.code is VerificationCode.ACCEPTED
-    assert honest.report.sampled_replay_units == (0, 1)  # q = 1: the weights and the request
-    assert len(honest.report.sampled_verification_units) == compiled.index.verification_unit_count  # s = 1: every VU
-    assert honest.transcript is not None and len(encode_transcript(honest.transcript)) > 1 << 20
-    half = run_protocol(compiled, expectation(VerificationPolicy(1, Fraction(1, 2)), result.tokens), values, weight_tree=tree)
+    assert honest.report.sampled_replay_units == (
+        0,
+        1,
+    )  # q = 1: the weights and the request
+    assert (
+        len(honest.report.sampled_verification_units)
+        == compiled.index.verification_unit_count
+    )  # s = 1: every VU
+    assert (
+        honest.transcript is not None
+        and len(encode_transcript(honest.transcript)) > 1 << 20
+    )
+    half = run_protocol(
+        compiled,
+        expectation(VerificationPolicy(1, Fraction(1, 2)), result.tokens),
+        values,
+        weight_tree=tree,
+    )
     assert half.report.code is VerificationCode.ACCEPTED
-    assert 0 < len(half.report.sampled_verification_units) < len(honest.report.sampled_verification_units)
+    assert (
+        0
+        < len(half.report.sampled_verification_units)
+        < len(honest.report.sampled_verification_units)
+    )
 
     # one flipped bit in one dot output: the attention mix at position 0, coordinate 3 (a rounded BF16 word)
     target = int(addresses["L0.mix"][0, 3])
@@ -161,12 +226,22 @@ def test_the_protocol_accepts_the_run_and_rejects_one_flipped_dot_bit() -> None:
             known[target] = cast(int, known[target]) ^ 1
         return known
 
-    bad = run_protocol(compiled, expectation(VerificationPolicy(1, 1), result.tokens), values, weight_tree=tree, replay=flipped)
+    bad = run_protocol(
+        compiled,
+        expectation(VerificationPolicy(1, 1), result.tokens),
+        values,
+        weight_tree=tree,
+        replay=flipped,
+    )
     assert bad.report.code is VerificationCode.RELATION_REJECTED
-    assert f"address {target}" in bad.report.detail and "f32_to_bf16" in bad.report.detail
+    assert (
+        f"address {target}" in bad.report.detail and "f32_to_bf16" in bad.report.detail
+    )
     # and a wrong claim about the tokens
     wrong = tuple((t + 1) % shape.vocab for t in result.tokens)
-    lie = run_protocol(compiled, expectation(VerificationPolicy(1, 1), wrong), values, weight_tree=tree)
+    lie = run_protocol(
+        compiled, expectation(VerificationPolicy(1, 1), wrong), values, weight_tree=tree
+    )
     assert lie.report.code is VerificationCode.PUBLIC_IO_MISMATCH
 
 
@@ -177,4 +252,6 @@ def test_random_weights_are_bf16_words_in_layout_order() -> None:
     again = GPT2Weights.from_flat(SHAPE, flat)
     assert np.array_equal(again.flat(), flat)
     assert flat[-3:].tolist() == [0x4200, 0x3E00, 0]  # n = 32.0, scale = 0.125, zero
-    assert flat[-3 - SHAPE.vocab : -3].tolist() == list(range(SHAPE.vocab))  # the token table
+    assert flat[-3 - SHAPE.vocab : -3].tolist() == list(
+        range(SHAPE.vocab)
+    )  # the token table

@@ -147,7 +147,9 @@ def plan_attack(
     """Encode ``secret`` (``vocab_bits`` bits per token) into the last tokens of the responses."""
 
     if len(secret) % vocab_bits or set(secret) - {"0", "1"}:
-        raise ValueError(f"the secret must be a bit string of a multiple of {vocab_bits} bits")
+        raise ValueError(
+            f"the secret must be a bit string of a multiple of {vocab_bits} bits"
+        )
     chosen = carriers(layout, len(secret) // vocab_bits)
     circuit, index = compiled.circuit, compiled.index
     addresses = tuple(circuit.outputs[c] for c in chosen)
@@ -160,7 +162,9 @@ def plan_attack(
     units: list[int] = []
     replay_units: list[int] = []
     for address in addresses:
-        honest = circuit.evaluate_gate(address, tuple(values[a] for a in circuit[address].args))
+        honest = circuit.evaluate_gate(
+            address, tuple(values[a] for a in circuit[address].args)
+        )
         if values[address] == honest:
             continue
         corrupted.append(address)
@@ -180,7 +184,9 @@ def plan_attack(
     )
 
 
-def decode_secret(outputs: Sequence[int], chosen: Sequence[int], vocab_bits: int) -> str:
+def decode_secret(
+    outputs: Sequence[int], chosen: Sequence[int], vocab_bits: int
+) -> str:
     """What the accomplice reads off the streamed tokens: the carriers, ``vocab_bits`` bits each."""
 
     return "".join(format(outputs[c], f"0{vocab_bits}b") for c in chosen)
@@ -275,7 +281,9 @@ def protocol_trials(
             report.code is not VerificationCode.RELATION_REJECTED
             or not errors & set(report.sampled_verification_units)
         ):
-            raise AssertionError(f"unexpected verdict against the dishonest server: {report}")
+            raise AssertionError(
+                f"unexpected verdict against the dishonest server: {report}"
+            )
         reports.append(report)
     return tuple(reports)
 

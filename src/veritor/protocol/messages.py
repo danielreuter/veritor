@@ -109,7 +109,9 @@ def _bytes32(value: object, name: str) -> bytes:
 
 
 def _sorted_unique(value: object, name: str) -> tuple[int, ...]:
-    if type(value) is not tuple or any(type(item) is not int or item < 0 for item in value):
+    if type(value) is not tuple or any(
+        type(item) is not int or item < 0 for item in value
+    ):
         raise ProtocolError(f"{name} must be a tuple of nonnegative unit indices")
     if tuple(sorted(set(value))) != value:
         raise ProtocolError(f"{name} must be sorted and unique")
@@ -243,7 +245,9 @@ class Header:
         if type(self.session_id) is not bytes or not self.session_id:
             raise ProtocolError("session_id must be nonempty bytes")
         object.__setattr__(
-            self, "compiled_digest", validate_digest(self.compiled_digest, "compiled digest")
+            self,
+            "compiled_digest",
+            validate_digest(self.compiled_digest, "compiled digest"),
         )
         object.__setattr__(
             self, "constructor", validate_digest(self.constructor, "constructor digest")
@@ -283,7 +287,9 @@ class Header:
             manifest["backend"] = self.backend
         if self.max_faults:
             manifest["max_faults"] = self.max_faults
-        object.__setattr__(self, "digest", raw_digest("veritor/protocol/header/v8", manifest))
+        object.__setattr__(
+            self, "digest", raw_digest("veritor/protocol/header/v8", manifest)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,7 +398,10 @@ class ProofMessage:
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
-        manifest: dict[str, JSONValue] = {"proof": self.proof.hex(), "units": list(self.units)}
+        manifest: dict[str, JSONValue] = {
+            "proof": self.proof.hex(),
+            "units": list(self.units),
+        }
         if self.foreign:
             manifest["foreign"] = self.foreign.hex()
         return manifest

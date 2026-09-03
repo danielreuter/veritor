@@ -28,7 +28,9 @@ SIGMAS = 4.0
 def sigma_of(model, policy, corrupted: list[int]):
     """``sigma(E)`` for the error set of the units holding ``corrupted``."""
 
-    per_replay = Counter(model.index.replay_units.owner(address) for address in corrupted)
+    per_replay = Counter(
+        model.index.replay_units.owner(address) for address in corrupted
+    )
     return survival(policy, per_replay.values())
 
 
@@ -99,7 +101,11 @@ def test_selection_law_alone_matches_survival_over_many_seeds(model, sec):
             )
             if not errors & set(t):
                 escaped += 1
-        assert within(escaped / trials, expected, trials), (label, escaped / trials, expected)
+        assert within(escaped / trials, expected, trials), (
+            label,
+            escaped / trials,
+            expected,
+        )
 
 
 def test_survival_is_the_product_of_per_replay_unit_factors(model, sec):
@@ -107,8 +113,12 @@ def test_survival_is_the_product_of_per_replay_unit_factors(model, sec):
 
     policy = sec.HALVES
     q, s = policy.q, policy.s
-    distinct = sigma_of(model, policy, [model.cell_addresses(0, 0)[0], model.cell_addresses(1, 1)[0]])
-    same = sigma_of(model, policy, [model.cell_addresses(0, 0)[0], model.cell_addresses(0, 1)[0]])
+    distinct = sigma_of(
+        model, policy, [model.cell_addresses(0, 0)[0], model.cell_addresses(1, 1)[0]]
+    )
+    same = sigma_of(
+        model, policy, [model.cell_addresses(0, 0)[0], model.cell_addresses(0, 1)[0]]
+    )
     assert distinct == (1 - q * s) ** 2
     assert same == 1 - q + q * (1 - s) ** 2
     assert same > distinct  # concentrating errors in one replay unit is cheaper

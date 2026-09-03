@@ -116,7 +116,9 @@ def assert_sound(compiled: Compiled) -> dict[str, KindSummary]:
     exact = exact_reach(compiled)
     root = rows[compiled.index.root.kind]
     assert root.reach_bits == root.out_bits == exact[root.kind]
-    assert root.out_bits == sum(compiled.circuit[address].width for address in compiled.circuit.outputs)
+    assert root.out_bits == sum(
+        compiled.circuit[address].width for address in compiled.circuit.outputs
+    )
     for row in rows.values():
         assert exact[row.kind] <= row.reach_bits <= root.out_bits, row.kind
     return rows
@@ -141,7 +143,9 @@ def test_reach_is_sound_and_below_the_whole_output(compiled: Compiled) -> None:
     assert_sound(compiled)
 
 
-def test_the_fixtures_whose_replay_units_write_the_outputs_reach_exactly_their_interface() -> None:
+def test_the_fixtures_whose_replay_units_write_the_outputs_reach_exactly_their_interface() -> (
+    None
+):
     """Every RU's outputs are circuit outputs: its reach is its interface.
 
     A VU inside one is charged its word all the same: below the root the
@@ -155,7 +159,12 @@ def test_the_fixtures_whose_replay_units_write_the_outputs_reach_exactly_their_i
     for unit in by_role(rows, REPLAY):
         assert unit.reach_bits == unit.out_bits == exact[unit.kind]
     for cell in by_role(rows, VERIFICATION):
-        assert exact[cell.kind] == cell.out_bits == min(cell.out_bits, cell.reach_bits) == 8
+        assert (
+            exact[cell.kind]
+            == cell.out_bits
+            == min(cell.out_bits, cell.reach_bits)
+            == 8
+        )
         assert cell.reach_bits == max(unit.out_bits for unit in by_role(rows, REPLAY))
 
 
@@ -166,7 +175,9 @@ def test_the_paper_fanin_units_reach_less_than_their_interface() -> None:
     exact = exact_reach(paper_example(split=False))
     h = next(row for row in by_role(rows, VERIFICATION) if row.out_bits == 6)
     tail = next(row for row in by_role(rows, VERIFICATION) if row.size == 2)
-    assert h.reach_bits == exact[h.kind] == 4 < h.out_bits  # the first ``h`` reaches both outputs
+    assert (
+        h.reach_bits == exact[h.kind] == 4 < h.out_bits
+    )  # the first ``h`` reaches both outputs
     assert tail.reach_bits == exact[tail.kind] == 2 == tail.out_bits
 
 
@@ -184,33 +195,56 @@ def compile_cluster(requests: tuple[Request, ...], slots: int, steps: int) -> Co
 
 def test_a_request_and_everything_inside_it_reach_the_requests_own_tokens() -> None:
     prompt, generated, count = 2, 3, 4
-    compiled = compile_requests(tuple(Request(tuple(range(prompt)), generated) for _ in range(count)))
+    compiled = compile_requests(
+        tuple(Request(tuple(range(prompt)), generated) for _ in range(count))
+    )
     rows = assert_sound(compiled)
     exact = exact_reach(compiled)
     root = rows[compiled.index.root.kind]
     tokens = generated * LM.width
 
     assert root.out_bits == count * tokens
-    weights, request = (row for row in by_role(rows, REPLAY) if row.copies in (1, count))
+    weights, request = (
+        row for row in by_role(rows, REPLAY) if row.copies in (1, count)
+    )
     if weights.copies != 1:
         weights, request = request, weights
-    assert weights.out_bits == 0 and weights.reach_bits == root.out_bits  # read by every request
-    assert request.copies == count and request.out_bits == request.reach_bits == exact[request.kind] == tokens
+    assert (
+        weights.out_bits == 0 and weights.reach_bits == root.out_bits
+    )  # read by every request
+    assert (
+        request.copies == count
+        and request.out_bits == request.reach_bits == exact[request.kind] == tokens
+    )
     # every kind below a request -- prefill, decode step, layer, matvec, row, dot, cell -- reaches
     # the request's tokens, however wide its interface
-    inside = [row for row in rows.values() if row is not root and row is not weights and row.copies % count == 0]
+    inside = [
+        row
+        for row in rows.values()
+        if row is not root and row is not weights and row.copies % count == 0
+    ]
     assert len(inside) > 10 and any(row.out_bits > tokens for row in inside)
     assert all(row.reach_bits == tokens for row in inside)
     # the profile-level charge: a cell keeps its word, a wide step drops to the tokens
-    assert all(min(row.out_bits, row.reach_bits) == row.out_bits for row in inside if row.out_bits <= 16)
-    assert all(min(row.out_bits, row.reach_bits) == tokens for row in inside if row.out_bits > tokens)
+    assert all(
+        min(row.out_bits, row.reach_bits) == row.out_bits
+        for row in inside
+        if row.out_bits <= 16
+    )
+    assert all(
+        min(row.out_bits, row.reach_bits) == tokens
+        for row in inside
+        if row.out_bits > tokens
+    )
 
 
 def test_the_steps_of_a_wave_are_chained_and_reach_to_the_end_of_their_wave() -> None:
     """Under FCFS on identical requests the run is ``waves`` of ``batch`` requests, ``generated`` steps each."""
 
     prompt, generated, batch, waves = 2, 3, 2, 2
-    requests = tuple(Request(tuple(range(prompt)), generated) for _ in range(batch * waves))
+    requests = tuple(
+        Request(tuple(range(prompt)), generated) for _ in range(batch * waves)
+    )
     compiled = compile_cluster(requests, batch, generated * waves)
     rows = assert_sound(compiled)
     exact = exact_reach(compiled)
@@ -226,7 +260,9 @@ def test_the_steps_of_a_wave_are_chained_and_reach_to_the_end_of_their_wave() ->
     # a step reads the previous step's tokens and cache: it reaches the tokens of itself and the
     # steps after it in its wave, exactly, and nothing of the next wave, whose prefill reads only
     # the weights and its own prompts
-    assert [row.reach_bits for row in steps] == [wave_tokens - k * batch * LM.width for k in range(generated)]
+    assert [row.reach_bits for row in steps] == [
+        wave_tokens - k * batch * LM.width for k in range(generated)
+    ]
     assert all(row.reach_bits == exact[row.kind] < row.out_bits for row in steps)
     # a single wave: the chain makes the first step reach the whole output
     single = compile_cluster(requests[:batch], batch, generated)
@@ -235,7 +271,9 @@ def test_the_steps_of_a_wave_are_chained_and_reach_to_the_end_of_their_wave() ->
         (row for row in by_role(single_rows, REPLAY) if row.out_bits),
         key=lambda row: row.reach_bits,
     )
-    assert first.reach_bits == single_rows[single.index.root.kind].out_bits == wave_tokens
+    assert (
+        first.reach_bits == single_rows[single.index.root.kind].out_bits == wave_tokens
+    )
 
 
 def test_a_staggered_schedule_chains_the_whole_run() -> None:
@@ -253,18 +291,26 @@ def test_a_staggered_schedule_chains_the_whole_run() -> None:
     root = rows[compiled.index.root.kind]
     steps = [row for row in by_role(rows, REPLAY) if row.out_bits]
     assert max(row.reach_bits for row in steps) == root.out_bits
-    assert min(row.reach_bits for row in steps) < root.out_bits  # the last step reaches only its own tokens
+    assert (
+        min(row.reach_bits for row in steps) < root.out_bits
+    )  # the last step reaches only its own tokens
 
 
 def cells(tracer: Tracer):
     add, mul = tracer.gate("add"), tracer.gate("mul")
-    plus = tracer.definition(input_count=2, key="plus", role="verification")(lambda v: add(v[0], v[1]))
-    times = tracer.definition(input_count=2, key="times", role="verification")(lambda v: mul(v[0], v[1]))
+    plus = tracer.definition(input_count=2, key="plus", role="verification")(
+        lambda v: add(v[0], v[1])
+    )
+    times = tracer.definition(input_count=2, key="times", role="verification")(
+        lambda v: mul(v[0], v[1])
+    )
     return plus, times
 
 
 def compile_root(tracer: Tracer, root, input_count: int) -> Compiled:
-    return Compiler(WORDS).compile(tracer.serialize(root), list(range(1, input_count + 1)))
+    return Compiler(WORDS).compile(
+        tracer.serialize(root), list(range(1, input_count + 1))
+    )
 
 
 def test_independent_repeat_iterations_keep_their_own_outputs() -> None:
@@ -294,7 +340,9 @@ def test_independent_repeat_iterations_keep_their_own_outputs() -> None:
     assert rows[compiled.index.root.kind].out_bits == 8 * n
     assert row.reach_bits == exact[row.kind] == 8 == row.out_bits
     for cell in by_role(rows, VERIFICATION):
-        if cell.out_bits:  # ``times`` feeds ``plus`` inside the same copy: both reach that copy's word
+        if (
+            cell.out_bits
+        ):  # ``times`` feeds ``plus`` inside the same copy: both reach that copy's word
             assert cell.reach_bits == exact[cell.kind] == 8
 
 
@@ -312,7 +360,9 @@ def test_a_chain_of_steps_reaches_from_its_head() -> None:
             b = a
             for _ in range(k):  # ``k`` more cells, so the links are distinct kinds
                 b = plus(b, v[1])
-            return plus(b, v[1]), a  # 16-bit interface, both values read by the next link
+            return plus(
+                b, v[1]
+            ), a  # 16-bit interface, both values read by the next link
 
         return unit
 
@@ -332,7 +382,9 @@ def test_a_chain_of_steps_reaches_from_its_head() -> None:
     compiled = compile_root(tracer, root, 2)
     rows = assert_sound(compiled)
     exact = exact_reach(compiled)
-    links = sorted((row for row in by_role(rows, REPLAY) if row.out_bits), key=lambda row: row.size)
+    links = sorted(
+        (row for row in by_role(rows, REPLAY) if row.out_bits), key=lambda row: row.size
+    )
     assert len(links) == n and all(row.out_bits == 16 for row in links)
     assert [row.reach_bits for row in links] == [8 * (n - k) for k in range(n)]
     assert all(row.reach_bits == exact[row.kind] for row in links)
@@ -387,10 +439,20 @@ def test_a_repeat_read_copy_by_copy_is_charged_the_whole_reader() -> None:
     compiled = compile_root(tracer, run, n + 1)
     rows = assert_sound(compiled)
     exact = exact_reach(compiled)
-    times_row = next(row for row in by_role(rows, VERIFICATION) if row.copies == n and row.size == 1)
-    plus_row = next(row for row in by_role(rows, VERIFICATION) if row.copies == n and row.kind != times_row.kind)
-    assert plus_row.reach_bits == exact[plus_row.kind] == 8  # an output, read by nothing
-    assert exact[times_row.kind] == 8 and times_row.reach_bits == 8 * n  # sound, not tight: one step
+    times_row = next(
+        row for row in by_role(rows, VERIFICATION) if row.copies == n and row.size == 1
+    )
+    plus_row = next(
+        row
+        for row in by_role(rows, VERIFICATION)
+        if row.copies == n and row.kind != times_row.kind
+    )
+    assert (
+        plus_row.reach_bits == exact[plus_row.kind] == 8
+    )  # an output, read by nothing
+    assert (
+        exact[times_row.kind] == 8 and times_row.reach_bits == 8 * n
+    )  # sound, not tight: one step
 
 
 # -- the interval sweep against the bitmask closure --------------------------------------
@@ -424,9 +486,13 @@ def bitmask_step_reach(definition: Definition, total: int, exact: bool) -> list[
     for item in definition.outputs:
         if item.space != LOCAL:
             continue
-        for index, first, taken in _split(definition.step_slot, item.start, item.count, item.stride):
+        for index, first, taken in _split(
+            definition.step_slot, item.start, item.count, item.stride
+        ):
             if exact:
-                width, single = _segment_bits(definition, index, item.element(first), taken, item.stride)
+                width, single = _segment_bits(
+                    definition, index, item.element(first), taken, item.stride
+                )
             else:
                 width = single = total
             out[index] += width
@@ -455,7 +521,9 @@ GATES = make_word_gate_set(8)
 ADD, MUL, IN = GATES["add"], GATES["mul"], GATES["in"]
 
 
-def _definition(key: str, input_count: int, steps: tuple[Step, ...], outputs: tuple[Range, ...]) -> Definition:
+def _definition(
+    key: str, input_count: int, steps: tuple[Step, ...], outputs: tuple[Range, ...]
+) -> Definition:
     return Definition(f"test-reach/{key}", input_count, steps, outputs, None)
 
 
@@ -465,14 +533,21 @@ def _port(k: int) -> Range:
 
 # the children a random definition calls: one gate, two gates, a port passed through beside a gate
 # (a declared output carrying nothing) and a pinned source (an output carrying nothing either)
-ONE = _definition("one", 1, (GateStep(ADD, (_port(0), _port(0))),), (Range(LOCAL, 0, 1, 0),))
+ONE = _definition(
+    "one", 1, (GateStep(ADD, (_port(0), _port(0))),), (Range(LOCAL, 0, 1, 0),)
+)
 TWO = _definition(
     "two",
     2,
     (GateStep(ADD, (Range(INPUT, 0, 2, 1),)), GateStep(MUL, (Range(INPUT, 0, 2, 1),))),
     (Range(LOCAL, 0, 2, 1),),
 )
-THROUGH = _definition("through", 1, (GateStep(ADD, (_port(0), _port(0))),), (_port(0), Range(LOCAL, 0, 1, 0)))
+THROUGH = _definition(
+    "through",
+    1,
+    (GateStep(ADD, (_port(0), _port(0))),),
+    (_port(0), Range(LOCAL, 0, 1, 0)),
+)
 PINNED = _definition("pinned", 0, (GateStep(IN, ()),), (Range(LOCAL, 0, 1, 0),))
 
 
@@ -502,7 +577,11 @@ def random_definition(rng: random.Random, count: int) -> Definition:
         roll = rng.random()
         step: Step
         if slots == 0 or roll < 0.1:
-            step = GateStep(IN, ()) if rng.random() < 0.5 else CallStep.make(PINNED, (), rng.choice((1, 1, 3)))
+            step = (
+                GateStep(IN, ())
+                if rng.random() < 0.5
+                else CallStep.make(PINNED, (), rng.choice((1, 1, 3)))
+            )
         elif roll < 0.45:
             if rng.random() < 0.5:
                 args: tuple[Range, ...] = (local_range(rng, slots, 2),)
@@ -521,19 +600,29 @@ def random_definition(rng: random.Random, count: int) -> Definition:
             step = CallStep.make(child, tuple(pieces), copies)
         steps.append(step)
         slots += step.slots
-    outputs = tuple(local_range(rng, slots, rng.randint(1, min(4, slots))) for _ in range(rng.randint(1, 3)))
+    outputs = tuple(
+        local_range(rng, slots, rng.randint(1, min(4, slots)))
+        for _ in range(rng.randint(1, 3))
+    )
     return _definition(f"random/{rng.random()}", 0, tuple(steps), outputs)
 
 
-def both_reaches(definition: Definition, rng: random.Random) -> Iterator[tuple[list[int], list[int]]]:
+def both_reaches(
+    definition: Definition, rng: random.Random
+) -> Iterator[tuple[list[int], list[int]]]:
     """``(sweep, bitmask)`` per step, as the root (exact segments) and as a child (``total`` or nothing)."""
 
     for exact, total in ((True, definition.out_bits), (False, 1 + rng.randrange(64))):
-        yield _step_reach(definition, total, exact), bitmask_step_reach(definition, total, exact)
+        yield (
+            _step_reach(definition, total, exact),
+            bitmask_step_reach(definition, total, exact),
+        )
 
 
 @pytest.mark.parametrize("seed", range(150))
-def test_the_sweep_equals_the_bitmask_closure_on_definitions_of_at_most_64_steps(seed: int) -> None:
+def test_the_sweep_equals_the_bitmask_closure_on_definitions_of_at_most_64_steps(
+    seed: int,
+) -> None:
     rng = random.Random(seed)
     definition = random_definition(rng, rng.randint(1, 64))
     for sweep, bitmask in both_reaches(definition, rng):
@@ -541,7 +630,9 @@ def test_the_sweep_equals_the_bitmask_closure_on_definitions_of_at_most_64_steps
 
 
 @pytest.mark.parametrize("seed", range(60))
-def test_the_sweep_never_falls_below_the_bitmask_closure_on_long_definitions(seed: int) -> None:
+def test_the_sweep_never_falls_below_the_bitmask_closure_on_long_definitions(
+    seed: int,
+) -> None:
     """65 to 200 steps: strided runs may span more than 64 steps and closures more than 64 intervals."""
 
     rng = random.Random(1000 + seed)
@@ -551,7 +642,9 @@ def test_the_sweep_never_falls_below_the_bitmask_closure_on_long_definitions(see
 
 
 @pytest.mark.parametrize("seed", range(60))
-@pytest.mark.parametrize(("read_steps", "intervals"), [(2, 1), (3, 2), (64, 1), (2, 64)])
+@pytest.mark.parametrize(
+    ("read_steps", "intervals"), [(2, 1), (3, 2), (64, 1), (2, 64)]
+)
 def test_hulls_only_enlarge_the_reach(
     seed: int, read_steps: int, intervals: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -588,13 +681,18 @@ def kv_chain_definition(n: int) -> Definition:
     steps: list[Step] = [GateStep(IN, ())]
     for slots in range(1, n + 1):
         cell = _definition(
-            f"kv-cell/{slots}", slots, (GateStep(ADD, (Range(INPUT, 0, 2, slots - 1),)),), (Range(LOCAL, 0, 1, 0),)
+            f"kv-cell/{slots}",
+            slots,
+            (GateStep(ADD, (Range(INPUT, 0, 2, slots - 1),)),),
+            (Range(LOCAL, 0, 1, 0),),
         )
         steps.append(CallStep.make(cell, (Range(LOCAL, 0, slots, 1),)))
     return _definition(f"kv/{n}", 0, tuple(steps), (Range(LOCAL, 1, n, 1),))
 
 
-@pytest.mark.parametrize("build", [chain_definition, broadcast_definition, kv_chain_definition])
+@pytest.mark.parametrize(
+    "build", [chain_definition, broadcast_definition, kv_chain_definition]
+)
 def test_the_flagship_shapes_are_exact_far_beyond_the_thresholds(build) -> None:
     """A chain, a broadcast and a KV chain of 300 steps: single-interval closures, so no hull is ever taken."""
 
@@ -604,7 +702,9 @@ def test_the_flagship_shapes_are_exact_far_beyond_the_thresholds(build) -> None:
     for sweep, bitmask in both_reaches(definition, rng):
         assert sweep == bitmask
     root = _step_reach(definition, definition.out_bits, True)
-    assert root[0] == definition.out_bits == 300 * 8  # the source reaches everything in all three shapes
+    assert (
+        root[0] == definition.out_bits == 300 * 8
+    )  # the source reaches everything in all three shapes
     assert root[-1] == 8  # the last step reaches its own word
 
 
@@ -613,19 +713,31 @@ def test_a_strided_read_over_many_steps_is_recorded_as_its_hull() -> None:
 
     n = 100
     steps: list[Step] = [GateStep(IN, ()), GateStep(IN, ())]
-    for _ in range(n):  # ``a`` cells at even steps read source 0, ``b`` cells at odd steps read source 1
+    for _ in range(
+        n
+    ):  # ``a`` cells at even steps read source 0, ``b`` cells at odd steps read source 1
         steps.append(CallStep.make(ONE, (Range(LOCAL, 0, 1, 0),)))
         steps.append(CallStep.make(ONE, (Range(LOCAL, 1, 1, 0),)))
-    steps.append(CallStep.make(ONE, (Range(LOCAL, 2, 1, 0, 2),), n))  # copy ``j`` reads cell ``a_j``
+    steps.append(
+        CallStep.make(ONE, (Range(LOCAL, 2, 1, 0, 2),), n)
+    )  # copy ``j`` reads cell ``a_j``
     definition = _definition("skipping", 0, tuple(steps), (Range(LOCAL, 2, 3 * n, 1),))
     sweep = _step_reach(definition, definition.out_bits, True)
     bitmask = bitmask_step_reach(definition, definition.out_bits, True)
     assert all(s >= b for s, b in zip(sweep, bitmask, strict=True))
     word, block = 8, n * 8
-    assert bitmask[2] == sweep[2] == word + block  # ``a_0``: its word and the repeat, both ways
-    assert bitmask[3] == word < sweep[3] == word + block  # ``b_0``: the repeat only through the hull
-    assert bitmask[0] == sweep[0] == 2 * block  # source 0 reaches the ``a`` cells and the repeat
-    assert bitmask[1] == block < sweep[1] == 2 * block  # source 1 is charged the repeat too
+    assert (
+        bitmask[2] == sweep[2] == word + block
+    )  # ``a_0``: its word and the repeat, both ways
+    assert (
+        bitmask[3] == word < sweep[3] == word + block
+    )  # ``b_0``: the repeat only through the hull
+    assert (
+        bitmask[0] == sweep[0] == 2 * block
+    )  # source 0 reaches the ``a`` cells and the repeat
+    assert (
+        bitmask[1] == block < sweep[1] == 2 * block
+    )  # source 1 is charged the repeat too
 
 
 def test_a_closure_of_many_intervals_is_kept_as_its_hull() -> None:
@@ -633,17 +745,27 @@ def test_a_closure_of_many_intervals_is_kept_as_its_hull() -> None:
 
     n = 100
     steps: list[Step] = [GateStep(IN, ()), GateStep(IN, ())]
-    for k in range(n):  # chain ``a`` at even steps and chain ``b`` at odd ones, each link reading the previous
+    for k in range(
+        n
+    ):  # chain ``a`` at even steps and chain ``b`` at odd ones, each link reading the previous
         steps.append(CallStep.make(ONE, (Range(LOCAL, 2 * k, 1, 0),)))
         steps.append(CallStep.make(ONE, (Range(LOCAL, 2 * k + 1, 1, 0),)))
-    definition = _definition("interleaved", 0, tuple(steps), (Range(LOCAL, 2, 2 * n, 1),))
+    definition = _definition(
+        "interleaved", 0, tuple(steps), (Range(LOCAL, 2, 2 * n, 1),)
+    )
     sweep = _step_reach(definition, definition.out_bits, True)
     bitmask = bitmask_step_reach(definition, definition.out_bits, True)
     assert all(s >= b for s, b in zip(sweep, bitmask, strict=True))
     assert bitmask[0] == bitmask[2] == n * 8  # a head reaches its own chain
-    assert sweep[0] > bitmask[0] and sweep[2] > bitmask[2]  # ... and, past 64 intervals, the hull
-    assert sweep[-1] == bitmask[-1] == 8 and sweep[-2] == bitmask[-2] == 8  # the tails are exact
-    assert sweep[2 * n - 2 * 30] == bitmask[2 * n - 2 * 30] == 31 * 8  # so are the last 64 links of a chain
+    assert (
+        sweep[0] > bitmask[0] and sweep[2] > bitmask[2]
+    )  # ... and, past 64 intervals, the hull
+    assert (
+        sweep[-1] == bitmask[-1] == 8 and sweep[-2] == bitmask[-2] == 8
+    )  # the tails are exact
+    assert (
+        sweep[2 * n - 2 * 30] == bitmask[2 * n - 2 * 30] == 31 * 8
+    )  # so are the last 64 links of a chain
 
 
 def test_coverage_counts_match_a_plain_array() -> None:
@@ -657,7 +779,9 @@ def test_coverage_counts_match_a_plain_array() -> None:
         active: list[tuple[int, int]] = []
         for _ in range(200):
             dirty: list[int] = []
-            for _ in range(rng.choice((1, 1, 1, 2, 5))):  # several additions settle together
+            for _ in range(
+                rng.choice((1, 1, 1, 2, 5))
+            ):  # several additions settle together
                 if active and rng.random() < 0.4:
                     low, high = active.pop(rng.randrange(len(active)))
                     delta = -1
@@ -670,7 +794,9 @@ def test_coverage_counts_match_a_plain_array() -> None:
                 for p in range(low, high):
                     plain[p] += delta
             cover.settle(dirty)
-            assert cover.covered_out() == sum(w for w, c in zip(out, plain, strict=True) if c > 0)
+            assert cover.covered_out() == sum(
+                w for w, c in zip(out, plain, strict=True) if c > 0
+            )
             first = min((p for p, c in enumerate(plain) if c > 0), default=count)
             if first == 0:
                 continue  # ``intervals`` is only asked below every covered position
@@ -682,7 +808,11 @@ def test_coverage_counts_match_a_plain_array() -> None:
                     else:
                         expected.append((p, p + 1))
             assert cover.intervals(first - 1, 1 << 30) == expected
-            hull = [(first - 1, max(p for p, c in enumerate(plain) if c > 0) + 1)] if first < count else expected
+            hull = (
+                [(first - 1, max(p for p, c in enumerate(plain) if c > 0) + 1)]
+                if first < count
+                else expected
+            )
             assert cover.intervals(first - 1, 1) in (expected, hull)
             if len(expected) > 1:
                 assert cover.intervals(first - 1, 1) == hull

@@ -16,7 +16,9 @@ from veritor.simulation.workload import (
     simulate,
 )
 
-SAMPLED = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=16, width=16, sampling=True)
+SAMPLED = LMShape(
+    vocab=8, d_model=4, heads=2, layers=1, context=16, width=16, sampling=True
+)
 ARGMAX = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=16, width=16)
 
 
@@ -53,7 +55,9 @@ def test_requests_are_admitted_first_come_first_served_and_never_double_booked()
             join.step * simulation.config.step_seconds
             >= simulation.arrivals[admitted[join.request].index].time
         )
-    schedule.validate(simulation.requests)  # canonical, no double booking, attempts never overlap
+    schedule.validate(
+        simulation.requests
+    )  # canonical, no double booking, attempts never overlap
     assert len(simulation.attempts) == len(schedule.joins)
     assert simulation.tokens == sum(len(tokens) for tokens in simulation.streamed)
     assert 0 < simulation.utilization <= 1
@@ -78,7 +82,10 @@ def test_the_tokens_are_reference_prefixes_and_eos_frees_the_slot():
     for attempt in simulation.attempts:
         if attempt.outcome == COMPLETE:
             request = attempt.join.request
-            assert len(simulation.streamed[request]) == simulation.requests[request].max_new
+            assert (
+                len(simulation.streamed[request])
+                == simulation.requests[request].max_new
+            )
     assert {a.outcome for a in simulation.attempts} <= {COMPLETE, EOS, FAILED, RUN_END}
 
 

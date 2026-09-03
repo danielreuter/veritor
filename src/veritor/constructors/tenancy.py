@@ -64,11 +64,17 @@ class ModelsG:
         self.shape = shape
         self.models = models
         self.routing = routing
-        self.digest: Digest = constructor_digest(type(self).__name__, self.VERSION, self.manifest)
+        self.digest: Digest = constructor_digest(
+            type(self).__name__, self.VERSION, self.manifest
+        )
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
-        return {"models": self.models, "routing": self.routing, "shape": self.shape.manifest}
+        return {
+            "models": self.models,
+            "routing": self.routing,
+            "shape": self.shape.manifest,
+        }
 
     # -- weights --------------------------------------------------------------------
 
@@ -81,9 +87,9 @@ class ModelsG:
 
     def weights_unit(self) -> TracedDefinition:
         tracer, count = self.inner.lm.tracer, self.models * self.shape.weight_count
-        return tracer.definition(input_count=0, key=("weights", self.models), role=REPLAY)(
-            lambda _v: tracer.weights(count)
-        )
+        return tracer.definition(
+            input_count=0, key=("weights", self.models), role=REPLAY
+        )(lambda _v: tracer.weights(count))
 
     # -- inputs and advice ----------------------------------------------------------
 
@@ -112,8 +118,14 @@ class ModelsG:
     def _pairs(self, x: object) -> tuple[tuple[int, Request], ...]:
         """``x`` under input routing: validated ``(model, Request)`` pairs."""
 
-        if type(x) is not tuple or not x or any(type(item) is not tuple or len(item) != 2 for item in x):
-            raise TracerError("ModelsG expects a nonempty tuple of (model, Request) pairs")
+        if (
+            type(x) is not tuple
+            or not x
+            or any(type(item) is not tuple or len(item) != 2 for item in x)
+        ):
+            raise TracerError(
+                "ModelsG expects a nonempty tuple of (model, Request) pairs"
+            )
         pairs: list[tuple[int, Request]] = []
         for model, request in x:
             if type(model) is not int or not 0 <= model < self.models:
@@ -154,15 +166,17 @@ class ModelsG:
     def root(self, assignments: Sequence[tuple[int, Request]]) -> TracedDefinition:
         n = self.shape.weight_count
         requests = tuple(request for _model, request in assignments)
-        order = self.inner.order(requests)  # circuit order: RequestsG groups requests by kind
+        order = self.inner.order(
+            requests
+        )  # circuit order: RequestsG groups requests by kind
 
         @self.inner.lm.tracer.definition(input_count=0)
         def root(_v: object) -> object:
             w = self.weights_unit()()
             return [
-                self.inner.request(len(assignments[i][1].prompt), assignments[i][1].max_new)(
-                    w[assignments[i][0] * n : (assignments[i][0] + 1) * n]
-                )
+                self.inner.request(
+                    len(assignments[i][1].prompt), assignments[i][1].max_new
+                )(w[assignments[i][0] * n : (assignments[i][0] + 1) * n])
                 for i in order
             ]
 
@@ -172,7 +186,9 @@ class ModelsG:
         if type(a) is not bytes:
             raise TracerError("advice must be bytes")
         assignments = self.assignments(x, a)
-        return self.inner.lm.tracer.serialize(self.root(assignments)), self.flatten_inputs(x, a)
+        return self.inner.lm.tracer.serialize(
+            self.root(assignments)
+        ), self.flatten_inputs(x, a)
 
 
 MATRICES = ("w_q", "w_k", "w_v", "w_o", "w_1", "w_2")
@@ -193,7 +209,14 @@ class AdaptedRequestsG:
         self.layer = layer
         self.matrix = matrix
         d, hidden = shape.d_model, shape.hidden
-        sizes = {"w_q": d * d, "w_k": d * d, "w_v": d * d, "w_o": d * d, "w_1": d * hidden, "w_2": hidden * d}
+        sizes = {
+            "w_q": d * d,
+            "w_k": d * d,
+            "w_v": d * d,
+            "w_o": d * d,
+            "w_1": d * hidden,
+            "w_2": hidden * d,
+        }
         first = shape.vocab * d + layer * (4 * d * d + 2 * d * hidden)
         for name in MATRICES:
             if name == matrix:
@@ -203,11 +226,17 @@ class AdaptedRequestsG:
         """The rank of the adapted matrix's first word in :meth:`Parameters.flatten`."""
         self.count = sizes[matrix]
         """The words of the adapted matrix: the ``in`` gates each request adds."""
-        self.digest: Digest = constructor_digest(type(self).__name__, self.VERSION, self.manifest)
+        self.digest: Digest = constructor_digest(
+            type(self).__name__, self.VERSION, self.manifest
+        )
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
-        return {"layer": self.layer, "matrix": self.matrix, "shape": self.shape.manifest}
+        return {
+            "layer": self.layer,
+            "matrix": self.matrix,
+            "shape": self.shape.manifest,
+        }
 
     def merged(self, base: Parameters, adapter: Matrix) -> Parameters:
         """``base`` with the adapted matrix replaced by ``adapter``: the reference for one tenant."""
@@ -220,8 +249,14 @@ class AdaptedRequestsG:
     def requests(self, x: object) -> tuple[tuple[tuple[int, ...], Request], ...]:
         """``(adapter, request)`` pairs: the adapted matrix row-major, then the request."""
 
-        if type(x) is not tuple or not x or any(type(item) is not tuple or len(item) != 2 for item in x):
-            raise TracerError("AdaptedRequestsG expects a nonempty tuple of (adapter, Request) pairs")
+        if (
+            type(x) is not tuple
+            or not x
+            or any(type(item) is not tuple or len(item) != 2 for item in x)
+        ):
+            raise TracerError(
+                "AdaptedRequestsG expects a nonempty tuple of (adapter, Request) pairs"
+            )
         limit = 1 << self.shape.width
         pairs: list[tuple[tuple[int, ...], Request]] = []
         for adapter, request in x:
@@ -230,7 +265,9 @@ class AdaptedRequestsG:
                 or len(adapter) != self.count
                 or any(type(v) is not int or not 0 <= v < limit for v in adapter)
             ):
-                raise TracerError(f"an adapter is {self.count} words of the model's width")
+                raise TracerError(
+                    f"an adapter is {self.count} words of the model's width"
+                )
             pairs.append((adapter, request))
         self.inner.requests(tuple(request for _adapter, request in pairs))
         return tuple(pairs)
@@ -255,10 +292,14 @@ class AdaptedRequestsG:
             lambda _v: tracer.inputs(count)
         )
 
-    def root(self, requests: Sequence[tuple[tuple[int, ...], Request]]) -> TracedDefinition:
+    def root(
+        self, requests: Sequence[tuple[tuple[int, ...], Request]]
+    ) -> TracedDefinition:
         first, stop = self.first, self.first + self.count
 
-        order = self.inner.order(tuple(r for _a, r in requests))  # circuit order, as flatten_inputs
+        order = self.inner.order(
+            tuple(r for _a, r in requests)
+        )  # circuit order, as flatten_inputs
 
         @self.inner.lm.tracer.definition(input_count=0)
         def root(_v: object) -> object:
@@ -268,7 +309,9 @@ class AdaptedRequestsG:
                 request = requests[i][1]
                 adapter = self.adapter_unit()()
                 results.append(
-                    self.inner.request(len(request.prompt), request.max_new)(w[:first], adapter, w[stop:])
+                    self.inner.request(len(request.prompt), request.max_new)(
+                        w[:first], adapter, w[stop:]
+                    )
                 )
             return results
 
@@ -280,7 +323,9 @@ class AdaptedRequestsG:
         if a:
             raise TracerError("AdaptedRequestsG takes no advice")
         requests = self.requests(x)
-        return self.inner.lm.tracer.serialize(self.root(requests)), self.flatten_inputs(x)
+        return self.inner.lm.tracer.serialize(self.root(requests)), self.flatten_inputs(
+            x
+        )
 
 
 __all__ = ["MATRICES", "ROUTINGS", "AdaptedRequestsG", "ModelsG"]

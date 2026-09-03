@@ -74,7 +74,9 @@ class WorkloadConfig:
         for name in ("prompt_lengths", "max_new_lengths"):
             low, high = getattr(self, name)
             if not 1 <= low <= high:
-                raise ValueError(f"{name} must be an inclusive range of positive lengths")
+                raise ValueError(
+                    f"{name} must be an inclusive range of positive lengths"
+                )
         if not 0 <= self.failure_rate < 1:
             raise ValueError("failure_rate must lie in [0, 1)")
         if type(self.downtime) is not int or self.downtime < 1:
@@ -166,7 +168,8 @@ def generate_arrivals(config: WorkloadConfig, shape: LMShape) -> tuple[Arrival, 
     for index in range(config.arrivals):
         clock += rng.expovariate(rate)
         prompt = tuple(
-            rng.randrange(shape.vocab) for _ in range(rng.randint(*config.prompt_lengths))
+            rng.randrange(shape.vocab)
+            for _ in range(rng.randint(*config.prompt_lengths))
         )
         max_new = rng.randint(*config.max_new_lengths)
         max_new = min(max_new, shape.context - len(prompt))
@@ -200,7 +203,9 @@ class _Record:
     arrival: int
 
 
-def simulate(config: WorkloadConfig, shape: LMShape, parameters: Parameters) -> Simulation:
+def simulate(
+    config: WorkloadConfig, shape: LMShape, parameters: Parameters
+) -> Simulation:
     """Run the datacenter for ``config.steps`` steps and return everything the verifier will see.
 
     Each step: pods fail (the random process, plus the injected failures);
@@ -261,12 +266,18 @@ def simulate(config: WorkloadConfig, shape: LMShape, parameters: Parameters) -> 
                         finish(item, pod, step, FAILED)
                         aborted.append(item.arrival)
                 failures.append(Failure(pod, step, tuple(aborted)))
-                pending = sorted(pending + aborted)  # re-queued at their original arrival time
+                pending = sorted(
+                    pending + aborted
+                )  # re-queued at their original arrival time
                 down_until[pod] = step + config.downtime
                 occupied[pod][step] = -1
                 continue
             for slot in range(config.slots):
-                if (pod, slot) in running or not pending or arrivals[pending[0]].time > now:
+                if (
+                    (pod, slot) in running
+                    or not pending
+                    or arrivals[pending[0]].time > now
+                ):
                     continue
                 index = pending.pop(0)
                 running[(pod, slot)] = _Running(index, step, slot, Decoder(parameters))
@@ -300,7 +311,9 @@ def simulate(config: WorkloadConfig, shape: LMShape, parameters: Parameters) -> 
 
     admitted = sorted({record.arrival for record in records})
     request_id = {index: rank for rank, index in enumerate(admitted)}
-    records.sort(key=lambda record: (record.join.pod, record.join.step, record.join.slot))
+    records.sort(
+        key=lambda record: (record.join.pod, record.join.step, record.join.slot)
+    )
     joins = tuple(
         Join(r.join.pod, r.join.step, r.join.slot, request_id[r.arrival], r.join.length)
         for r in records
@@ -311,25 +324,32 @@ def simulate(config: WorkloadConfig, shape: LMShape, parameters: Parameters) -> 
     return Simulation(
         config=config,
         arrivals=tuple(
-            Arrival(a.index, a.time, a.request, request_id.get(a.index)) for a in arrivals
+            Arrival(a.index, a.time, a.request, request_id.get(a.index))
+            for a in arrivals
         ),
         requests=requests,
         schedule=schedule,
         attempts=tuple(
-            Attempt(join, r.outcome, r.streamed) for join, r in zip(joins, records, strict=True)
+            Attempt(join, r.outcome, r.streamed)
+            for join, r in zip(joins, records, strict=True)
         ),
         failures=tuple(
-            Failure(f.pod, f.step, tuple(request_id[a] for a in f.aborted)) for f in failures
+            Failure(f.pod, f.step, tuple(request_id[a] for a in f.aborted))
+            for f in failures
         ),
         streamed=tuple(tuple(streamed[index]) for index in admitted),
         occupied=tuple(tuple(row) for row in occupied),
     )
 
 
-def check_against_reference(simulation: Simulation, reference: Sequence[Sequence[int]]) -> None:
+def check_against_reference(
+    simulation: Simulation, reference: Sequence[Sequence[int]]
+) -> None:
     """Every streamed token sequence is a prefix of the reference decoding of its request."""
 
-    for request, (tokens, expected) in enumerate(zip(simulation.streamed, reference, strict=True)):
+    for request, (tokens, expected) in enumerate(
+        zip(simulation.streamed, reference, strict=True)
+    ):
         if tuple(tokens) != tuple(expected[: len(tokens)]):
             raise AssertionError(
                 f"request {request} streamed {tokens}, the reference is {expected}"

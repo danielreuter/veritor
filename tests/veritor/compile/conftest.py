@@ -231,15 +231,29 @@ def matmul_payload(k: int, cols: int, rows: int = 1) -> bytes:
         start, width = start + width, width // 2
     dot = doc.add(body(2 * k, steps, [rng("local", start)], role="verification"))
     activations = doc.add(
-        body(0, [repeat(rows * k, in_cell)], [rng("local", 0, rows * k, 1)], role="replay")
+        body(
+            0,
+            [repeat(rows * k, in_cell)],
+            [rng("local", 0, rows * k, 1)],
+            role="replay",
+        )
     )
     weights = doc.add(
-        body(0, [repeat(k * cols, weight_cell)], [rng("local", 0, k * cols, 1)], role="replay")
+        body(
+            0,
+            [repeat(k * cols, weight_cell)],
+            [rng("local", 0, k * cols, 1)],
+            role="replay",
+        )
     )
     row = doc.add(
         body(
             k + k * cols,
-            [repeat(cols, dot, jrng("input", 0, k, 1, 0), jrng("input", k, k, cols, 1))],
+            [
+                repeat(
+                    cols, dot, jrng("input", 0, k, 1, 0), jrng("input", k, k, cols, 1)
+                )
+            ],
             [rng("local", 0, cols, 1 if cols > 1 else 0)],
             role="replay",
         )
@@ -250,9 +264,21 @@ def matmul_payload(k: int, cols: int, rows: int = 1) -> bytes:
             [
                 call(activations),
                 call(weights),
-                repeat(rows, row, jrng("local", 0, k, 1, k), jrng("local", rows * k, k * cols, 1, 0)),
+                repeat(
+                    rows,
+                    row,
+                    jrng("local", 0, k, 1, k),
+                    jrng("local", rows * k, k * cols, 1, 0),
+                ),
             ],
-            [rng("local", rows * k + k * cols, rows * cols, 1 if rows * cols > 1 else 0)],
+            [
+                rng(
+                    "local",
+                    rows * k + k * cols,
+                    rows * cols,
+                    1 if rows * cols > 1 else 0,
+                )
+            ],
         )
     )
     return doc.serialize(root)
@@ -264,7 +290,10 @@ def matmul_layout(k: int, cols: int, rows: int) -> dict[str, object]:
     dot_size = 2 * k - 1
     row_size = cols * dot_size
     rows_start = rows * k + k * cols
-    row_ranges = [range(rows_start + r * row_size, rows_start + (r + 1) * row_size) for r in range(rows)]
+    row_ranges = [
+        range(rows_start + r * row_size, rows_start + (r + 1) * row_size)
+        for r in range(rows)
+    ]
     return {
         "dot_size": dot_size,
         "row_size": row_size,
@@ -300,7 +329,9 @@ def shared_kinds_payload() -> bytes:
             role="verification",
         )
     )
-    v2 = doc.add(body(2, [gate("add", rng(IN, 0, 2, 1))], [rng(LOC, 0)], role="verification"))
+    v2 = doc.add(
+        body(2, [gate("add", rng(IN, 0, 2, 1))], [rng(LOC, 0)], role="verification")
+    )
     middle = doc.add(body(2, [repeat(2, v1, jrng(IN, 0, 2, 1))], [rng(LOC, 0, 2, 1)]))
     a = doc.add(
         body(

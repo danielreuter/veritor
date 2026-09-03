@@ -82,7 +82,9 @@ def test_paper_example_interfaces_sizes_and_costs():
     assert (c.n, c.input_count, c.inputs, c.outputs) == (8, 4, (0, 1, 4, 5), (7,))
     assert (c.weight_count, c.weights) == (0, ())
     assert c[3] == GateRef("x2", (2,), WIDTH) and c[0].is_input and not c[0].is_weight
-    assert c[0] == GateRef("in", (), WIDTH, "input") and c[0].is_source  # completed with its source
+    assert (
+        c[0] == GateRef("in", (), WIDTH, "input") and c[0].is_source
+    )  # completed with its source
     assert [c.input_rank(a) for a in c.inputs] == [0, 1, 2, 3]
     with pytest.raises(KeyError):
         c.input_rank(2)

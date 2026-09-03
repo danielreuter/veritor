@@ -36,7 +36,9 @@ def opening_at(document: dict, model, owner: str) -> dict:
 
     layout = _Layout(model.compiled)
     hidden = set(model.hidden_boundary_addresses)
-    for unit, batch in zip(document["sample_challenge"]["selected"], document["evidence"]["units"]):
+    for unit, batch in zip(
+        document["sample_challenge"]["selected"], document["evidence"]["units"]
+    ):
         for (who, address), opening in zip(layout.required(unit), batch, strict=True):
             if owner == "weight" and who == WEIGHT_OWNER:
                 return opening
@@ -62,8 +64,10 @@ MUTATIONS = {
         VerificationCode.EXPECTATION_MISMATCH,
     ),
     "header.advice": (
-        lambda d, m: d["header"].__setitem__("advice_bits", 8)
-        or d["header"].__setitem__("advice", "00"),
+        lambda d, m: (
+            d["header"].__setitem__("advice_bits", 8)
+            or d["header"].__setitem__("advice", "00")
+        ),
         VerificationCode.EXPECTATION_MISMATCH,
     ),
     "header.advice_bits": (
@@ -112,7 +116,9 @@ MUTATIONS = {
         VerificationCode.COVERAGE_MISMATCH,
     ),
     "boundary.io_openings.dropped": (
-        lambda d, m: d["boundary"].__setitem__("io_openings", d["boundary"]["io_openings"][1:]),
+        lambda d, m: d["boundary"].__setitem__(
+            "io_openings", d["boundary"]["io_openings"][1:]
+        ),
         VerificationCode.COVERAGE_MISMATCH,
     ),
     # the replay challenge
@@ -127,15 +133,21 @@ MUTATIONS = {
     # the interiors: with s = 1 the sample is everything whatever the roots, so the openings fail
     # (with s < 1 the changed root changes T first: test_altered_interior_root_changes_the_sample)
     "interiors.root": (
-        lambda d, m: d["interiors"]["commitments"][interior_index(d)].__setitem__("root", OTHER_ROOT),
+        lambda d, m: d["interiors"]["commitments"][interior_index(d)].__setitem__(
+            "root", OTHER_ROOT
+        ),
         VerificationCode.INVALID_OPENING,
     ),
     "interiors.count": (
-        lambda d, m: d["interiors"]["commitments"][interior_index(d)].__setitem__("count", 3),
+        lambda d, m: d["interiors"]["commitments"][interior_index(d)].__setitem__(
+            "count", 3
+        ),
         VerificationCode.INVALID_COMMITMENT,
     ),
     "interiors.dropped": (
-        lambda d, m: d["interiors"].__setitem__("commitments", d["interiors"]["commitments"][1:]),
+        lambda d, m: d["interiors"].__setitem__(
+            "commitments", d["interiors"]["commitments"][1:]
+        ),
         VerificationCode.COVERAGE_MISMATCH,
     ),
     # the sample challenge
@@ -144,7 +156,9 @@ MUTATIONS = {
         VerificationCode.EXPECTATION_MISMATCH,
     ),
     "sample_challenge.selected": (
-        lambda d, m: d["sample_challenge"].__setitem__("selected", d["sample_challenge"]["selected"][:-1]),
+        lambda d, m: d["sample_challenge"].__setitem__(
+            "selected", d["sample_challenge"]["selected"][:-1]
+        ),
         VerificationCode.CHALLENGE_MISMATCH,
     ),
     # the evidence, under each owner
@@ -180,10 +194,14 @@ MUTATIONS = {
 
 
 @pytest.mark.parametrize("label", sorted(MUTATIONS))
-def test_altering_a_recorded_message_is_caught_with_the_expected_code(honest_run, model, sec, label):
+def test_altering_a_recorded_message_is_caught_with_the_expected_code(
+    honest_run, model, sec, label
+):
     run, expectation = honest_run
     mutate, code = MUTATIONS[label]
-    data = sec.mutate_transcript(run.transcript, lambda document: mutate(document, model))
+    data = sec.mutate_transcript(
+        run.transcript, lambda document: mutate(document, model)
+    )
     assert data != sec.encode_transcript(run.transcript)
     report = model.verify(data, expectation)
     assert report.code == code, (label, report)
@@ -195,20 +213,33 @@ def test_altered_interior_root_changes_the_sample(model, sec):
     codes = set()
     for trial in range(8):
         expectation = model.expectation(
-            sec.VerificationPolicy(1, sec.HALF), q_seed=sec.seed("i/q", trial), s_seed=sec.seed("i/s", trial)
+            sec.VerificationPolicy(1, sec.HALF),
+            q_seed=sec.seed("i/q", trial),
+            s_seed=sec.seed("i/s", trial),
         )
         run = model.run(expectation, model.values)
         assert run.report.accepted
 
         def swap_root(document: dict) -> None:
-            document["interiors"]["commitments"][interior_index(document)]["root"] = OTHER_ROOT
+            document["interiors"]["commitments"][interior_index(document)]["root"] = (
+                OTHER_ROOT
+            )
 
-        codes.add(model.verify(sec.mutate_transcript(run.transcript, swap_root), expectation).code)
+        codes.add(
+            model.verify(
+                sec.mutate_transcript(run.transcript, swap_root), expectation
+            ).code
+        )
     assert VerificationCode.CHALLENGE_MISMATCH in codes
-    assert codes <= {VerificationCode.CHALLENGE_MISMATCH, VerificationCode.INVALID_OPENING}
+    assert codes <= {
+        VerificationCode.CHALLENGE_MISMATCH,
+        VerificationCode.INVALID_OPENING,
+    }
 
 
-def test_the_recorded_transcript_verifies_only_under_its_own_expectation(honest_run, model, sec):
+def test_the_recorded_transcript_verifies_only_under_its_own_expectation(
+    honest_run, model, sec
+):
     run, expectation = honest_run
     assert model.verify(run.transcript, expectation).code == VerificationCode.ACCEPTED
     for other in (
@@ -226,7 +257,9 @@ def test_a_rejected_interaction_leaves_no_transcript(model):
     mul = model.cell_addresses(0, 0)[0]
     values, outputs = model.corrupt({mul: 0})
     run = model.run(model.expectation(claimed_outputs=outputs), values)
-    assert run.report.code == VerificationCode.RELATION_REJECTED and run.transcript is None
+    assert (
+        run.report.code == VerificationCode.RELATION_REJECTED and run.transcript is None
+    )
 
 
 def test_transcript_verdict_equals_the_interactive_verdict(honest_run, model, sec):
@@ -241,7 +274,10 @@ def test_transcript_verdict_equals_the_interactive_verdict(honest_run, model, se
     values, outputs = model.corrupt({mul: 0})
     for trial in range(64):
         escaped = model.expectation(
-            sec.HALVES, claimed_outputs=outputs, q_seed=sec.seed("e/q", trial), s_seed=sec.seed("e/s", trial)
+            sec.HALVES,
+            claimed_outputs=outputs,
+            q_seed=sec.seed("e/q", trial),
+            s_seed=sec.seed("e/s", trial),
         )
         run = model.run(escaped, values)
         if run.report.accepted:
@@ -249,4 +285,6 @@ def test_transcript_verdict_equals_the_interactive_verdict(honest_run, model, se
             assert model.unit_of(mul) not in run.report.sampled_verification_units
             break
     else:  # pragma: no cover - probability 4**-64
-        raise AssertionError("an error in one unit escapes sampling at q = s = 1/2 three times in four")
+        raise AssertionError(
+            "an error in one unit escapes sampling at q = s = 1/2 three times in four"
+        )

@@ -102,7 +102,9 @@ def unions():
     """Every transcript's output, per small circuit: the exact ``Y_eta`` for every policy."""
 
     compiled = {name: make() for name, make in SMALL.items()}
-    return compiled, {name: transcript_outputs(c, inputs_for(c)) for name, c in compiled.items()}
+    return compiled, {
+        name: transcript_outputs(c, inputs_for(c)) for name, c in compiled.items()
+    }
 
 
 @pytest.mark.parametrize("name", list(SMALL))
@@ -112,7 +114,9 @@ def test_the_closed_form_is_above_the_exact_union(unions, name):
     compiled, outputs = unions[0][name], unions[1][name]
     for policy, eta in POLICIES:
         result = rate(compiled, policy)
-        assert result == rate(compiled.kind_table(), policy)  # the fold reads the table alone
+        assert result == rate(
+            compiled.kind_table(), policy
+        )  # the fold reads the table alone
         union = math.log2(len(accepted_outputs(outputs, policy, eta)))
         assert union <= result.capacity(eta) + TOLERANCE
         assert result.capacity(eta) == capacity_from_rate(result.rho, eta)
@@ -146,19 +150,26 @@ def test_the_four_numbers_and_the_channels_on_the_frontier_table():
     result = rate(table, VerificationPolicy(Fraction(1, 2), 1))
 
     assert result.replay_units == FRONTIER_SHAPE.requests == 2048
-    assert result.replay_bits == 8192 == tokens * 16  # a request's bottleneck: its generated tokens
+    assert (
+        result.replay_bits == 8192 == tokens * 16
+    )  # a request's bottleneck: its generated tokens
     assert result.verification_bits == 16  # a cell: one dot product, one word
     fallible = {
         row.kind
         for row in table.rows
-        if row.role == VERIFICATION and row.size > row.source_inputs + row.source_weights
+        if row.role == VERIFICATION
+        and row.size > row.source_inputs + row.source_weights
     }
     per_request = {
         sum(count for kind, count in row.verification_kinds if kind in fallible)
         for row in table.rows
-        if row.role == REPLAY and any(kind in fallible for kind, _ in row.verification_kinds)
+        if row.role == REPLAY
+        and any(kind in fallible for kind, _ in row.verification_kinds)
     }
-    assert per_request == {result.verification_units} and result.verification_units == 16936948224
+    assert (
+        per_request == {result.verification_units}
+        and result.verification_units == 16936948224
+    )
     # l_0: the first l at which l W_V + log2 C(m, l) reaches W_R
     binomials = log2_binomials(result.verification_units, 200)
     crossing = [l for l in range(1, 201) if 16 * l + binomials[l] >= 8192]
@@ -168,19 +179,29 @@ def test_the_four_numbers_and_the_channels_on_the_frontier_table():
         position = math.log2(2048) + math.log2(l * (l + 1))
         return (position + value) / (unit_cost(policy, l) * LOG2E)
 
-    for policy in (VerificationPolicy(Fraction(1, 2), 1), VerificationPolicy(Fraction(1, 8), Fraction(1, 8))):
+    for policy in (
+        VerificationPolicy(Fraction(1, 2), 1),
+        VerificationPolicy(Fraction(1, 8), Fraction(1, 8)),
+    ):
         result = rate(table, policy)
         m = result.verification_units
-        assert result.scattered == pytest.approx(channel(1, 16 + math.log2(m), policy), rel=1e-9)
+        assert result.scattered == pytest.approx(
+            channel(1, 16 + math.log2(m), policy), rel=1e-9
+        )
         assert result.whole == pytest.approx(channel(187, 8192, policy), rel=1e-9)
         assert result.rho >= max(result.scattered, result.whole) * (1 - 1e-12)
         assert 1 <= result.binding <= result.lumped_at
     # s = 1: every l costs the same log2 (1 / (1 - q)) = 1 bit, so the widest cover, the whole RU, binds
     whole = rate(table, VerificationPolicy(Fraction(1, 2), 1))
-    assert whole.binding == 187 and whole.rho == pytest.approx(8192 + 11 + math.log2(187 * 188), rel=1e-9)
+    assert whole.binding == 187 and whole.rho == pytest.approx(
+        8192 + 11 + math.log2(187 * 188), rel=1e-9
+    )
     # tiny q s: a single error costs almost nothing while a whole RU still costs about q log2 e
     scattered = rate(table, VerificationPolicy(Fraction(1, 8192), Fraction(1, 512)))
-    assert scattered.binding == 1 and scattered.rho == scattered.scattered > scattered.whole
+    assert (
+        scattered.binding == 1
+        and scattered.rho == scattered.scattered > scattered.whole
+    )
 
 
 def test_rho_grows_as_the_policy_relaxes():
@@ -209,7 +230,9 @@ def test_the_closed_form_against_the_fold_over_the_frontier_grid():
             fold = bound(table, policy, eta, FRONTIER_OPTIONS)
             slopes.append(closed.rho / fold.rho)
             # past the output cap or within a few bits of the ceiling, rho * lambda says nothing
-            saturated = fold.laplace_bits >= out_bits or fold.laplace_bits >= 0.98 * ceiling
+            saturated = (
+                fold.laplace_bits >= out_bits or fold.laplace_bits >= 0.98 * ceiling
+            )
             if not saturated:
                 capacities.append(closed.capacity(eta) / fold.laplace_bits)
     assert 0.98 <= min(slopes) and max(slopes) <= 1.10  # observed [1.015, 1.050]
@@ -225,7 +248,9 @@ def test_degenerate_tables_and_inputs(make_compiled):
     sourced = replace(
         table,
         rows=tuple(
-            replace(row, size=row.source_inputs + row.source_weights) if row.role == VERIFICATION else row
+            replace(row, size=row.source_inputs + row.source_weights)
+            if row.role == VERIFICATION
+            else row
             for row in table.rows
         ),
     )
@@ -250,7 +275,10 @@ def test_degenerate_tables_and_inputs(make_compiled):
     # a table whose VU bottlenecks are zero bits still pays the position term
     zero = replace(
         table,
-        rows=tuple(replace(row, out_bits=0) if row.role == VERIFICATION else row for row in table.rows),
+        rows=tuple(
+            replace(row, out_bits=0) if row.role == VERIFICATION else row
+            for row in table.rows
+        ),
     )
     positional = rate(zero, policy)
     assert positional.verification_bits == 0 and positional.rho > 0

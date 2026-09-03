@@ -77,7 +77,9 @@ class RequestsG:
 
     VERSION = "2"
 
-    def __init__(self, shape: LMShape, routing: str = PADDED, *, tensor_parallel: int = 1) -> None:
+    def __init__(
+        self, shape: LMShape, routing: str = PADDED, *, tensor_parallel: int = 1
+    ) -> None:
         if not isinstance(shape, LMShape):
             raise TypeError("shape must be an LMShape")
         if routing not in (PADDED, ADVICE):
@@ -88,7 +90,9 @@ class RequestsG:
         self.routing = routing
         self.lm = ToyLM(shape, tensor_parallel=tensor_parallel)
         self.gate_set = self.lm.tracer.gate_set
-        self.digest: Digest = constructor_digest(type(self).__name__, self.VERSION, self.manifest)
+        self.digest: Digest = constructor_digest(
+            type(self).__name__, self.VERSION, self.manifest
+        )
 
     @property
     def advised(self) -> bool:
@@ -96,7 +100,10 @@ class RequestsG:
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
-        manifest: dict[str, JSONValue] = {"shape": self.shape.manifest, **self.lm.manifest}
+        manifest: dict[str, JSONValue] = {
+            "shape": self.shape.manifest,
+            **self.lm.manifest,
+        }
         if self.shape.experts:
             manifest["routing"] = self.routing
         return manifest
@@ -104,11 +111,17 @@ class RequestsG:
     # -- validation -----------------------------------------------------------------
 
     def requests(self, x: object) -> tuple[Request, ...]:
-        if type(x) is not tuple or not x or any(type(item) is not Request for item in x):
+        if (
+            type(x) is not tuple
+            or not x
+            or any(type(item) is not Request for item in x)
+        ):
             raise TracerError("RequestsG expects a nonempty tuple of Request")
         for index, request in enumerate(x):
             if any(token >= self.shape.vocab for token in request.prompt):
-                raise TracerError(f"request {index} has a prompt token outside the vocabulary")
+                raise TracerError(
+                    f"request {index} has a prompt token outside the vocabulary"
+                )
             if len(request.prompt) + request.max_new > self.shape.context:
                 raise TracerError(
                     f"request {index} needs {len(request.prompt) + request.max_new} positions; "
@@ -150,7 +163,11 @@ class RequestsG:
 
         requests = self.requests(x)
         checks = (-1,) if self.advised else ()
-        return tuple((r, g) for r in self.order(requests) for g in (*checks, *range(requests[r].max_new)))
+        return tuple(
+            (r, g)
+            for r in self.order(requests)
+            for g in (*checks, *range(requests[r].max_new))
+        )
 
     def flatten_inputs(self, x: object) -> tuple[int, ...]:
         """The public inputs in ``in``-gate address order: request by request in circuit
@@ -161,7 +178,11 @@ class RequestsG:
         return tuple(
             value
             for r in self.order(requests)
-            for value in (*requests[r].banned, *requests[r].prompt, *requests[r].randomness)
+            for value in (
+                *requests[r].banned,
+                *requests[r].prompt,
+                *requests[r].randomness,
+            )
         )
 
     def advice(self, x: object, parameters: Parameters) -> bytes:
@@ -170,7 +191,9 @@ class RequestsG:
         requests = self.requests(x)
         if not self.advised:
             return b""
-        return encode_routes(self.shape, reference_routes(self.shape, parameters, requests))
+        return encode_routes(
+            self.shape, reference_routes(self.shape, parameters, requests)
+        )
 
     def advice_bits(self, x: object, a: bytes | None = None) -> int:
         """The bits the advice carries: the routes' description length (``0`` unless advised).
@@ -208,13 +231,19 @@ class RequestsG:
 
         shape, layers, d = self.shape, self.shape.layers, self.shape.d_model
         if (routes is None) == self.advised:
-            raise TracerError("advised routing needs the request's routes; padded routing takes none")
+            raise TracerError(
+                "advised routing needs the request's routes; padded routing takes none"
+            )
         if routes is not None and len(routes) != max_new:
-            raise TracerError(f"a request of {max_new} tokens has {max_new} steps of routes")
+            raise TracerError(
+                f"a request of {max_new} tokens has {max_new} steps of routes"
+            )
         if type(blanks) is not int or blanks < 0:
             raise TracerError("blank slots must be a nonnegative integer")
         if blanks and shape.vocab >= 1 << shape.width:
-            raise TracerError("blank slots need vocab < 2**width: the blank is the word vocab")
+            raise TracerError(
+                "blank slots need vocab < 2**width: the blank is the word vocab"
+            )
         key: tuple[Hashable, ...] = ("request", prompt, max_new)
         if banned:
             key = (*key, banned)
@@ -236,7 +265,9 @@ class RequestsG:
                 for layer in range(layers):
                     start = 2 * layer * positions * d
                     keys[layer].append(block[start : start + positions * d])
-                    values[layer].append(block[start + positions * d : start + 2 * positions * d])
+                    values[layer].append(
+                        block[start + positions * d : start + 2 * positions * d]
+                    )
                 if routes is None:
                     return block[-1]
                 ok = block[-1]
@@ -253,7 +284,9 @@ class RequestsG:
             mask: tuple[Wires, ...] = ()
             if banned:
                 ids = self.lm.tracer.inputs(banned)
-                mask = (self.lm.allowed(banned)(ports.constants, ids, ports.constants[1]),)
+                mask = (
+                    self.lm.allowed(banned)(ports.constants, ids, ports.constants[1]),
+                )
             prefill = self.lm.prefill(prompt, advised=advised, masked=masked)
             token = remember(prefill(w, *mask, *route_args(0)), prompt)
             tokens = [token]
@@ -270,14 +303,20 @@ class RequestsG:
             outputs: list[Wire | Wires] = [ok, *tokens] if ok is not None else [*tokens]
             if blanks:  # (vocab - 1) + 1: one add cell per slot, so each slot is its own output gate
                 one, top = ports.constants[1], ports.constants[shape.vocab - 1]
-                outputs.append(self.lm.tracer.repeat(blanks, self.lm.add_cell, top, one))
+                outputs.append(
+                    self.lm.tracer.repeat(blanks, self.lm.add_cell, top, one)
+                )
             return outputs
 
         return request
 
-    def root(self, requests: tuple[Request, ...], routes: tuple[RequestRoutes, ...] | None) -> TracedDefinition:
+    def root(
+        self, requests: tuple[Request, ...], routes: tuple[RequestRoutes, ...] | None
+    ) -> TracedDefinition:
         if (routes is None) == self.advised:
-            raise TracerError("advised routing needs every request's routes; padded routing takes none")
+            raise TracerError(
+                "advised routing needs every request's routes; padded routing takes none"
+            )
 
         @self.lm.tracer.definition(input_count=0)
         def root(_v: Wires) -> object:
@@ -287,12 +326,16 @@ class RequestsG:
                 if routes is not None:  # a kind per request: its routes are its own
                     for index in members:
                         request = self.request(*kind, routes[index])(w)
-                        self.lm.tracer.check(request[0], 1)  # ok: the verifier requires 1
+                        self.lm.tracer.check(
+                            request[0], 1
+                        )  # ok: the verifier requires 1
                         outputs.append(request)
                 elif len(members) == 1:
                     outputs.append(self.request(*kind)(w))
                 else:
-                    outputs.append(self.lm.tracer.repeat(len(members), self.request(*kind), w))
+                    outputs.append(
+                        self.lm.tracer.repeat(len(members), self.request(*kind), w)
+                    )
             return outputs
 
         return root
@@ -303,10 +346,16 @@ class RequestsG:
         requests = self.requests(x)
         if not self.advised:
             if a:
-                raise TracerError("RequestsG takes no advice unless the routes are advised")
-            return self.lm.tracer.serialize(self.root(requests, None)), self.flatten_inputs(requests)
+                raise TracerError(
+                    "RequestsG takes no advice unless the routes are advised"
+                )
+            return self.lm.tracer.serialize(
+                self.root(requests, None)
+            ), self.flatten_inputs(requests)
         routes = decode_routes(self.shape, requests, a)
-        return self.lm.tracer.serialize(self.root(requests, routes)), self.flatten_inputs(requests)
+        return self.lm.tracer.serialize(
+            self.root(requests, routes)
+        ), self.flatten_inputs(requests)
 
 
 __all__ = ["RequestKind", "RequestsG"]

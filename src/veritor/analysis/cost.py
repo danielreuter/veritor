@@ -187,7 +187,11 @@ def cost(
     if not isinstance(policy, VerificationPolicy):
         raise TypeError("policy must be a VerificationPolicy")
     parameters = CostParameters() if parameters is None else parameters
-    h, c0, alpha = parameters.hash_cost, parameters.proof_overhead, parameters.proof_factor
+    h, c0, alpha = (
+        parameters.hash_cost,
+        parameters.proof_overhead,
+        parameters.proof_factor,
+    )
     boundary = Fraction(table.input_count)  # the input gates, then every unit's Out
     interior_total = Fraction(0)
     proof = Fraction(0)
@@ -221,7 +225,10 @@ def _recompute(table: KindTable, q: Fraction) -> Fraction:
             return cached
         inner = Fraction(0)
         if row.role != REPLAY:  # nothing below a replay unit is a replay unit
-            inner = sum((copies * fold(rows[child]) for child, copies in row.children), Fraction(0))
+            inner = sum(
+                (copies * fold(rows[child]) for child, copies in row.children),
+                Fraction(0),
+            )
         m = units.get(row.kind, 0)
         if m:
             hit = 1 - survival(q, m)
@@ -234,4 +241,12 @@ def _recompute(table: KindTable, q: Fraction) -> Fraction:
     return fold(rows[table.root])
 
 
-__all__ = ["CERTAIN_MASS", "EXACT_BITS", "CostParameters", "ExpectedCost", "cost", "recomputation_units", "survival"]
+__all__ = [
+    "CERTAIN_MASS",
+    "EXACT_BITS",
+    "CostParameters",
+    "ExpectedCost",
+    "cost",
+    "recomputation_units",
+    "survival",
+]

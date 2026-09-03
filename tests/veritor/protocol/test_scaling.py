@@ -41,7 +41,9 @@ EXPECTED_SELECTED = 16
 HANDMADE = constructor_digest("handmade", "tests", {})
 
 
-def tiled_description(units: int, *, tile_role: str, cell_role: str | None, root_role: str | None):
+def tiled_description(
+    units: int, *, tile_role: str, cell_role: str | None, root_role: str | None
+):
     """``units`` tiles of two cells of three ``add`` gates, with the given marks.
 
     The one input is an ``in`` gate at address 0: inside the root when the
@@ -74,7 +76,9 @@ def tiled_description(units: int, *, tile_role: str, cell_role: str | None, root
 
 
 def tiled_compiled(units: int) -> Compiled:
-    description = tiled_description(units, tile_role="replay", cell_role="verification", root_role=None)
+    description = tiled_description(
+        units, tile_role="replay", cell_role="verification", root_role=None
+    )
     return Compiler(GATE_SET).compile(description, INPUT)
 
 
@@ -121,7 +125,11 @@ class Scenario:
         outputs = tuple(self.values[o] for o in self.compiled.circuit.outputs)
         policy = VerificationPolicy(Fraction(EXPECTED_SELECTED, units), 1)
         self.expectation: Expectation = make_expectation(
-            compilation, policy, outputs, parameters=VerifierParameters(max_capacity=None), **SEEDS
+            compilation,
+            policy,
+            outputs,
+            parameters=VerifierParameters(max_capacity=None),
+            **SEEDS,
         )
         verifier = VerifierSession(self.expectation, self.compiled)
         prover = ProverSession(self.compiled, verifier.header, self.values)
@@ -190,11 +198,17 @@ SMALL, LARGE = 1024, 32768
 def test_the_tiling_scales_as_described() -> None:
     small, large = scenario(SMALL), scenario(LARGE)
 
-    tiles = {name: s.compiled.index.replay_units.count - 1 for name, s in (("small", small), ("large", large))}
+    tiles = {
+        name: s.compiled.index.replay_units.count - 1
+        for name, s in (("small", small), ("large", large))
+    }
     assert tiles == {"small": SMALL, "large": LARGE}  # plus the input's unit
     assert large.compiled.circuit.n - 1 == 32 * (small.compiled.circuit.n - 1)
     assert large.compiled.index.boundary().count == LARGE + 1
-    assert large.compiled.index.input_count == 1 and large.compiled.index.interior(0).count == 0
+    assert (
+        large.compiled.index.input_count == 1
+        and large.compiled.index.interior(0).count == 0
+    )
     assert 4 <= small.selected <= 40 and 4 <= large.selected <= 40
     assert small.sampled == 2 * small.selected and large.sampled == 2 * large.selected
 
@@ -206,7 +220,9 @@ def test_receive_interiors_derives_each_interior_lazily(monkeypatch) -> None:
     boundary_calls = count_calls(
         monkeypatch, core_index._Boundary, ("contains", "rank", "unrank", "_locate")
     )
-    index_calls = count_calls(monkeypatch, core_index.Index, ("interior", "verification_units"))
+    index_calls = count_calls(
+        monkeypatch, core_index.Index, ("interior", "verification_units")
+    )
     unit_calls = count_calls(monkeypatch, core_index.Units, ("unit", "owner"))
 
     verifier.receive_interiors(large.interiors)
@@ -221,9 +237,17 @@ def test_receive_interiors_derives_each_interior_lazily(monkeypatch) -> None:
 def test_verifier_phases_are_flat_in_the_number_of_replay_units() -> None:
     small, large = scenario(SMALL), scenario(LARGE)
 
-    for phase, per in (("boundary", 1), ("interiors", small.selected), ("evidence", small.sampled)):
+    for phase, per in (
+        ("boundary", 1),
+        ("interiors", small.selected),
+        ("evidence", small.sampled),
+    ):
         small_time = fastest(small.verifier_phase(phase)) / per
-        large_per = {"boundary": 1, "interiors": large.selected, "evidence": large.sampled}[phase]
+        large_per = {
+            "boundary": 1,
+            "interiors": large.selected,
+            "evidence": large.sampled,
+        }[phase]
         large_time = fastest(large.verifier_phase(phase)) / large_per
         assert large_time < 4 * small_time, (phase, small_time, large_time)
 
@@ -233,7 +257,9 @@ def test_a_full_verifier_run_touches_only_sampled_addresses(monkeypatch) -> None
     io = 2
     per_unit = 3 + 1  # a cell's three gates and the one outside address it reads
     sampled_addresses = large.sampled * per_unit
-    boundary_calls = count_calls(monkeypatch, core_index._Boundary, ("contains", "rank", "unrank"))
+    boundary_calls = count_calls(
+        monkeypatch, core_index._Boundary, ("contains", "rank", "unrank")
+    )
     lookups = count_calls(monkeypatch, DescriptionCircuit, ("__getitem__",))
     monkeypatch.setattr(
         DescriptionCircuit,
@@ -248,7 +274,9 @@ def test_a_full_verifier_run_touches_only_sampled_addresses(monkeypatch) -> None
 
     boundary_total = sum(boundary_calls.values())
     assert boundary_total <= 3 * (io + sampled_addresses)
-    assert lookups["__getitem__"] <= 4 * (io + sampled_addresses)  # schema, decode, gate, check
+    assert lookups["__getitem__"] <= 4 * (
+        io + sampled_addresses
+    )  # schema, decode, gate, check
     assert boundary_total < LARGE / 8 and lookups["__getitem__"] < LARGE / 8
 
 
@@ -267,18 +295,29 @@ def test_run_protocol_end_to_end_on_the_large_tiling() -> None:
 
 def test_changing_a_role_mark_changes_the_compiled_digest() -> None:
     cells = Compiler(GATE_SET).compile(
-        tiled_description(8, tile_role="replay", cell_role="verification", root_role=None), INPUT
+        tiled_description(
+            8, tile_role="replay", cell_role="verification", root_role=None
+        ),
+        INPUT,
     )
     tiles = Compiler(GATE_SET).compile(
-        tiled_description(8, tile_role="verification", cell_role=None, root_role="replay"), INPUT
+        tiled_description(
+            8, tile_role="verification", cell_role=None, root_role="replay"
+        ),
+        INPUT,
     )
     again = Compiler(GATE_SET).compile(
-        tiled_description(8, tile_role="replay", cell_role="verification", root_role=None), INPUT
+        tiled_description(
+            8, tile_role="replay", cell_role="verification", root_role=None
+        ),
+        INPUT,
     )
 
     assert cells.circuit.n == tiles.circuit.n
     assert cells.circuit.evaluate(INPUT) == tiles.circuit.evaluate(INPUT)
-    assert cells.index.replay_units.count == 8 + 1 and tiles.index.replay_units.count == 1
+    assert (
+        cells.index.replay_units.count == 8 + 1 and tiles.index.replay_units.count == 1
+    )
     assert cells.digest != tiles.digest
     assert cells.index.digest != tiles.index.digest
     assert cells.digest == again.digest

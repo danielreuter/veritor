@@ -35,7 +35,12 @@ from veritor.protocol import (
 from veritor.research import Compile
 
 SHAPE = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=6, width=16)
-REQUESTS = (Request((1, 2, 3), 3), Request((5,), 2), Request((7, 0), 4), Request((2, 2, 2), 1))
+REQUESTS = (
+    Request((1, 2, 3), 3),
+    Request((5,), 2),
+    Request((7, 0), 4),
+    Request((2, 2, 2), 1),
+)
 GATES = make_isa_gate_set(16)
 SEEDS = {"session_id": b"requests-run", "q_seed": b"Q" * 32, "s_seed": b"S" * 32}
 
@@ -45,11 +50,17 @@ def compile_requests(constructor: RequestsG, requests: tuple[Request, ...]) -> C
     return Compiler(GATES).compile(description, inputs)
 
 
-def generated(constructor: RequestsG, compiled: Compiled, requests, parameters) -> tuple[tuple[int, ...], ...]:
-    values = compiled.circuit.evaluate(constructor.flatten_inputs(requests), parameters.flatten())
+def generated(
+    constructor: RequestsG, compiled: Compiled, requests, parameters
+) -> tuple[tuple[int, ...], ...]:
+    values = compiled.circuit.evaluate(
+        constructor.flatten_inputs(requests), parameters.flatten()
+    )
     outputs = [values[address] for address in compiled.circuit.outputs]
     grouped: list[list[int]] = [[] for _ in requests]
-    for (request, position), token in zip(constructor.output_layout(requests), outputs, strict=True):
+    for (request, position), token in zip(
+        constructor.output_layout(requests), outputs, strict=True
+    ):
         assert position == len(grouped[request])
         grouped[request].append(token)
     return tuple(tuple(tokens) for tokens in grouped)
@@ -65,7 +76,9 @@ def test_it_generates_what_the_reference_generates(run) -> None:
     constructor, compiled = run
     parameters = random_parameters(SHAPE, seed=1)
 
-    assert generated(constructor, compiled, REQUESTS, parameters) == reference_generate(SHAPE, parameters, REQUESTS)
+    assert generated(constructor, compiled, REQUESTS, parameters) == reference_generate(
+        SHAPE, parameters, REQUESTS
+    )
 
 
 def test_one_replay_unit_per_request_and_the_weights(run) -> None:
@@ -77,12 +90,16 @@ def test_one_replay_unit_per_request_and_the_weights(run) -> None:
     assert index.weight_count == SHAPE.weight_count
     # the boundary is the prompts, the tokens and nothing else: the cache stays inside
     assert index.boundary().count == 9 + sum(r.max_new for r in REQUESTS)
-    requests = [row for row in index.kinds() if row.role == REPLAY and row.out_count > 0]
+    requests = [
+        row for row in index.kinds() if row.role == REPLAY and row.out_count > 0
+    ]
     assert sorted(row.out_count for row in requests) == [1, 2, 3, 4]
     assert all(row.input_count == SHAPE.weight_count for row in requests)
 
 
-def test_the_requests_and_the_weights_are_closed_and_the_decode_steps_are_not(run) -> None:
+def test_the_requests_and_the_weights_are_closed_and_the_decode_steps_are_not(
+    run,
+) -> None:
     """A request is handed the weights and holds its prompt: replayable from what the server retains.
 
     A decode step reads the previous token and the KV cache, which the
@@ -92,7 +109,9 @@ def test_the_requests_and_the_weights_are_closed_and_the_decode_steps_are_not(ru
     constructor, compiled = run
     kinds = compiled.index.kinds()
     by_kind = {row.kind: row for row in kinds}
-    by_key = constructor.lm.tracer._by_key  # the toy's kinds by the keys ``lm.py`` gives them
+    by_key = (
+        constructor.lm.tracer._by_key
+    )  # the toy's kinds by the keys ``lm.py`` gives them
 
     def closed(*keys: object) -> list[bool]:
         return [by_kind[by_key[key].digest].closed for key in keys]
@@ -100,10 +119,22 @@ def test_the_requests_and_the_weights_are_closed_and_the_decode_steps_are_not(ru
     requests = [row for row in kinds if row.role == REPLAY and row.out_count > 0]
     (weights,) = [row for row in kinds if row.role == REPLAY and row.source_weights > 0]
     assert weights.closed and all(row.closed for row in requests)
-    assert closed("weights", ("request", 3, 3), ("request", 1, 2), ("prefill", 3), ("prefill", 1)) == [True] * 5
+    assert (
+        closed(
+            "weights",
+            ("request", 3, 3),
+            ("request", 1, 2),
+            ("prefill", 3),
+            ("prefill", 1),
+        )
+        == [True] * 5
+    )
     assert closed(("decode", 4), ("decode", 5), ("decode", 2)) == [False] * 3
     # the kinds shared between the prefill and the decode steps (an embedding row, a matvec) are open
-    assert closed("embed_row", ("matvec", SHAPE.d_model, SHAPE.d_model), "argmax") == [False] * 3
+    assert (
+        closed("embed_row", ("matvec", SHAPE.d_model, SHAPE.d_model), "argmax")
+        == [False] * 3
+    )
 
 
 def test_requests_of_one_shape_are_one_kind() -> None:
@@ -112,29 +143,61 @@ def test_requests_of_one_shape_are_one_kind() -> None:
 
     compiled = compile_requests(constructor, same)
 
-    units = [row for row in compiled.index.kinds() if row.role == REPLAY and row.out_count > 0]
+    units = [
+        row
+        for row in compiled.index.kinds()
+        if row.role == REPLAY and row.out_count > 0
+    ]
     assert len(units) == 1 and units[0].copies == 3
 
 
-def test_requests_are_grouped_by_kind_so_the_root_has_one_output_run_per_shape() -> None:
+def test_requests_are_grouped_by_kind_so_the_root_has_one_output_run_per_shape() -> (
+    None
+):
     """Kinds in order of first appearance, each group one ``repeat``; the layouts follow the circuit order."""
 
     constructor = RequestsG(SHAPE)
-    mixed = (Request((1, 2), 3), Request((5,), 2), Request((4, 4), 3), Request((0,), 2), Request((7, 7, 7), 1))
+    mixed = (
+        Request((1, 2), 3),
+        Request((5,), 2),
+        Request((4, 4), 3),
+        Request((0,), 2),
+        Request((7, 7, 7), 1),
+    )
     parameters = random_parameters(SHAPE, seed=5)
 
-    assert constructor.groups(mixed) == (((2, 3, 0), (0, 2)), ((1, 2, 0), (1, 3)), ((3, 1, 0), (4,)))
+    assert constructor.groups(mixed) == (
+        ((2, 3, 0), (0, 2)),
+        ((1, 2, 0), (1, 3)),
+        ((3, 1, 0), (4,)),
+    )
     assert constructor.order(mixed) == (0, 2, 1, 3, 4)
     assert constructor.output_layout(mixed) == (
-        (0, 0), (0, 1), (0, 2), (2, 0), (2, 1), (2, 2), (1, 0), (1, 1), (3, 0), (3, 1), (4, 0),
+        (0, 0),
+        (0, 1),
+        (0, 2),
+        (2, 0),
+        (2, 1),
+        (2, 2),
+        (1, 0),
+        (1, 1),
+        (3, 0),
+        (3, 1),
+        (4, 0),
     )
     assert constructor.flatten_inputs(mixed) == (1, 2, 4, 4, 5, 0, 7, 7, 7)
     compiled = compile_requests(constructor, mixed)
-    assert generated(constructor, compiled, mixed, parameters) == reference_generate(SHAPE, parameters, mixed)
+    assert generated(constructor, compiled, mixed, parameters) == reference_generate(
+        SHAPE, parameters, mixed
+    )
     # one run per generated position of each kind (3 + 2 + 1), not per request (3 + 2 + 3 + 2 + 1)
     runs = compiled.index.root.frame.definition.out_runs
     assert len(runs) == 6 and sorted(run.count for run in runs) == [1, 2, 2, 2, 2, 2]
-    units = {row.copies for row in compiled.index.kinds() if row.role == REPLAY and row.out_count > 0}
+    units = {
+        row.copies
+        for row in compiled.index.kinds()
+        if row.role == REPLAY and row.out_count > 0
+    }
     assert units == {2, 1}
 
 
@@ -143,20 +206,46 @@ def test_banned_tokens_are_masked_in_circuit_and_never_generated() -> None:
 
     constructor = RequestsG(SHAPE)
     parameters = random_parameters(SHAPE, seed=9)
-    requests = (Request((1, 2, 3), 3, banned=(0, 4, 5)), Request((5,), 2), Request((2, 6), 3, banned=(7,)))
+    requests = (
+        Request((1, 2, 3), 3, banned=(0, 4, 5)),
+        Request((5,), 2),
+        Request((2, 6), 3, banned=(7,)),
+    )
 
     compiled = compile_requests(constructor, requests)
     tokens = generated(constructor, compiled, requests, parameters)
     assert tokens == reference_generate(SHAPE, parameters, requests)
     assert not set(tokens[0]) & {0, 4, 5} and 7 not in tokens[2]
-    assert constructor.flatten_inputs(requests) == (0, 4, 5, 1, 2, 3, 5, 7, 2, 6)  # banned ids precede the prompt
+    assert constructor.flatten_inputs(requests) == (
+        0,
+        4,
+        5,
+        1,
+        2,
+        3,
+        5,
+        7,
+        2,
+        6,
+    )  # banned ids precede the prompt
     kinds = {row.kind: row for row in compiled.index.kinds()}
     lm = constructor.lm
-    assert kinds[lm.allowed_row(3).digest].copies == SHAPE.vocab and kinds[lm.allowed_row(1).digest].copies == SHAPE.vocab
-    assert kinds[lm.masked_argmax().digest].copies == 6 and kinds[lm.argmax().digest].copies == 2
+    assert (
+        kinds[lm.allowed_row(3).digest].copies == SHAPE.vocab
+        and kinds[lm.allowed_row(1).digest].copies == SHAPE.vocab
+    )
+    assert (
+        kinds[lm.masked_argmax().digest].copies == 6
+        and kinds[lm.argmax().digest].copies == 2
+    )
     assert lm.allowed_row(3).role == "verification"
-    assert {(row.out_count, row.input_count) for row in kinds.values() if row.role == REPLAY and row.out_count} == {
-        (3, SHAPE.weight_count), (2, SHAPE.weight_count),
+    assert {
+        (row.out_count, row.input_count)
+        for row in kinds.values()
+        if row.role == REPLAY and row.out_count
+    } == {
+        (3, SHAPE.weight_count),
+        (2, SHAPE.weight_count),
     }
     with pytest.raises(TracerError, match="below vocab"):
         constructor((Request((1,), 1, banned=(8,)),), b"")
@@ -165,18 +254,37 @@ def test_banned_tokens_are_masked_in_circuit_and_never_generated() -> None:
 
 
 @pytest.mark.parametrize("tensor_parallel", (2, 4))
-def test_tensor_parallel_changes_the_dot_kinds_and_nothing_the_verifier_sees_in_the_tokens(tensor_parallel: int) -> None:
+def test_tensor_parallel_changes_the_dot_kinds_and_nothing_the_verifier_sees_in_the_tokens(
+    tensor_parallel: int,
+) -> None:
     parameters = random_parameters(SHAPE, seed=11)
     plain, sharded = RequestsG(SHAPE), RequestsG(SHAPE, tensor_parallel=tensor_parallel)
 
-    compiled_plain, compiled_sharded = compile_requests(plain, REQUESTS), compile_requests(sharded, REQUESTS)
-    assert generated(sharded, compiled_sharded, REQUESTS, parameters) == generated(plain, compiled_plain, REQUESTS, parameters)
-    assert compiled_sharded.digest != compiled_plain.digest and sharded.digest != plain.digest
-    assert sharded.manifest == {"shape": SHAPE.manifest, "tensor_parallel": tensor_parallel}
-    verification = lambda compiled: {row.kind for row in compiled.index.kinds() if row.role == "verification"}
-    assert verification(compiled_sharded).isdisjoint({plain.lm.dot(k).digest for k in (SHAPE.d_model, SHAPE.hidden, SHAPE.vocab)})
+    compiled_plain, compiled_sharded = (
+        compile_requests(plain, REQUESTS),
+        compile_requests(sharded, REQUESTS),
+    )
+    assert generated(sharded, compiled_sharded, REQUESTS, parameters) == generated(
+        plain, compiled_plain, REQUESTS, parameters
+    )
+    assert (
+        compiled_sharded.digest != compiled_plain.digest
+        and sharded.digest != plain.digest
+    )
+    assert sharded.manifest == {
+        "shape": SHAPE.manifest,
+        "tensor_parallel": tensor_parallel,
+    }
+    verification = lambda compiled: {
+        row.kind for row in compiled.index.kinds() if row.role == "verification"
+    }
+    assert verification(compiled_sharded).isdisjoint(
+        {plain.lm.dot(k).digest for k in (SHAPE.d_model, SHAPE.hidden, SHAPE.vocab)}
+    )
     # the units that do not contain a marked dot are unchanged
-    assert {plain.lm.argmax().digest, plain.lm.onehot().digest} <= verification(compiled_sharded)
+    assert {plain.lm.argmax().digest, plain.lm.onehot().digest} <= verification(
+        compiled_sharded
+    )
 
 
 def test_it_takes_no_advice_and_checks_its_requests() -> None:
@@ -222,11 +330,21 @@ class TestProtocol:
             **SEEDS,
         )
 
-    @pytest.mark.parametrize("policy", (VerificationPolicy(1, 1), VerificationPolicy(Fraction(1, 2), Fraction(1, 3))))
-    def test_an_honest_run_is_accepted_with_empty_advice(self, deployment, policy) -> None:
+    @pytest.mark.parametrize(
+        "policy",
+        (VerificationPolicy(1, 1), VerificationPolicy(Fraction(1, 2), Fraction(1, 3))),
+    )
+    def test_an_honest_run_is_accepted_with_empty_advice(
+        self, deployment, policy
+    ) -> None:
         constructor, compilation, _, tree, values, _ = deployment
 
-        run = run_protocol(compilation.compiled, self.expectation(deployment, policy), values, weight_tree=tree)
+        run = run_protocol(
+            compilation.compiled,
+            self.expectation(deployment, policy),
+            values,
+            weight_tree=tree,
+        )
 
         assert run.report.accepted and run.transcript is not None
         assert run.transcript.header.advice == b"" and compilation.advice_bits == 0
@@ -245,15 +363,21 @@ class TestProtocol:
             weight_tree=tree,
         )
 
-        assert not run.report.accepted and run.report.code is VerificationCode.PUBLIC_IO_MISMATCH
+        assert (
+            not run.report.accepted
+            and run.report.code is VerificationCode.PUBLIC_IO_MISMATCH
+        )
 
-    def test_a_corrupted_interior_value_is_caught_when_everything_is_checked(self, deployment) -> None:
+    def test_a_corrupted_interior_value_is_caught_when_everything_is_checked(
+        self, deployment
+    ) -> None:
         _, compilation, _, tree, values, _ = deployment
         circuit = compilation.compiled.circuit
         interior = next(
             address
             for address in range(circuit.n)
-            if address not in set(circuit.inputs) | set(circuit.outputs) | set(circuit.weights)
+            if address
+            not in set(circuit.inputs) | set(circuit.outputs) | set(circuit.weights)
         )
         tampered = dict(values)
         tampered[interior] = (tampered[interior] + 1) % (1 << 16)
@@ -266,4 +390,7 @@ class TestProtocol:
             replay=assignment_replay(tampered),
         )
 
-        assert not run.report.accepted and run.report.code is VerificationCode.RELATION_REJECTED
+        assert (
+            not run.report.accepted
+            and run.report.code is VerificationCode.RELATION_REJECTED
+        )

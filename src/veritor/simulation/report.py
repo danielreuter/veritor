@@ -57,7 +57,10 @@ def render(summary: Summary) -> str:
         )
     out("  occupancy (rows: pods; columns: steps; digit = occupants, x = down):")
     for pod, row in enumerate(w.occupancy):
-        out(f"    pod {pod}: " + "".join("x" if n < 0 else str(n) if n else "." for n in row))
+        out(
+            f"    pod {pod}: "
+            + "".join("x" if n < 0 else str(n) if n else "." for n in row)
+        )
     out(
         f"  advice: Schedule.encode() = {w.advice_bytes} bytes, {w.advice_bits} bits charged "
         "(the bit-packed header and joins; the padding to bytes is checked zero); timing enters the "
@@ -98,7 +101,9 @@ def render(summary: Summary) -> str:
             "generated position, an `in` gate of the circuit"
         )
     else:
-        out("  sampling off: tokens are the argmax; the scheduler's choices are the nondeterminism")
+        out(
+            "  sampling off: tokens are the argmax; the scheduler's choices are the nondeterminism"
+        )
 
     out("")
     out("5. Compile")
@@ -136,7 +141,9 @@ def render(summary: Summary) -> str:
         f"W_max = {p.work_budget}; expected work W = {p.expected_work:.0f}"
     )
     out(f"  kappa_W (weights, once per model) = {h.weight_root[:16]}...")
-    out(f"  boundary root ({h.boundary_positions} positions) = {h.boundary_root[:16]}...")
+    out(
+        f"  boundary root ({h.boundary_positions} positions) = {h.boundary_root[:16]}..."
+    )
     out(
         f"  q-challenge: seed {h.q_seed[:16]}... over the boundary phase -> {h.replay_units_opened} "
         f"of {c.replay_units} RUs replayed; interior roots "
@@ -167,7 +174,9 @@ def render(summary: Summary) -> str:
         f"  survival sigma(E) = prod_r (1 - q + q (1 - s)^l_r); observed over {a.rows[0].trials} "
         "fresh challenge derivations per row; full protocol runs in the last column"
     )
-    out("    bits  tokens  VUs  RUs  l_r        predicted  observed  |dev|/sigma  full protocol")
+    out(
+        "    bits  tokens  VUs  RUs  l_r        predicted  observed  |dev|/sigma  full protocol"
+    )
     for r in a.rows:
         l_r = ",".join(map(str, r.errors_per_replay_unit))
         if len(l_r) > 9:

@@ -38,7 +38,11 @@ def corrupt(compiled: Compiled, honest_values: dict[int, object], *units: int):
 
 
 def test_a_declared_unit_is_proved_under_the_vacuous_program(
-    compiled: Compiled, expect, honest_values, model_weights, recording: RecordingBackend
+    compiled: Compiled,
+    expect,
+    honest_values,
+    model_weights,
+    recording: RecordingBackend,
 ) -> None:
     values, outputs = corrupt(compiled, honest_values, FAULTY_UNIT)
     expectation = expect(
@@ -59,8 +63,10 @@ def test_a_declared_unit_is_proved_under_the_vacuous_program(
     assert run.report.code is VerificationCode.ACCEPTED
     assert run.transcript is not None
     assert run.transcript.interiors.declarations == (FAULTY_UNIT,)
-    assert run.transcript.evidence.units == () and len(run.transcript.evidence.proofs) == 1
-    (statement, witness), = recording.proved
+    assert (
+        run.transcript.evidence.units == () and len(run.transcript.evidence.proofs) == 1
+    )
+    ((statement, witness),) = recording.proved
     assert statement in recording.verified
     assert DECLARED_PROGRAM in statement.kinds
     declared = [o for o in statement.obligations if o.kind == DECLARED_KIND]
@@ -68,14 +74,20 @@ def test_a_declared_unit_is_proved_under_the_vacuous_program(
     (obligation,) = declared
     assert obligation.outputs == () and obligation.inputs == ()
     checked = next(o for o in statement.obligations if o.unit == FAULTY_UNIT + 1)
-    assert len(obligation.positions) == len(checked.positions)  # same openings, no relation
+    assert len(obligation.positions) == len(
+        checked.positions
+    )  # same openings, no relation
     slot = statement.obligations.index(obligation)
     assert len(witness.obligations[slot]) == len(obligation.positions)
     assert decode_statement(encode_statement(statement)) == statement
 
 
 def test_a_proof_cannot_hide_an_undeclared_corruption(
-    compiled: Compiled, expect, honest_values, model_weights, recording: RecordingBackend
+    compiled: Compiled,
+    expect,
+    honest_values,
+    model_weights,
+    recording: RecordingBackend,
 ) -> None:
     values, outputs = corrupt(compiled, honest_values, FAULTY_UNIT, OTHER_UNIT)
     expectation = expect(
@@ -98,7 +110,11 @@ def test_a_proof_cannot_hide_an_undeclared_corruption(
 
 
 def test_sampling_some_units_still_derives_declared_obligations_on_both_sides(
-    compiled: Compiled, expect, honest_values, model_weights, recording: RecordingBackend
+    compiled: Compiled,
+    expect,
+    honest_values,
+    model_weights,
+    recording: RecordingBackend,
 ) -> None:
     """Under partial sampling both parties derive the same statement, declared or not."""
 

@@ -65,14 +65,26 @@ def passthrough_payload(helpers) -> bytes:
     doc = h.Document()
     pair = doc.add(
         h.body(
-            2, [h.gate("add", h.rng(IN, 0, 2, 1))], [h.rng(LOC, 0), h.rng(IN, 1)], role="verification"
+            2,
+            [h.gate("add", h.rng(IN, 0, 2, 1))],
+            [h.rng(LOC, 0), h.rng(IN, 1)],
+            role="verification",
         )
     )
     unit = doc.add(
-        h.body(4, [h.repeat(2, pair, h.jrng(IN, 0, 2, 1, 2))], [h.rng(LOC, 0, 4, 1)], role="replay")
+        h.body(
+            4,
+            [h.repeat(2, pair, h.jrng(IN, 0, 2, 1, 2))],
+            [h.rng(LOC, 0, 4, 1)],
+            role="replay",
+        )
     )
     target = doc.add(
-        h.body(8, [h.repeat(2, unit, h.jrng(IN, 0, 4, 1, 4))], [h.rng(LOC, 0, 8, 1), h.rng(IN, 2)])
+        h.body(
+            8,
+            [h.repeat(2, unit, h.jrng(IN, 0, 4, 1, 4))],
+            [h.rng(LOC, 0, 8, 1), h.rng(IN, 2)],
+        )
     )
     return doc.serialize(h.wrap(doc, target, 8, 9))
 
@@ -101,10 +113,19 @@ def interleaved_payload(helpers, count: int, stride: int) -> bytes:
         )
     )
     block = doc.add(
-        h.body(1, [h.repeat(5, h3, h.jrng(IN, 0))], [h.rng(LOC, 0, count, stride)], role="replay")
+        h.body(
+            1,
+            [h.repeat(5, h3, h.jrng(IN, 0))],
+            [h.rng(LOC, 0, count, stride)],
+            role="replay",
+        )
     )
     target = doc.add(
-        h.body(2, [h.repeat(2, block, h.jrng(IN, 0, 1, 0, 1))], [h.rng(LOC, 0, 2 * count, 1)])
+        h.body(
+            2,
+            [h.repeat(2, block, h.jrng(IN, 0, 1, 0, 1))],
+            [h.rng(LOC, 0, 2 * count, 1)],
+        )
     )
     return doc.serialize(h.wrap(doc, target, 2, 2 * count))
 
@@ -133,9 +154,22 @@ def within_copy_payload(helpers) -> bytes:
             [h.rng(LOC, 2), h.rng(LOC, 0), h.rng(LOC, 1)],
         )
     )
-    six = doc.add(h.body(1, [h.repeat(2, h3, h.jrng(IN, 0))], [h.rng(LOC, 0, 6, 1)], role="verification"))
-    block = doc.add(h.body(1, [h.repeat(2, six, h.jrng(IN, 0))], [h.rng(LOC, 0, 2, 2)], role="replay"))
-    target = doc.add(h.body(2, [h.repeat(2, block, h.jrng(IN, 0, 1, 0, 1))], [h.rng(LOC, 0, 4, 1)]))
+    six = doc.add(
+        h.body(
+            1,
+            [h.repeat(2, h3, h.jrng(IN, 0))],
+            [h.rng(LOC, 0, 6, 1)],
+            role="verification",
+        )
+    )
+    block = doc.add(
+        h.body(
+            1, [h.repeat(2, six, h.jrng(IN, 0))], [h.rng(LOC, 0, 2, 2)], role="replay"
+        )
+    )
+    target = doc.add(
+        h.body(2, [h.repeat(2, block, h.jrng(IN, 0, 1, 0, 1))], [h.rng(LOC, 0, 4, 1)])
+    )
     return doc.serialize(h.wrap(doc, target, 2, 4))
 
 
@@ -156,13 +190,17 @@ def random_strided_payload(helpers, seed: int) -> bytes | None:
     m = rng.randint(1, 4)
     steps = [h.gate("add", h.rng(IN, 0, 2, 0))]
     for g in range(1, m):
-        if rng.random() < 0.25:  # a source gate among the leaf's gates: a pinned piece when declared
+        if (
+            rng.random() < 0.25
+        ):  # a source gate among the leaf's gates: a pinned piece when declared
             steps.append(h.gate(rng.choice(("in", "weight"))))
         else:
             steps.append(h.gate("mul", h.rng(LOC, rng.randrange(g)), h.rng(IN, 0)))
     order = list(range(m))
     rng.shuffle(order)
-    leaf = doc.add(h.body(1, steps, [h.rng(LOC, p) for p in order], role="verification"))
+    leaf = doc.add(
+        h.body(1, steps, [h.rng(LOC, p) for p in order], role="verification")
+    )
     copies = rng.randint(1, 5)
     slots = copies * m
     runs: list[tuple[int, int, int]] = []
@@ -187,7 +225,11 @@ def random_strided_payload(helpers, seed: int) -> bytes | None:
     )
     reps = rng.randint(1, 2)
     target = doc.add(
-        h.body(reps, [h.repeat(reps, block, h.jrng(IN, 0, 1, 0, 1))], [h.rng(LOC, 0, reps * len(gates), 1)])
+        h.body(
+            reps,
+            [h.repeat(reps, block, h.jrng(IN, 0, 1, 0, 1))],
+            [h.rng(LOC, 0, reps * len(gates), 1)],
+        )
     )
     return doc.serialize(h.wrap(doc, target, reps, reps * len(gates)))
 
@@ -199,7 +241,9 @@ def sources_payload(helpers) -> bytes:
     h = helpers
     doc = h.Document()
     weight_cell = h.source_cell(doc, "weight")
-    weights = doc.add(h.body(0, [h.repeat(6, weight_cell)], [h.rng(LOC, 0, 6, 1)], role="replay"))
+    weights = doc.add(
+        h.body(0, [h.repeat(6, weight_cell)], [h.rng(LOC, 0, 6, 1)], role="replay")
+    )
     unit = doc.add(
         h.body(
             2,
@@ -215,10 +259,19 @@ def sources_payload(helpers) -> bytes:
         )
     )
     layer = doc.add(
-        h.body(6, [h.repeat(3, unit, h.jrng(IN, 0, 2, 1, 2))], [h.rng(LOC, 0, 18, 1)], role="replay")
+        h.body(
+            6,
+            [h.repeat(3, unit, h.jrng(IN, 0, 2, 1, 2))],
+            [h.rng(LOC, 0, 18, 1)],
+            role="replay",
+        )
     )
     root = doc.add(
-        h.body(0, [h.call(weights), h.call(layer, h.rng(LOC, 0, 6, 1))], [h.rng(LOC, 6, 18, 1)])
+        h.body(
+            0,
+            [h.call(weights), h.call(layer, h.rng(LOC, 0, 6, 1))],
+            [h.rng(LOC, 6, 18, 1)],
+        )
     )
     return doc.serialize(root)
 
@@ -256,12 +309,16 @@ def test_out_runs_are_what_the_output_ranges_resolve_to(helpers):
     dot_size = 2 * k - 1
 
     assert dot.out_runs == (Run(dot_size - 1, 1, 0, 8),)
-    assert activations.out_runs == () and activations.input_runs == (Run(0, rows * k, 1, 8),)
+    assert activations.out_runs == () and activations.input_runs == (
+        Run(0, rows * k, 1, 8),
+    )
     assert weights.out_runs == () and weights.weight_runs == (Run(0, k * cols, 1, 8),)
     assert row.out_runs == (Run(dot_size - 1, cols, dot_size, 8),)
     assert row.input_runs == row.weight_runs == ()
     # the rows hold nothing but dots, so their Out tiles the copies: one run over the batch
-    assert root.out_runs == (Run(rows * k + k * cols + dot_size - 1, rows * cols, dot_size, 8),)
+    assert root.out_runs == (
+        Run(rows * k + k * cols + dot_size - 1, rows * cols, dot_size, 8),
+    )
     assert (root.out_count, root.out_bits) == (rows * cols, 8 * rows * cols)
     assert [root.out_offset(r) for r in range(root.out_count)] == [
         dot.stop - 1 for dot in layout["dots"]
@@ -280,7 +337,9 @@ def test_strided_outputs_over_children_fall_back_to_residue_runs(helpers):
     members = [1, 7, 2, 8, 14, 3, 9]
     assert [block.out_offset(r) for r in range(7)] == members
     assert [block.out_rank(offset) for offset in members] == list(range(7))
-    assert all(block.out_rank(offset) is None for offset in range(15) if offset not in members)
+    assert all(
+        block.out_rank(offset) is None for offset in range(15) if offset not in members
+    )
 
 
 def test_random_strided_declarations_match_enumeration(helpers, check_interfaces):
@@ -313,8 +372,13 @@ def test_a_strided_run_inside_one_copy_stops_at_the_declared_count(helpers):
     assert sorted(circuit.Out(index.root)) == [3, 4, 15, 16]
 
 
-@pytest.mark.parametrize(("count", "stride", "runs"), [(2, 2, (Run(1, 2, 1, 8),)), (2, 4, (Run(2, 2, 1, 8),))])
-def test_fewer_elements_than_residue_classes_is_exact_enumeration(helpers, count, stride, runs):
+@pytest.mark.parametrize(
+    ("count", "stride", "runs"),
+    [(2, 2, (Run(1, 2, 1, 8),)), (2, 4, (Run(2, 2, 1, 8),))],
+)
+def test_fewer_elements_than_residue_classes_is_exact_enumeration(
+    helpers, count, stride, runs
+):
     index, _circuit = build(interleaved_payload(helpers, count, stride))
     block = target_of(index).steps[0].child
 
@@ -339,13 +403,22 @@ def test_fewer_elements_than_residue_classes_is_exact_enumeration(helpers, count
 def test_input_count_is_the_declared_interface_not_what_is_read(helpers):
     h = helpers
     doc = h.Document()
-    cell = doc.add(h.body(3, [h.gate("add", h.rng(IN, 0, 2, 1))], [h.rng(LOC, 0)], role="verification"))
-    target = doc.add(h.body(3, [h.call(cell, h.rng(IN, 0, 3, 1))], [h.rng(LOC, 0)], role="replay"))
+    cell = doc.add(
+        h.body(
+            3, [h.gate("add", h.rng(IN, 0, 2, 1))], [h.rng(LOC, 0)], role="verification"
+        )
+    )
+    target = doc.add(
+        h.body(3, [h.call(cell, h.rng(IN, 0, 3, 1))], [h.rng(LOC, 0)], role="replay")
+    )
     index, circuit = build(doc.serialize(h.wrap(doc, target, 3, 1)))
     node = index.verification_unit(3)  # after the three `in` cells of the input block
 
     assert node.kind == cell
-    assert {row.kind: row.input_count for row in index.kinds()}.items() >= {cell: 3, target: 3}.items()
+    assert {row.kind: row.input_count for row in index.kinds()}.items() >= {
+        cell: 3,
+        target: 3,
+    }.items()
     assert node.frame.definition.reads == (0, 1) and list(circuit.In(node)) == [0, 1]
     assert target_of(index).reads == (0, 1) and index.root.frame.definition.reads == ()
 
@@ -357,7 +430,9 @@ def test_the_same_slot_declared_twice_is_rejected(helpers):
     h = helpers
     for outputs in ([h.rng(LOC, 0), h.rng(LOC, 0)], [h.rng(LOC, 0, 2, 0)]):
         payload = h.single(h.body(1, [h.gate("add", h.rng(IN, 0, 2, 0))], outputs))
-        with pytest.raises(CompileError, match="the gate at offset 0 as an output more than once"):
+        with pytest.raises(
+            CompileError, match="the gate at offset 0 as an output more than once"
+        ):
             parse_description(payload, GATES)
 
 
@@ -380,7 +455,9 @@ def ten_gates(helpers, outputs: list[list[object]]) -> bytes:
 )
 def test_overlapping_strided_ranges_are_rejected(helpers, outputs, repeated):
     payload = ten_gates(helpers, [helpers.rng(*item) for item in outputs])
-    with pytest.raises(CompileError, match=f"the gate at offset {repeated} as an output more than once"):
+    with pytest.raises(
+        CompileError, match=f"the gate at offset {repeated} as an output more than once"
+    ):
         parse_description(payload, GATES)
 
 
@@ -397,14 +474,17 @@ def test_duplicates_through_passthrough_children_are_rejected(helpers):
             [h.rng(LOC, 1, 2, 1)],
         )
     )
-    with pytest.raises(CompileError, match="the gate at offset 0 as an output more than once"):
+    with pytest.raises(
+        CompileError, match="the gate at offset 0 as an output more than once"
+    ):
         parse_description(doc.serialize(root), GATES)
 
 
 def test_disjoint_interleaved_strides_are_accepted(helpers):
     h = helpers
     payload = ten_gates(
-        helpers, [h.rng(LOC, 1, 3, 2), h.rng(LOC, 0, 3, 2), h.rng(LOC, 6, 2, 3), h.rng(LOC, 7)]
+        helpers,
+        [h.rng(LOC, 1, 3, 2), h.rng(LOC, 0, 3, 2), h.rng(LOC, 6, 2, 3), h.rng(LOC, 7)],
     )
     root = parse_description(payload, GATES).root
     definition = root.steps[1].child
@@ -412,7 +492,17 @@ def test_disjoint_interleaved_strides_are_accepted(helpers):
     # the two interleaved runs at stride 2 are woven into the six gates they cover
     assert definition.out_runs == (Run(0, 6, 1, 8), Run(6, 2, 3, 8), Run(7, 1, 0, 8))
     assert definition.out_count == 9 and definition.out_bits == 72
-    assert sorted(definition.out_offset(r) for r in range(9)) == [0, 1, 2, 3, 4, 5, 6, 7, 9]
+    assert sorted(definition.out_offset(r) for r in range(9)) == [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        9,
+    ]
     # the same interface seen from the wrapping root, shifted past its two `in` gates
     assert root.out_runs == (Run(2, 6, 1, 8), Run(8, 2, 3, 8), Run(9, 1, 0, 8))
 
@@ -434,9 +524,17 @@ def strided_subset_payload(
     doc = h.Document()
     one = doc.add(h.body(1, [h.gate("add", h.rng(IN, 0, 2, 0))], [h.rng(LOC, 0)]))
     half = n // 2
-    outputs = [h.rng(LOC, half, n - half, 1), h.rng(LOC, 0, half, 1)] if swapped else [h.rng(LOC, 0, n, 1)]
+    outputs = (
+        [h.rng(LOC, half, n - half, 1), h.rng(LOC, 0, half, 1)]
+        if swapped
+        else [h.rng(LOC, 0, n, 1)]
+    )
     block = doc.add(h.body(1, [h.repeat(n, one, h.jrng(IN, 0))], outputs))
-    step = h.call(block, h.rng(IN, 0)) if copies == 1 else h.repeat(copies, block, h.jrng(IN, 0))
+    step = (
+        h.call(block, h.rng(IN, 0))
+        if copies == 1
+        else h.repeat(copies, block, h.jrng(IN, 0))
+    )
     target = doc.add(h.body(1, [step], [h.rng(LOC, 0, count, stride)]))
     return doc.serialize(h.wrap(doc, target, 1, count))
 
@@ -446,20 +544,33 @@ def strided_subset_payload(
     [
         (3_000_000, 1_000_000, 3, 1),  # every third slot inside one copy
         (3_000_000, 1_000_000, 3, 3),  # ... crossing copies
-        (1_000, 2_140, 1_001, 2_143),  # the diagonal: one element per copy, each a new residue
+        (
+            1_000,
+            2_140,
+            1_001,
+            2_143,
+        ),  # the diagonal: one element per copy, each a new residue
     ],
 )
-def test_a_strided_subset_of_a_huge_slot_linear_interface_is_one_run(helpers, n, count, stride, copies):
+def test_a_strided_subset_of_a_huge_slot_linear_interface_is_one_run(
+    helpers, n, count, stride, copies
+):
     start = time.perf_counter()
-    root = parse_description(strided_subset_payload(helpers, n, count, stride, copies), GATES).root
+    root = parse_description(
+        strided_subset_payload(helpers, n, count, stride, copies), GATES
+    ).root
     elapsed = time.perf_counter() - start
 
     assert root.steps[1].child.out_runs == (Run(0, count, stride, 8),)
-    assert root.out_runs == (Run(1, count, stride, 8),)  # shifted past the root's one `in` gate
+    assert root.out_runs == (
+        Run(1, count, stride, 8),
+    )  # shifted past the root's one `in` gate
     assert elapsed < 0.1, elapsed
 
 
-def test_interfaces_resolving_to_too_many_runs_are_rejected_without_doing_the_work(helpers):
+def test_interfaces_resolving_to_too_many_runs_are_rejected_without_doing_the_work(
+    helpers,
+):
     # the diagonal over a block whose interface is two swapped halves: one piece per element
     payload = strided_subset_payload(helpers, 1_000, 2_140, 1_001, 2_143, swapped=True)
     start = time.perf_counter()
@@ -480,17 +591,24 @@ def scattered_repeat_payload(helpers, copies: int) -> bytes:
     child = doc.add(
         h.body(
             1,
-            [h.gate("add", h.rng(IN, 0, 2, 0))] + [h.gate("mul", h.rng(LOC, k, 2, 0)) for k in range(5)],
+            [h.gate("add", h.rng(IN, 0, 2, 0))]
+            + [h.gate("mul", h.rng(LOC, k, 2, 0)) for k in range(5)],
             [h.rng(LOC, 5), h.rng(LOC, 2), h.rng(LOC, 0)],
             role="replay",
         )
     )
-    target = doc.add(h.body(1, [h.repeat(copies, child, h.jrng(IN, 0))], [h.rng(LOC, 0, 3 * copies, 1)]))
+    target = doc.add(
+        h.body(
+            1, [h.repeat(copies, child, h.jrng(IN, 0))], [h.rng(LOC, 0, 3 * copies, 1)]
+        )
+    )
     return doc.serialize(h.wrap(doc, target, 1, 3 * copies))
 
 
 @pytest.mark.parametrize("copies", [1, 2, 3, 50])
-def test_whole_copies_of_a_scattered_interface_cost_the_child_pieces_once(helpers, copies):
+def test_whole_copies_of_a_scattered_interface_cost_the_child_pieces_once(
+    helpers, copies
+):
     root = parse_description(scattered_repeat_payload(helpers, copies), GATES).root
     target = root.steps[1].child
 
@@ -503,9 +621,17 @@ def test_whole_copies_of_a_scattered_interface_cost_the_child_pieces_once(helper
     if copies > 1:
         # gates 2 and 5 of every copy interleave at the copy's pitch and are woven into one run
         assert target.out_runs == (Run(0, copies, 6, 8), Run(2, 2 * copies, 3, 8))
-        assert parse_description(scattered_repeat_payload(helpers, copies), GATES, CompilationLimits(max_output_runs=3))
+        assert parse_description(
+            scattered_repeat_payload(helpers, copies),
+            GATES,
+            CompilationLimits(max_output_runs=3),
+        )
         with pytest.raises(CompileError, match="more than max_output_runs = 2 runs"):
-            parse_description(scattered_repeat_payload(helpers, copies), GATES, CompilationLimits(max_output_runs=2))
+            parse_description(
+                scattered_repeat_payload(helpers, copies),
+                GATES,
+                CompilationLimits(max_output_runs=2),
+            )
 
 
 def brute_force_repeated(runs: list[Run]) -> bool:
@@ -525,7 +651,12 @@ def test_the_distinctness_sweep_agrees_with_enumeration_and_stays_near_linear():
     rng = random.Random(11)
     for _ in range(500):
         runs = [
-            Run(rng.randrange(40), count := rng.randrange(1, 6), rng.randrange(1, 7) if count > 1 else 0, 8)
+            Run(
+                rng.randrange(40),
+                count := rng.randrange(1, 6),
+                rng.randrange(1, 7) if count > 1 else 0,
+                8,
+            )
             for _ in range(rng.randrange(1, 7))
         ]
         found = _repeated_output(tuple(runs))
@@ -546,7 +677,9 @@ def test_interleaved_runs_that_tile_their_stride_are_woven():
     from veritor.core.description import _weave
 
     assert _weave((Run(0, 3, 2, 8), Run(1, 3, 2, 8))) == (Run(0, 6, 1, 8),)
-    assert _weave((Run(10, 4, 6, 8), Run(12, 4, 6, 8), Run(14, 4, 6, 8))) == (Run(10, 12, 2, 8),)
+    assert _weave((Run(10, 4, 6, 8), Run(12, 4, 6, 8), Run(14, 4, 6, 8))) == (
+        Run(10, 12, 2, 8),
+    )
     # too few runs for the stride, a mismatched pitch, a mismatched width: untouched
     for runs in (
         (Run(0, 3, 4, 8), Run(1, 3, 4, 8)),
@@ -556,7 +689,10 @@ def test_interleaved_runs_that_tile_their_stride_are_woven():
     ):
         assert _weave(runs) == runs
     # a woven group followed by more runs
-    assert _weave((Run(0, 2, 2, 8), Run(1, 2, 2, 8), Run(9, 2, 5, 8))) == (Run(0, 4, 1, 8), Run(9, 2, 5, 8))
+    assert _weave((Run(0, 2, 2, 8), Run(1, 2, 2, 8), Run(9, 2, 5, 8))) == (
+        Run(0, 4, 1, 8),
+        Run(9, 2, 5, 8),
+    )
 
 
 def test_the_total_number_of_runs_over_a_description_is_capped(helpers):
@@ -565,9 +701,13 @@ def test_the_total_number_of_runs_over_a_description_is_capped(helpers):
     total = sum(len(d.resolved_outputs) for d in description.definitions)
     assert total >= 3
 
-    assert parse_description(payload, GATES, CompilationLimits(max_output_runs_total=total))
+    assert parse_description(
+        payload, GATES, CompilationLimits(max_output_runs_total=total)
+    )
     with pytest.raises(CompileError, match="max_output_runs_total"):
-        parse_description(payload, GATES, CompilationLimits(max_output_runs_total=total - 1))
+        parse_description(
+            payload, GATES, CompilationLimits(max_output_runs_total=total - 1)
+        )
 
 
 # -- admission never touches the inputs -------------------------------------------------
@@ -617,7 +757,10 @@ def admission(copies: int, length: int) -> Callable[[], float]:
         work = expected_work(compiled, policy, 2)
         elapsed = time.perf_counter() - start
         assert compiled.index.root.frame.definition.input_count == 0
-        assert (compiled.index.input_count, compiled.index.weight_count) == (length, copies * length)
+        assert (compiled.index.input_count, compiled.index.weight_count) == (
+            length,
+            copies * length,
+        )
         assert boundary.count == length + copies
         assert {row.out_count for row in kinds} == {0, 1, copies}
         assert work > 0
@@ -637,7 +780,11 @@ def test_admission_does_not_scale_with_the_input_count(monkeypatch):
     monkeypatch.setattr(
         Definition,
         "reads",
-        property(lambda self: pytest.fail("admission must not enumerate what a definition reads")),
+        property(
+            lambda self: pytest.fail(
+                "admission must not enumerate what a definition reads"
+            )
+        ),
     )
     small = fastest(admission(SMALL, LENGTH))
     large = fastest(admission(LARGE, LENGTH))
@@ -650,11 +797,15 @@ def test_the_wide_layer_declares_and_reads_every_input():
     compiled = Compiler(GATES).compile(wide_description(4, 4), range(4))
     index = compiled.index
     layer = index.root.frame.definition
-    dot = index.verification_unit(4 + 16).frame.definition  # after the input and weight cells
+    dot = index.verification_unit(
+        4 + 16
+    ).frame.definition  # after the input and weight cells
 
     assert index.verification_units(0).count == 4 + 16 + 4
     assert layer.out_runs == (Run(4 + 16 + 2 * 4 - 2, 4, 2 * 4 - 1, 8),)
-    assert layer.input_runs == (Run(0, 4, 1, 8),) and layer.weight_runs == (Run(4, 16, 1, 8),)
+    assert layer.input_runs == (Run(0, 4, 1, 8),) and layer.weight_runs == (
+        Run(4, 16, 1, 8),
+    )
     assert (layer.input_total, layer.weight_total) == (4, 16)
     assert layer.input_count == 0 and layer.reads == ()
     assert len(dot.reads) == dot.input_count == 8

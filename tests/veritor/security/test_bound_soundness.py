@@ -59,7 +59,12 @@ def test_union_over_random_markings_is_below_the_fold(sec, seed):
         for policy, eta in POLICIES:
             union = len(accepted_outputs(outputs, policy, eta))
             result = bound(compiled, policy, eta)
-            assert math.log2(union) <= result.bits + TOLERANCE, (seed, marking, policy, eta)
+            assert math.log2(union) <= result.bits + TOLERANCE, (
+                seed,
+                marking,
+                policy,
+                eta,
+            )
             assert result.bits <= result.out_bits
             # bits == 0.0 certifies a single output; the honest output is always reachable
             if result.bits == 0.0:
@@ -72,7 +77,9 @@ def test_union_over_random_markings_is_below_the_fold(sec, seed):
             # every relaxation rounds toward admitting more: the fold never drops below
             # the exact union and never exceeds the per-set sum at the relaxed threshold
             per_set = subset_sum_bits(
-                compiled, policy, relaxed(eta, result, compiled.index.replay_units.count)
+                compiled,
+                policy,
+                relaxed(eta, result, compiled.index.replay_units.count),
             )
             assert result.bits <= per_set + TOLERANCE
 
@@ -83,7 +90,9 @@ def test_whole_unit_corruption_is_covered_by_the_unit_interface(sec):
     policy, eta = VerificationPolicy(Fraction(1, 2), 1), Fraction(1, 4)
     for seed in range(4):
         compiled = sec.random_marked_compiled(seed, 1)
-        outputs = transcript_outputs(compiled, list(range(1, compiled.index.input_count + 1)))
+        outputs = transcript_outputs(
+            compiled, list(range(1, compiled.index.input_count + 1))
+        )
         union = len(accepted_outputs(outputs, policy, eta))
         result = bound(compiled, policy, eta)
         assert result.errors_limit == 1  # one error already saturates the unit's cost
@@ -96,7 +105,9 @@ def test_integer_count_never_undercounts_and_never_exceeds_its_input():
     for count in range(1, 1 << 14):
         bits = math.log2(count)
         tightened = _integer_count(bits)
-        assert tightened >= bits, count  # never below the log2 of an integer it was given
+        assert tightened >= bits, (
+            count
+        )  # never below the log2 of an integer it was given
         assert tightened <= bits
     for count in range(1, 1 << 10):
         # ... nor below the exact log2 of the count when the input carries slack
@@ -107,13 +118,17 @@ def test_integer_count_never_undercounts_and_never_exceeds_its_input():
     for bits in (0.0, 1e-14, 0.5, 0.999999):
         assert _integer_count(bits) == 0.0  # at most one output
     assert _integer_count(1.0) == 1.0 and _integer_count(48.0) == 48.0
-    assert _integer_count(53.0) == 53.0 and _integer_count(1000.0) == 1000.0  # unchanged past 2**53
+    assert (
+        _integer_count(53.0) == 53.0 and _integer_count(1000.0) == 1000.0
+    )  # unchanged past 2**53
     # the fold's slack is removed where visible: a fully checked run is exactly zero bits
     assert _integer_count(7.460698725481157e-14) == 0.0
     # a count between two integers rounds down to the integer below (never up); a power of two
     # is exact, any other count is rounded up by one ulp
     assert _integer_count(math.log2(1024) + 1e-9) == 10.0
-    assert _integer_count(math.log2(1000) + 1e-9) == math.nextafter(math.log2(1000), math.inf)
+    assert _integer_count(math.log2(1000) + 1e-9) == math.nextafter(
+        math.log2(1000), math.inf
+    )
 
 
 def test_fully_checked_run_has_exactly_zero_capacity(model, sec):
@@ -142,7 +157,9 @@ def unit_cover_sum(compiled, policy, eta, *, source_only_units: bool) -> float:
     for errors in admissible_sets(compiled, policy, eta):
         if not source_only_units and not errors <= corruptible:
             continue
-        total += 1 << sum(out_bits(circuit, index.verification_unit(unit)) for unit in errors)
+        total += 1 << sum(
+            out_bits(circuit, index.verification_unit(unit)) for unit in errors
+        )
     return math.log2(total)
 
 
@@ -171,7 +188,9 @@ def test_source_only_units_contribute_no_error_terms(sec):
     )
     assert exact - TOLERANCE <= result.knapsack_bits <= admitted + TOLERANCE
     with_sources = unit_cover_sum(compiled, policy, eta, source_only_units=True)
-    assert result.knapsack_bits < with_sources - 0.5  # the source cells' subsets are gone
+    assert (
+        result.knapsack_bits < with_sources - 0.5
+    )  # the source cells' subsets are gone
     assert with_sources > exact + 1.0  # (the previous fold reproduced ``with_sources``)
     # an error set naming a source cell does survive sampling ...
     source_cell = frozenset({0})

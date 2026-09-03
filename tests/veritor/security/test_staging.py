@@ -31,7 +31,9 @@ from veritor.protocol.phases import boundary_phase
 def test_verifier_rejects_messages_out_of_order(model):
     expectation = model.expectation()
     verifier = VerifierSession(expectation, model.compiled)
-    prover = ProverSession(model.compiled, verifier.header, model.values, weight_tree=model.tree)
+    prover = ProverSession(
+        model.compiled, verifier.header, model.values, weight_tree=model.tree
+    )
     boundary = prover.boundary()
     with pytest.raises(Reject) as early:
         verifier.receive_interiors(InteriorMessage(()))
@@ -59,7 +61,8 @@ def test_verifier_rejects_messages_out_of_order(model):
     # ... but a verdict does: after a rejection every message is INVALID_PHASE
     verifier = VerifierSession(expectation, model.compiled)
     bad = BoundaryMessage(
-        Commitment(boundary.commitment.root, boundary.commitment.count + 1), boundary.io_openings
+        Commitment(boundary.commitment.root, boundary.commitment.count + 1),
+        boundary.io_openings,
     )
     with pytest.raises(Reject) as verdict:
         verifier.receive_boundary(bad)
@@ -86,23 +89,31 @@ def test_prover_rejects_calls_out_of_order(model):
         prover.interiors(challenge)
 
 
-def test_replay_selection_is_derived_from_seed_header_and_boundary_only(honest_run, model, sec):
+def test_replay_selection_is_derived_from_seed_header_and_boundary_only(
+    honest_run, model, sec
+):
     """``J`` is recomputed from the boundary phase; the header carries no seed."""
 
     run, expectation = honest_run
     transcript = run.transcript
-    derived = sec.replay_selection(expectation, transcript.header, transcript.boundary, model.compiled)
+    derived = sec.replay_selection(
+        expectation, transcript.header, transcript.boundary, model.compiled
+    )
     assert derived == transcript.replay_challenge.selected
     document = sec.transcript_document(transcript)
     text = sec.encode_transcript(transcript).decode()
     assert expectation.q_seed.hex() not in str(document["header"])
     assert expectation.q_seed.hex() not in str(document["boundary"])
-    assert text.count(expectation.q_seed.hex()) == 1 and text.count(expectation.s_seed.hex()) == 1
+    assert (
+        text.count(expectation.q_seed.hex()) == 1
+        and text.count(expectation.s_seed.hex()) == 1
+    )
     assert document["replay_challenge"]["seed"] == expectation.q_seed.hex()
     assert document["sample_challenge"]["seed"] == expectation.s_seed.hex()
     # a different boundary root gives a different phase digest, hence (in general) another J
     other = BoundaryMessage(
-        Commitment(bytes(32), transcript.boundary.commitment.count), transcript.boundary.io_openings
+        Commitment(bytes(32), transcript.boundary.commitment.count),
+        transcript.boundary.io_openings,
     )
     assert boundary_phase(transcript.header, other) != boundary_phase(
         transcript.header, transcript.boundary
@@ -111,7 +122,9 @@ def test_replay_selection_is_derived_from_seed_header_and_boundary_only(honest_r
     for index in range(16):
         expectation = model.expectation(sec.HALVES, q_seed=sec.seed("q", index))
         selections.add(
-            sec.replay_selection(expectation, transcript.header, transcript.boundary, model.compiled)
+            sec.replay_selection(
+                expectation, transcript.header, transcript.boundary, model.compiled
+            )
         )
     assert len(selections) > 1
 
@@ -123,13 +136,21 @@ def test_prover_changing_its_boundary_after_seeing_j_is_invalid_opening(model, s
     address = model.hidden_boundary_addresses[1]
     forged = dict(model.values)
     forged[address] = (model.values[address] + 1) % (1 << model.width)
-    run = model.run(expectation, model.values, prover=sec.TamperingProver, recommit_boundary=forged)
+    run = model.run(
+        expectation, model.values, prover=sec.TamperingProver, recommit_boundary=forged
+    )
     assert run.report.code == VerificationCode.INVALID_OPENING
-    assert run.report.sampled_replay_units == (0, 1, 2)  # J was issued; the evidence failed
+    assert run.report.sampled_replay_units == (
+        0,
+        1,
+        2,
+    )  # J was issued; the evidence failed
 
 
 @pytest.mark.parametrize("message", ["replay_challenge", "sample_challenge"])
-def test_transcript_with_an_altered_selection_is_challenge_mismatch(honest_run, model, sec, message):
+def test_transcript_with_an_altered_selection_is_challenge_mismatch(
+    honest_run, model, sec, message
+):
     run, expectation = honest_run
 
     def drop_one(document: dict) -> None:
@@ -143,14 +164,20 @@ def test_transcript_with_an_altered_selection_is_challenge_mismatch(honest_run, 
     def other_seed(document: dict) -> None:
         document[message]["seed"] = sec.seed("other").hex()
 
-    report = model.verify(sec.mutate_transcript(run.transcript, other_seed), expectation)
+    report = model.verify(
+        sec.mutate_transcript(run.transcript, other_seed), expectation
+    )
     assert report.code == VerificationCode.EXPECTATION_MISMATCH
 
 
 def test_make_expectation_draws_fresh_seeds_by_default(model, sec):
     arguments = {"parameters": sec.NO_CAPACITY_STATEMENT, "weights": model.kappa}
-    first = make_expectation(model.compilation(), sec.CHECK_EVERYTHING, model.outputs, **arguments)
-    second = make_expectation(model.compilation(), sec.CHECK_EVERYTHING, model.outputs, **arguments)
+    first = make_expectation(
+        model.compilation(), sec.CHECK_EVERYTHING, model.outputs, **arguments
+    )
+    second = make_expectation(
+        model.compilation(), sec.CHECK_EVERYTHING, model.outputs, **arguments
+    )
     assert len(first.q_seed) == len(first.s_seed) == 32
     assert first.q_seed != second.q_seed and first.s_seed != second.s_seed
     assert first.q_seed != first.s_seed and first.session_id != second.session_id
@@ -166,7 +193,9 @@ def test_reused_seeds_let_the_prover_predict_and_evade_both_selections(model, se
     """
 
     policy = sec.HALVES
-    first = model.expectation(policy, q_seed=sec.seed("reused-q"), s_seed=sec.seed("reused-s"))
+    first = model.expectation(
+        policy, q_seed=sec.seed("reused-q"), s_seed=sec.seed("reused-s")
+    )
     revealed = model.run(first, model.values).transcript
     assert revealed is not None
     q_seed, s_seed = revealed.replay_challenge.seed, revealed.sample_challenge.seed
@@ -180,12 +209,18 @@ def test_reused_seeds_let_the_prover_predict_and_evade_both_selections(model, se
     replay = model.replay_unit_of(stage)
     claimed = (false_output, *model.outputs[1:])
     second = model.expectation(
-        policy, claimed_outputs=claimed, session_id=b"session-2", q_seed=q_seed, s_seed=s_seed
+        policy,
+        claimed_outputs=claimed,
+        session_id=b"session-2",
+        q_seed=q_seed,
+        s_seed=s_seed,
     )
     header = model.header(second)  # the verifier sends the header before any commitment
 
     chosen = None
-    for free in range(1 << model.width):  # grind the interior value the false unit may hold
+    for free in range(
+        1 << model.width
+    ):  # grind the interior value the false unit may hold
         values, outputs = model.corrupt({mul: free, add: false_output})
         assert outputs == claimed
         # the product is wrong unless honest; the sum is wrong unless it adds up to the claim
@@ -193,12 +228,18 @@ def test_reused_seeds_let_the_prover_predict_and_evade_both_selections(model, se
         wrong = {
             which
             for which, address in ((prod_unit, mul), (unit, add))
-            if circuit.evaluate_gate(address, tuple(values[a] for a in circuit[address].args))
+            if circuit.evaluate_gate(
+                address, tuple(values[a] for a in circuit[address].args)
+            )
             != values[address]
         }
         assert wrong
         prover = ProverSession(
-            model.compiled, header, values, replay=assignment_replay(values), weight_tree=model.tree
+            model.compiled,
+            header,
+            values,
+            replay=assignment_replay(values),
+            weight_tree=model.tree,
         )
         boundary = prover.boundary()
         j = sec.replay_selection(second, header, boundary, model.compiled)
@@ -207,7 +248,9 @@ def test_reused_seeds_let_the_prover_predict_and_evade_both_selections(model, se
             break
         challenge = ReplayChallenge(q_seed, j)
         interiors = prover.interiors(challenge)
-        t = sec.sample_selection(second, header, boundary, challenge, interiors, model.compiled)
+        t = sec.sample_selection(
+            second, header, boundary, challenge, interiors, model.compiled
+        )
         if not wrong & set(t):
             chosen, predicted = values, (j, t)
             break

@@ -200,10 +200,15 @@ def bound(
     knapsack = fold.knapsack(replay) if options.knapsack else math.inf
     laplace = fold.laplace(replay)
     bits = min(knapsack, laplace, float(out_bits))
-    if max_faults:  # M6: declarations chosen after the q-challenge, see veritor.analysis.faults
+    if (
+        max_faults
+    ):  # M6: declarations chosen after the q-challenge, see veritor.analysis.faults
         from .faults import declared_bits
 
-        bits = min(declared_bits(table, policy, eta, options, max_faults, bits), float(out_bits))
+        bits = min(
+            declared_bits(table, policy, eta, options, max_faults, bits),
+            float(out_bits),
+        )
     return BoundResult(
         bits=_integer_count(max(bits, 0.0)),
         capped=bits >= out_bits,
@@ -280,7 +285,11 @@ class _Fold:
         else:
             wanted = math.ceil(options.resolution * self.budget / first)
             self.buckets = max(1, min(options.max_buckets, wanted))
-        self.step = math.inf if math.isinf(self.budget) else self.budget / self.buckets * (1 + 2.0**-50)
+        self.step = (
+            math.inf
+            if math.isinf(self.budget)
+            else self.budget / self.buckets * (1 + 2.0**-50)
+        )
         self.top = self.buckets - 1
         self.limit = self._errors_limit(options.max_errors)
         self._series: dict[str, ErrorSeries] = {}
@@ -331,7 +340,11 @@ class _Fold:
                 if self.rows[child].verification_units == 0:
                     continue
                 piece = power(self.series(child), count, self.limit)
-                result = piece if len(result.head) == 1 else multiply(result, piece, self.limit)
+                result = (
+                    piece
+                    if len(result.head) == 1
+                    else multiply(result, piece, self.limit)
+                )
             result = cap(result, cut_bits(row))
         self._series[kind] = result
         return result
@@ -371,7 +384,9 @@ class _Fold:
 
     # -- Laplace transform bound --------------------------------------------
 
-    def _terms(self, replay: list[KindSummary]) -> list[tuple[int, np.ndarray, np.ndarray]]:
+    def _terms(
+        self, replay: list[KindSummary]
+    ) -> list[tuple[int, np.ndarray, np.ndarray]]:
         """Per RU kind: copies, ``log2`` cover weights and costs in bits, ``l = 0`` first.
 
         Terms of infinite cost (error sets that never survive) and of zero
@@ -403,7 +418,9 @@ class _Fold:
         costs = []
         for copies, kind_weights, kind_costs in self._terms(replay):
             if len(kind_weights) > 1:
-                weights.append(kind_weights[1:] + math.nextafter(math.log2(copies), math.inf))
+                weights.append(
+                    kind_weights[1:] + math.nextafter(math.log2(copies), math.inf)
+                )
                 costs.append(kind_costs[1:])
         if not weights:
             return 0.0

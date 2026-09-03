@@ -43,7 +43,9 @@ DOT_OPS = frozenset({"mul", "add"})
 """The ops of a dot product VU: a ``repeat`` of products then a tree of sums."""
 
 
-def expected_faults(device_hours: float, rate: float = SDC_RATE_PER_DEVICE_HOUR) -> float:
+def expected_faults(
+    device_hours: float, rate: float = SDC_RATE_PER_DEVICE_HOUR
+) -> float:
     """The Poisson mean of silent faults in a window of ``device_hours``."""
 
     if device_hours < 0 or rate < 0:
@@ -66,7 +68,9 @@ def fault_budget(mean: float, tail: float = 1e-6, *, at_least: int = 1) -> int:
     if mean == 0:
         return at_least
     f = at_least
-    cumulative = sum(math.exp(-mean) * mean**k / math.factorial(k) for k in range(f + 1))
+    cumulative = sum(
+        math.exp(-mean) * mean**k / math.factorial(k) for k in range(f + 1)
+    )
     while 1 - cumulative > tail:
         f += 1
         cumulative += math.exp(-mean) * mean**f / math.factorial(f)
@@ -116,7 +120,9 @@ def evaluate_with_flips(
         mask = flips.get(address)
         if mask is not None:
             if mask & ~((1 << ref.width) - 1) or not mask:
-                raise ValueError(f"flip mask {mask:#x} is not a nonzero {ref.width}-bit mask")
+                raise ValueError(
+                    f"flip mask {mask:#x} is not a nonzero {ref.width}-bit mask"
+                )
             value ^= mask
         values[address] = value
     return values
@@ -149,10 +155,14 @@ class Fault:
     def changed_outputs(self) -> int:
         """How many streamed tokens the flip changed."""
 
-        return sum(a != b for a, b in zip(self.outputs, self.honest_outputs, strict=True))
+        return sum(
+            a != b for a, b in zip(self.outputs, self.honest_outputs, strict=True)
+        )
 
 
-def _fault_site(compiled: Compiled, verification_unit: int, bit: int) -> tuple[int, int]:
+def _fault_site(
+    compiled: Compiled, verification_unit: int, bit: int
+) -> tuple[int, int]:
     """``(address, replay_unit)`` of VU ``verification_unit``'s output word, checked for ``bit``."""
 
     circuit, index = compiled.circuit, compiled.index
@@ -160,7 +170,9 @@ def _fault_site(compiled: Compiled, verification_unit: int, bit: int) -> tuple[i
     address = node.interval[-1]
     ref = circuit[address]
     if ref.is_source:
-        raise ValueError(f"VU {verification_unit} ends in a source gate; nothing to corrupt")
+        raise ValueError(
+            f"VU {verification_unit} ends in a source gate; nothing to corrupt"
+        )
     if type(bit) is not int or not 0 <= bit < ref.width:
         raise ValueError(f"bit must lie in [0, {ref.width})")
     replay_unit = node.replay_unit
@@ -212,10 +224,14 @@ class FaultInjector:
     result equals :func:`inject_fault`'s.
     """
 
-    def __init__(self, compiled: Compiled, inputs: Iterable[int], weights: Iterable[int]) -> None:
+    def __init__(
+        self, compiled: Compiled, inputs: Iterable[int], weights: Iterable[int]
+    ) -> None:
         circuit = compiled.circuit
         self.compiled = compiled
-        self.honest: dict[int, int] = dict(enumerate(circuit.evaluate(tuple(inputs), tuple(weights))))
+        self.honest: dict[int, int] = dict(
+            enumerate(circuit.evaluate(tuple(inputs), tuple(weights)))
+        )
         readers: list[list[int]] = [[] for _ in range(circuit.n)]
         for address in range(circuit.n):
             for argument in circuit[address].args:
@@ -230,7 +246,9 @@ class FaultInjector:
         queued = set(flips)
         pending = list(queued)
         heapq.heapify(pending)
-        while pending:  # gates read only earlier gates, so address order is evaluation order
+        while (
+            pending
+        ):  # gates read only earlier gates, so address order is evaluation order
             address = heapq.heappop(pending)
             ref = circuit[address]
             value = (
@@ -241,7 +259,9 @@ class FaultInjector:
             mask = flips.get(address)
             if mask is not None:
                 if mask & ~((1 << ref.width) - 1) or not mask:
-                    raise ValueError(f"flip mask {mask:#x} is not a nonzero {ref.width}-bit mask")
+                    raise ValueError(
+                        f"flip mask {mask:#x} is not a nonzero {ref.width}-bit mask"
+                    )
                 value ^= mask
             if value != values[address]:
                 values[address] = value

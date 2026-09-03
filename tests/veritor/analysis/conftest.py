@@ -113,7 +113,10 @@ def random_compiled(seed: int, width: int = 2, max_gates: int = 8) -> Compiled:
     gate_set = make_word_gate_set(width)
     tracer = Tracer(gate_set)
     ops = [tracer.gate("add"), tracer.gate("mul")]
-    layout = [[rng.randint(1, 2) for _ in range(rng.randint(1, 3))] for _ in range(rng.randint(1, 2))]
+    layout = [
+        [rng.randint(1, 2) for _ in range(rng.randint(1, 3))]
+        for _ in range(rng.randint(1, 2))
+    ]
     while sum(map(sum, layout)) > max_gates:
         layout[-1].pop()
         if not layout[-1]:
@@ -125,7 +128,9 @@ def random_compiled(seed: int, width: int = 2, max_gates: int = 8) -> Compiled:
         return tracer.inputs(input_count)
 
     def unit_definition(r: int, u: int, gates: int, inputs: int):
-        @tracer.definition(input_count=inputs, key=("unit", r, u, gates, inputs), role="verification")
+        @tracer.definition(
+            input_count=inputs, key=("unit", r, u, gates, inputs), role="verification"
+        )
         def unit(v):
             values = list(v)
             outputs = []
@@ -139,7 +144,9 @@ def random_compiled(seed: int, width: int = 2, max_gates: int = 8) -> Compiled:
         return unit
 
     def replay_definition(r: int, units: list[int], inputs: int):
-        @tracer.definition(input_count=inputs, key=("replay", r, tuple(units), inputs), role="replay")
+        @tracer.definition(
+            input_count=inputs, key=("replay", r, tuple(units), inputs), role="replay"
+        )
         def unit(v):
             values = list(v)
             outputs = []
@@ -165,7 +172,9 @@ def random_compiled(seed: int, width: int = 2, max_gates: int = 8) -> Compiled:
             outputs = produced
         return outputs
 
-    return Compiler(gate_set).compile(tracer.serialize(root), list(range(1, input_count + 1)))
+    return Compiler(gate_set).compile(
+        tracer.serialize(root), list(range(1, input_count + 1))
+    )
 
 
 def bottlenecked(fanout: int, width: int = 8) -> Compiled:

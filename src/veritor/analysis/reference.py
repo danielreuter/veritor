@@ -77,14 +77,22 @@ def check_addresses(compiled: Compiled) -> frozenset[int]:
     return frozenset(outputs[ordinal] for ordinal, _ in compiled.check_values())
 
 
-def out_bits(circuit: Circuit, node: IndexNode, checked: frozenset[int] = frozenset()) -> int:
+def out_bits(
+    circuit: Circuit, node: IndexNode, checked: frozenset[int] = frozenset()
+) -> int:
     """The width of ``Out(node)`` in bits; at the root, less its check outputs."""
 
     skipped = checked if node.frame.parent is None else frozenset()
-    return sum(circuit[address].width for address in circuit.Out(node) if address not in skipped)
+    return sum(
+        circuit[address].width
+        for address in circuit.Out(node)
+        if address not in skipped
+    )
 
 
-def reach_bits(circuit: Circuit, node: IndexNode, checked: frozenset[int] = frozenset()) -> int:
+def reach_bits(
+    circuit: Circuit, node: IndexNode, checked: frozenset[int] = frozenset()
+) -> int:
     """The width of the circuit outputs reachable from the node's gates, in bits.
 
     Forward along argument reads from every gate of the node but its source
@@ -107,7 +115,9 @@ def reach_bits(circuit: Circuit, node: IndexNode, checked: frozenset[int] = froz
     )
 
 
-def ancestor_bits(circuit: Circuit, node: IndexNode, checked: frozenset[int] = frozenset()) -> int:
+def ancestor_bits(
+    circuit: Circuit, node: IndexNode, checked: frozenset[int] = frozenset()
+) -> int:
     """The narrowest declared interface among the node's proper ancestors, in bits.
 
     The exact value of what :attr:`~veritor.core.KindSummary.ancestor_bits`
@@ -142,7 +152,11 @@ def cover_bits(compiled: Compiled, errors: ErrorSet) -> int:
     checked = check_addresses(compiled)
 
     def charge(node: IndexNode, enclosing: int) -> int:
-        return min(out_bits(circuit, node, checked), reach_bits(circuit, node, checked), enclosing)
+        return min(
+            out_bits(circuit, node, checked),
+            reach_bits(circuit, node, checked),
+            enclosing,
+        )
 
     def value(node: IndexNode, enclosing: int) -> int:
         """The cover of the errors under ``node``; ``enclosing`` is the narrowest interface above it."""
@@ -196,7 +210,9 @@ def cut_bits(compiled: Compiled, errors: ErrorSet) -> int:
     return int(nx.maximum_flow_value(graph, "source", "sink"))
 
 
-def admissible_sets(compiled: Compiled, policy: VerificationPolicy, eta: Fraction) -> list[ErrorSet]:
+def admissible_sets(
+    compiled: Compiled, policy: VerificationPolicy, eta: Fraction
+) -> list[ErrorSet]:
     """Every ``E`` with ``sigma(E) > eta``."""
 
     index = compiled.index
@@ -215,7 +231,10 @@ def subset_sum_bits(
 ) -> float:
     """``log2 sum_{E admissible} 2**kappa(E)``, exactly."""
 
-    total = sum(1 << kappa(compiled, errors) for errors in admissible_sets(compiled, policy, eta))
+    total = sum(
+        1 << kappa(compiled, errors)
+        for errors in admissible_sets(compiled, policy, eta)
+    )
     return math.log2(total)
 
 

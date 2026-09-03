@@ -27,8 +27,12 @@ def test_demo_g_compiles_to_a_compiled_circuit() -> None:
     assert compilation.inputs == request.public_inputs and compilation.advice == b""
     assert compiled.circuit.input_count == len(request.public_inputs)
     outputs = compiled.circuit.evaluate(request.public_inputs)
-    assert tuple(outputs[o] for o in compiled.circuit.outputs) == request.expected_outputs
-    assert request.expected_outputs == expected_dot_outputs(request.batch, request.width)
+    assert (
+        tuple(outputs[o] for o in compiled.circuit.outputs) == request.expected_outputs
+    )
+    assert request.expected_outputs == expected_dot_outputs(
+        request.batch, request.width
+    )
 
 
 def test_demo_g_marks_dots_as_replay_and_macs_as_verification() -> None:
@@ -39,7 +43,11 @@ def test_demo_g_marks_dots_as_replay_and_macs_as_verification() -> None:
     assert index.replay_units.count == len(lengths)
     # every cell is an `in` gate in its own verification unit, then one mac per step
     assert index.verification_unit_count == sum(1 + 2 * n + n for n in lengths)
-    assert index.input_count == len(request.public_inputs) == sum(1 + 2 * n for n in lengths)
+    assert (
+        index.input_count
+        == len(request.public_inputs)
+        == sum(1 + 2 * n for n in lengths)
+    )
     assert index.weight_count == 0 and index.root.frame.definition.input_count == 0
     for unit, length in enumerate(lengths):
         node = index.replay_units.unit(unit)
@@ -54,7 +62,9 @@ def test_demo_g_marks_dots_as_replay_and_macs_as_verification() -> None:
     cells_in_order = [
         a
         for unit in index.replay_units
-        for a in range(unit.interval.start, unit.interval.start + 1 + 2 * lengths[unit.replay_unit])
+        for a in range(
+            unit.interval.start, unit.interval.start + 1 + 2 * lengths[unit.replay_unit]
+        )
     ]
     assert list(index.inputs()) == cells_in_order
 
@@ -87,7 +97,9 @@ def test_demo_g_description_is_one_repeat_per_run_of_equal_lengths() -> None:
     assert len(long) - len(short) < 16
     assert len(short_inputs) == 3 * 9 + 5 * 5 and len(long_inputs) == 30 * 9 + 50 * 5
 
-    compiled = compile_demo_g(DemoGCompileRequest(batch=_batch((4,) * 30 + (2,) * 50))).compiled
+    compiled = compile_demo_g(
+        DemoGCompileRequest(batch=_batch((4,) * 30 + (2,) * 50))
+    ).compiled
     assert compiled.index.replay_units.count == 80
     assert compiled.index.verification_unit_count == 30 * (9 + 4) + 50 * (5 + 2)
     assert compiled.index.input_count == 30 * 9 + 50 * 5
@@ -96,7 +108,9 @@ def test_demo_g_description_is_one_repeat_per_run_of_equal_lengths() -> None:
 def test_demo_g_takes_advice_the_verifier_charges() -> None:
     """The advice is accepted (and ignored) by ``DemoG``; ``Compile`` charges and bounds it."""
 
-    with_advice = compile_demo_g(DemoGCompileRequest(advice=b"hint", max_advice_bits=32))
+    with_advice = compile_demo_g(
+        DemoGCompileRequest(advice=b"hint", max_advice_bits=32)
+    )
     without = compile_demo_g()
 
     assert with_advice.advice == b"hint" and with_advice.advice_bits == 32
@@ -122,5 +136,7 @@ def test_demo_g_rejects_malformed_batches() -> None:
     with pytest.raises(TracerError, match="advice must be bytes"):
         demo(_batch((2,)), "hint")  # type: ignore[arg-type]
     # through Compile, a failing constructor is a rejection, not a crash
-    with pytest.raises(CompileError, match="the constructor failed: DemoG needs at least one"):
+    with pytest.raises(
+        CompileError, match="the constructor failed: DemoG needs at least one"
+    ):
         compile_demo_g(DemoGCompileRequest(batch=BatchInput(())))

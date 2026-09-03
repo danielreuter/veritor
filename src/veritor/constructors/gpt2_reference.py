@@ -719,7 +719,9 @@ def address_map(
 
     shape = model.shape
     if shape.d_ff == shape.d_model:
-        raise ValueError("address_map needs d_ff != d_model: the projections would share a kind")
+        raise ValueError(
+            "address_map needs d_ff != d_model: the projections would share a kind"
+        )
     d, dh, heads, f, vocab = (
         shape.d_model,
         shape.d_head,
@@ -900,7 +902,11 @@ def address_map(
             best[step, b] = block_frame.base + block_frame.definition.size - 2
             idx[step, b] = block_frame.base + block_frame.definition.size - 1
         if len(blocks) == 1 and shape.vocab <= shape.argmax_block:
-            token[step] = -1  # the block's index gate *is* the token: recorded once, as ``argmax.idx``
+            token[
+                step
+            ] = (
+                -1
+            )  # the block's index gate *is* the token: recorded once, as ``argmax.idx``
         else:
             tops = _copies(
                 forward_frame,

@@ -67,7 +67,10 @@ def test_error_counts_must_be_nonnegative_integers():
     [
         (VerificationPolicy(Fraction(1, 2), Fraction(1, 2)), Fraction(1, 4)),
         (VerificationPolicy(Fraction(1, 3), Fraction(1, 7)), Fraction(1, 10**9)),
-        (VerificationPolicy(Fraction(999, 1000), Fraction(1, 1000)), Fraction(1, 10**30)),
+        (
+            VerificationPolicy(Fraction(999, 1000), Fraction(1, 1000)),
+            Fraction(1, 10**30),
+        ),
         (VerificationPolicy(1, Fraction(1, 2)), Fraction(1, 8)),
     ],
 )
@@ -94,7 +97,9 @@ def test_costs_at_the_endpoints():
     assert unit_cost(VerificationPolicy(0, 1), 5) == 0.0
     assert budget(Fraction(0)) == float("inf")
     assert saturation_cost(VerificationPolicy(1, 1)) == float("inf")
-    assert saturation_cost(VerificationPolicy(Fraction(1, 2), 1)) == pytest.approx(0.6931471805599453)
+    assert saturation_cost(VerificationPolicy(Fraction(1, 2), 1)) == pytest.approx(
+        0.6931471805599453
+    )
 
 
 @pytest.mark.parametrize("eta", [Fraction(1), Fraction(5, 4), Fraction(-1, 8), 0, 0.5])

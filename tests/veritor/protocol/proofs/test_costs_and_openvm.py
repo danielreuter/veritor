@@ -64,7 +64,9 @@ class TestCosts:
         assert estimate.positions == sum(
             len(item.positions) for item in statement.obligations
         )
-        assert estimate.gates == sum(statement.program(item.kind).size for item in statement.obligations)
+        assert estimate.gates == sum(
+            statement.program(item.kind).size for item in statement.obligations
+        )
         assert estimate.statement_bytes == len(encode_statement(statement))
         # the implied witness size is within a few bytes of the real one
         assert abs(estimate.witness_bytes - len(encode_witness(witness))) < 64
@@ -150,7 +152,11 @@ class TestCosts:
         assert batched.proof_overhead < deep.proof_overhead / 100
         assert batched.hash_cost == deep.hash_cost
         assert float(deep.hash_cost) == pytest.approx(
-            (SP1_CYCLES_PER_LEAF + 20 * SP1_CYCLES_PER_MERKLE_LEVEL + SP1_CYCLES_PER_PARSE_BYTE * (40 + 640))
+            (
+                SP1_CYCLES_PER_LEAF
+                + 20 * SP1_CYCLES_PER_MERKLE_LEVEL
+                + SP1_CYCLES_PER_PARSE_BYTE * (40 + 640)
+            )
             / (LAPTOP_M_SERIES.khz * 1000)
         )
         with pytest.raises(ValueError):

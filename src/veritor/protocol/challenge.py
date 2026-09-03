@@ -72,8 +72,9 @@ def _prf(
     material = bytearray()
     for block in range((byte_count + 31) // 32):
         material.extend(
-            hmac.new(seed, _frame(base, _uint(attempt), _uint(block)), hashlib.sha256)
-            .digest()
+            hmac.new(
+                seed, _frame(base, _uint(attempt), _uint(block)), hashlib.sha256
+            ).digest()
         )
     del material[byte_count:]
     return material
@@ -100,7 +101,9 @@ def uniform_below(
     bits = denominator.bit_length()
     if bits > limits.max_manifest_bytes * 8:
         raise ResourceLimit(
-            "challenge_denominator_bits", limit=limits.max_manifest_bytes * 8, observed=bits
+            "challenge_denominator_bits",
+            limit=limits.max_manifest_bytes * 8,
+            observed=bits,
         )
     if denominator == 1:
         return 0
@@ -260,7 +263,9 @@ def derive_replay_selection(
 
     count = compiled.index.replay_units.count
     limits.enforce("max_units", count)
-    return bernoulli_subset(seed, _Q_STAGE, boundary_phase_digest, count, policy.q, limits)
+    return bernoulli_subset(
+        seed, _Q_STAGE, boundary_phase_digest, count, policy.q, limits
+    )
 
 
 def derive_sample_selection(
@@ -282,7 +287,9 @@ def derive_sample_selection(
     ends = list(accumulate(block.count for block in blocks))
     count = ends[-1] if ends else 0
     limits.enforce("max_units", count)
-    ranks = bernoulli_subset(seed, _S_STAGE, interior_phase_digest, count, policy.s, limits)
+    ranks = bernoulli_subset(
+        seed, _S_STAGE, interior_phase_digest, count, policy.s, limits
+    )
 
     def unit_at(rank: int) -> int:
         block = bisect_right(ends, rank)

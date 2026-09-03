@@ -244,18 +244,30 @@ class Schedule:
                 value = getattr(join, field)
                 if type(value) is not int or not 0 <= value < limit:
                     raise ScheduleError(f"join {field} {value!r} is out of range")
-            if type(join.length) is not int or join.length < 1 or join.step + join.length > self.steps:
+            if (
+                type(join.length) is not int
+                or join.length < 1
+                or join.step + join.length > self.steps
+            ):
                 raise ScheduleError(f"join length {join.length!r} does not fit the run")
-            if previous is not None and (previous.pod, previous.step, previous.slot) >= (
+            if previous is not None and (
+                previous.pod,
+                previous.step,
+                previous.slot,
+            ) >= (
                 join.pod,
                 join.step,
                 join.slot,
             ):
-                raise ScheduleError("joins must be strictly sorted by (pod, step, slot)")
+                raise ScheduleError(
+                    "joins must be strictly sorted by (pod, step, slot)"
+                )
             previous = join
             key = (join.pod, join.slot)
             if busy_until.get(key, 0) > join.step:
-                raise ScheduleError(f"slot {join.slot} of pod {join.pod} is double-booked at step {join.step}")
+                raise ScheduleError(
+                    f"slot {join.slot} of pod {join.pod} is double-booked at step {join.step}"
+                )
             busy_until[key] = join.step + join.length
 
     # -- canonical bits -----------------------------------------------------------
@@ -273,8 +285,17 @@ class Schedule:
         :meth:`decode` can insist on it.
         """
 
-        out = [gamma(self.pods), gamma(self.slots), gamma(self.steps), gamma(1 + len(self.joins))]
-        pod_width, slot_width, step_width = width(self.pods), width(self.slots), width(self.steps)
+        out = [
+            gamma(self.pods),
+            gamma(self.slots),
+            gamma(self.steps),
+            gamma(1 + len(self.joins)),
+        ]
+        pod_width, slot_width, step_width = (
+            width(self.pods),
+            width(self.slots),
+            width(self.steps),
+        )
         for join in self.joins:
             out.append(format(join.pod, f"0{pod_width}b") if pod_width else "")
             out.append(format(join.step, f"0{step_width}b") if step_width else "")
@@ -335,7 +356,9 @@ class Schedule:
 
     # -- consistency with the requests ------------------------------------------------
 
-    def _checked(self, requests: Sequence[Request]) -> tuple[dict[int, tuple[int, ...]], tuple[Span, ...]]:
+    def _checked(
+        self, requests: Sequence[Request]
+    ) -> tuple[dict[int, tuple[int, ...]], tuple[Span, ...]]:
         """The attempts per request and the span of every join, checking the schedule against the requests."""
 
         by_request: dict[int, list[int]] = {}
@@ -346,7 +369,9 @@ class Schedule:
         attempts: dict[int, tuple[int, ...]] = {}
         spans: list[Span | None] = [None] * len(self.joins)
         for request in sorted(by_request):
-            indices = sorted(by_request[request], key=lambda index: self.joins[index].step)
+            indices = sorted(
+                by_request[request], key=lambda index: self.joins[index].step
+            )
             for earlier, later in pairwise(indices):
                 first, second = self.joins[earlier], self.joins[later]
                 if first.step + first.length > second.step:
@@ -369,7 +394,9 @@ class Schedule:
                     steps = 1 if join.chunk == 0 else -(-prompt // join.chunk)
                     span = Span(steps, 0, max(0, join.length - steps + 1))
                 if span.end > max_new:
-                    raise ScheduleError(f"request {request} is scheduled for more than max_new tokens")
+                    raise ScheduleError(
+                        f"request {request} is scheduled for more than max_new tokens"
+                    )
                 spans[index] = span
                 previous = span
         if len(attempts) != len(requests):
@@ -419,9 +446,14 @@ class Schedule:
         """Tokens each request streams: the furthest position any of its attempts reaches."""
 
         attempts, spans = self._checked(requests)
-        return {request: max(spans[index].end for index in indices) for request, indices in attempts.items()}
+        return {
+            request: max(spans[index].end for index in indices)
+            for request, indices in attempts.items()
+        }
 
-    def occupancy(self, requests: Sequence[Request]) -> dict[tuple[int, int], tuple[Occupant, ...]]:
+    def occupancy(
+        self, requests: Sequence[Request]
+    ) -> dict[tuple[int, int], tuple[Occupant, ...]]:
         """``(pod, step) -> occupants`` in slot order, for every step with an active slot."""
 
         spans = self.spans(requests)
@@ -429,16 +461,27 @@ class Schedule:
         for index, join in enumerate(self.joins):
             span, prompt = spans[index], len(requests[join.request].prompt)
             for offset in range(join.length):
-                if offset < span.prefill_steps:  # chunk ``offset`` of the prompt (the whole prompt at chunk 0)
-                    occupant = Occupant(join.slot, join.request, span.start, index, offset * join.chunk)
+                if (
+                    offset < span.prefill_steps
+                ):  # chunk ``offset`` of the prompt (the whole prompt at chunk 0)
+                    occupant = Occupant(
+                        join.slot, join.request, span.start, index, offset * join.chunk
+                    )
                 else:
                     position = span.start + offset - max(span.prefill_steps - 1, 0)
-                    occupant = Occupant(join.slot, join.request, position, index, prompt)
+                    occupant = Occupant(
+                        join.slot, join.request, position, index, prompt
+                    )
                 table.setdefault((join.pod, join.step + offset), []).append(occupant)
-        return {key: tuple(sorted(items, key=lambda o: o.slot)) for key, items in table.items()}
+        return {
+            key: tuple(sorted(items, key=lambda o: o.slot))
+            for key, items in table.items()
+        }
 
 
-def schedule_fcfs(requests: Sequence[Request], pods: int, slots: int, steps: int) -> Schedule:
+def schedule_fcfs(
+    requests: Sequence[Request], pods: int, slots: int, steps: int
+) -> Schedule:
     """First-come, first-served continual batching.
 
     Requests are admitted in index order; at each step every pod fills its

@@ -65,18 +65,23 @@ def declared_advice_bits(G: Constructor, x: object, a: bytes) -> int:
     try:
         bits = declare(x, a)
     except (Exception, SystemExit) as error:
-        raise CompileError(f"the constructor failed to declare its advice bits: {error}") from error
+        raise CompileError(
+            f"the constructor failed to declare its advice bits: {error}"
+        ) from error
     try:
         return validate_advice_bits(a, bits)
     except InvalidArtifact as error:
         raise CompileError(str(error)) from error
 
 
-def constructor_digest(name: str, version: str, parameters: Mapping[str, JSONValue]) -> Digest:
+def constructor_digest(
+    name: str, version: str, parameters: Mapping[str, JSONValue]
+) -> Digest:
     """The identity of a constructor: its class name, version and parameters."""
 
     return identity_digest(
-        CONSTRUCTOR_DIGEST_TAG, {"name": name, "parameters": parameters, "version": version}
+        CONSTRUCTOR_DIGEST_TAG,
+        {"name": name, "parameters": parameters, "version": version},
     )
 
 

@@ -369,7 +369,9 @@ class KindTable:
             if row.input_count == 0 and not row.closed:
                 raise ValueError(f"kind {row.kind} has no ports and must be closed")
             if not 0 <= row.reach_bits <= total:
-                raise ValueError(f"kind {row.kind} reaches {row.reach_bits} bits of a {total}-bit output")
+                raise ValueError(
+                    f"kind {row.kind} reaches {row.reach_bits} bits of a {total}-bit output"
+                )
             if not 0 <= row.ancestor_bits <= total:
                 raise ValueError(
                     f"kind {row.kind} claims ancestors of {row.ancestor_bits} bits in a {total}-bit output"
@@ -381,7 +383,9 @@ class Index:
 
     __slots__ = ("_frame", "digest", "replay_units", "root")
 
-    def __init__(self, root: Definition, limits: CompilationLimits | None = None) -> None:
+    def __init__(
+        self, root: Definition, limits: CompilationLimits | None = None
+    ) -> None:
         validate_marks(root, CompilationLimits() if limits is None else limits)
         self._frame = Frame.root(root)
         self.root = IndexNode(self._frame)
@@ -748,8 +752,12 @@ class _Interior:
             index = definition.step_at_address(relative)
             step = definition.steps[index]
             if not isinstance(step, CallStep):
-                raise InvalidArtifact(f"{_short(definition)} holds a gate outside every verification unit")
-            copy, relative = divmod(relative - definition.step_address[index], step.child.size)
+                raise InvalidArtifact(
+                    f"{_short(definition)} holds a gate outside every verification unit"
+                )
+            copy, relative = divmod(
+                relative - definition.step_address[index], step.child.size
+            )
             before += definition.step_vout[index] + copy * step.child.vout_total
             frame = frame.child(index, copy)
         offsets = frame.definition.sorted_out_offsets
@@ -775,7 +783,10 @@ class _Interior:
             raise TypeError("rank must be an integer")
         if not 0 <= rank < self.count:
             raise IndexError(f"rank {rank} is outside domain of size {self.count}")
-        frame, base = self._frame, 0  # ``base``: the copy's offset within the replay unit
+        frame, base = (
+            self._frame,
+            0,
+        )  # ``base``: the copy's offset within the replay unit
         while frame.definition.role != VERIFICATION:
             definition = frame.definition
             steps = definition.steps
@@ -783,7 +794,9 @@ class _Interior:
             index = _last_at_most(before_step, len(steps) - 1, rank)
             step = steps[index]
             if not isinstance(step, CallStep):
-                raise InvalidArtifact(f"{_short(definition)} holds a gate outside every verification unit")
+                raise InvalidArtifact(
+                    f"{_short(definition)} holds a gate outside every verification unit"
+                )
             rank -= before_step(index)
             start = base + definition.step_address[index]
             before_copy = partial(self._before_copy, step.child, start)
@@ -793,7 +806,9 @@ class _Interior:
             frame = frame.child(index, copy)
         offsets = frame.definition.sorted_out_offsets
         low, high = 0, len(offsets) - 1
-        while low < high:  # the first output with ``rank`` interior members ahead of it and itself one
+        while (
+            low < high
+        ):  # the first output with ``rank`` interior members ahead of it and itself one
             middle = (low + high) // 2
             if self._through(base, offsets, middle) > rank:
                 high = middle
@@ -811,7 +826,9 @@ class _Interior:
     def _before_copy(self, child: Definition, start: int, copy: int) -> int:
         """Interior members of the step at ``start`` ahead of its copy ``copy``."""
 
-        return copy * child.vout_total - self._out_between(start, start + copy * child.size)
+        return copy * child.vout_total - self._out_between(
+            start, start + copy * child.size
+        )
 
     def _through(self, base: int, offsets: tuple[int, ...], index: int) -> int:
         """Interior members among the first ``index + 1`` outputs of the unit at ``base``."""
@@ -904,7 +921,9 @@ def _multiset(
     for step in definition.steps:
         if not isinstance(step, CallStep):
             continue
-        expansion = ((step.child.digest, 1),) if inner is None else inner[step.child.digest]
+        expansion = (
+            ((step.child.digest, 1),) if inner is None else inner[step.child.digest]
+        )
         for kind, count in expansion:
             counts[kind] = counts.get(kind, 0) + step.count * count
     return tuple(counts.items())
@@ -932,7 +951,9 @@ def _multiset(
 # the transient stretch wraps around the copies.
 
 
-def _argument_grid(item: Range, copies: int) -> Iterator[tuple[int, int, int, int, int]]:
+def _argument_grid(
+    item: Range, copies: int
+) -> Iterator[tuple[int, int, int, int, int]]:
     """The coordinates of argument ``item`` over ``copies`` copies as progressions.
 
     Yields ``(start, count, stride, k0, kstep)``: element ``e`` of the
@@ -958,7 +979,9 @@ def _argument_grid(item: Range, copies: int) -> Iterator[tuple[int, int, int, in
             yield item.start + r * jstride, columns, stride, 0, 1
 
 
-def _port_runs(base: int, count: int, k0: int, kstep: int, first: int, n: int, step: int) -> Iterator[Run]:
+def _port_runs(
+    base: int, count: int, k0: int, kstep: int, first: int, n: int, step: int
+) -> Iterator[Run]:
     """The ports ``base + ((k0 + e * kstep) mod count)`` for ``e = first + t * step``, ``t < n``, as runs."""
 
     if n <= 0:
@@ -999,14 +1022,19 @@ def _retained_slots(
         if kind is PieceKind.GATE:
             return False
         if kind is PieceKind.PORT and any(
-            progression_meet(run.start, run.count, run.stride, item) is not None for item in transient
+            progression_meet(run.start, run.count, run.stride, item) is not None
+            for item in transient
         ):
             return False
     return True
 
 
 def _transient_stretches(
-    definition: Definition, transient: tuple[Run, ...], start: int, count: int, stride: int
+    definition: Definition,
+    transient: tuple[Run, ...],
+    start: int,
+    count: int,
+    stride: int,
 ) -> Iterator[tuple[int, int]]:
     """``(first, taken)`` index stretches of local slots ``start + e * stride`` holding transient values.
 
@@ -1044,7 +1072,9 @@ def transient_ports(root: Definition) -> dict[str, tuple[Run, ...]]:
     pending: dict[str, list[Run]] = {root.digest: []}
     result: dict[str, tuple[Run, ...]] = {}
     for definition in _reachable(root)[::-1]:
-        own = result[definition.digest] = _normalized(pending.pop(definition.digest, []))
+        own = result[definition.digest] = _normalized(
+            pending.pop(definition.digest, [])
+        )
         for step in definition.steps:
             if not isinstance(step, CallStep):
                 continue
@@ -1056,10 +1086,16 @@ def transient_ports(root: Definition) -> dict[str, tuple[Run, ...]]:
                         for run in own:
                             meet = progression_meet(start, count, stride, run)
                             if meet is not None:
-                                found.extend(_port_runs(base, item.count, k0, kstep, *meet))
+                                found.extend(
+                                    _port_runs(base, item.count, k0, kstep, *meet)
+                                )
                     else:
-                        for first, taken in _transient_stretches(definition, own, start, count, stride):
-                            found.extend(_port_runs(base, item.count, k0, kstep, first, taken, 1))
+                        for first, taken in _transient_stretches(
+                            definition, own, start, count, stride
+                        ):
+                            found.extend(
+                                _port_runs(base, item.count, k0, kstep, first, taken, 1)
+                            )
     return result
 
 
@@ -1124,7 +1160,9 @@ def transient_ports(root: Definition) -> dict[str, tuple[Run, ...]]:
 # the copy's outputs, or none.
 
 
-def _segment_bits(definition: Definition, index: int, first: int, taken: int, stride: int) -> tuple[int, int]:
+def _segment_bits(
+    definition: Definition, index: int, first: int, taken: int, stride: int
+) -> tuple[int, int]:
     """Bits of the declared-output slots ``first + t * stride`` (``t < taken``) inside step ``index``.
 
     Returns ``(width, share)``: the width of the gates the segment resolves
@@ -1144,7 +1182,9 @@ def _segment_bits(definition: Definition, index: int, first: int, taken: int, st
     slot = first - definition.step_slot[index]
     base = definition.step_address[index]
     runs = [
-        run for kind, run in _call_pieces(definition, step, base, slot, taken, stride) if kind is PieceKind.GATE
+        run
+        for kind, run in _call_pieces(definition, step, base, slot, taken, stride)
+        if kind is PieceKind.GATE
     ]
     width = sum(run.count * run.width for run in runs)
     if step.count == 1 or not runs:
@@ -1245,7 +1285,9 @@ class _Coverage:
         """
 
         mn, mx, lz, sm = self.mn, self.mx, self.lz, self.sm
-        nodes = sorted(set(dirty)) if len(dirty) > 2 else dirty  # all at the level above the leaves
+        nodes = (
+            sorted(set(dirty)) if len(dirty) > 2 else dirty
+        )  # all at the level above the leaves
         while nodes[0]:
             parents: list[int] = []
             last = 0
@@ -1311,7 +1353,9 @@ class _Coverage:
             a = node << 1
             b = a | 1
             if mx[b] + acc > 0:
-                stack.append((-1, mid, high, 0) if mn[b] + acc > 0 else (b, mid, high, acc))
+                stack.append(
+                    (-1, mid, high, 0) if mn[b] + acc > 0 else (b, mid, high, acc)
+                )
             if mx[a] + acc > 0:
                 if mn[a] + acc <= 0:
                     node, high = a, mid
@@ -1341,7 +1385,9 @@ class _Coverage:
         return min(node - size, self.count - 1)
 
 
-def _read_steps(step_slot: tuple[int, ...], start: int, count: int, stride: int, ranges: _Intervals) -> None:
+def _read_steps(
+    step_slot: tuple[int, ...], start: int, count: int, stride: int, ranges: _Intervals
+) -> None:
     """Append, as step ranges ``[a, b)``, the steps whose slots ``start + k * stride`` (``k < count``) visit.
 
     Exact for a dense run (every step between its first and last slot is
@@ -1437,9 +1483,13 @@ def _step_reach(definition: Definition, total: int, exact: bool) -> list[int]:
     for item in definition.outputs:
         if item.space != LOCAL:
             continue
-        for index, first, taken in _split(step_slot, item.start, item.count, item.stride):
+        for index, first, taken in _split(
+            step_slot, item.start, item.count, item.stride
+        ):
             if exact:
-                width, single = _segment_bits(definition, index, item.element(first), taken, item.stride)
+                width, single = _segment_bits(
+                    definition, index, item.element(first), taken, item.stride
+                )
             else:
                 width = single = total
             out[index] += width
@@ -1475,7 +1525,9 @@ def _step_reach(definition: Definition, total: int, exact: bool) -> list[int]:
                 continue
             for k in events:
                 intervals = down[k]
-                assert intervals is not None  # k > j read a slot of j: its closure is final
+                assert (
+                    intervals is not None
+                )  # k > j read a slot of j: its closure is final
                 for low, high in intervals:
                     add(low, high, delta, dirty)
                 uses[k] -= 1
@@ -1621,7 +1673,9 @@ def validate_marks(root: Definition, limits: CompilationLimits) -> None:
         )
         role = definition.role
         if role is not None and definition.size == 0:
-            raise InvalidArtifact(f"{_short(definition)} is marked {role} but has no gates")
+            raise InvalidArtifact(
+                f"{_short(definition)} is marked {role} but has no gates"
+            )
         if role == REPLAY:
             if r_inside:
                 raise InvalidArtifact(
@@ -1657,7 +1711,9 @@ def validate_marks(root: Definition, limits: CompilationLimits) -> None:
             covered and all(verification_tiled[c.digest] for c in children)
         )
     if root.role == VERIFICATION:
-        raise InvalidArtifact("the root is marked verification but is not inside a replay unit")
+        raise InvalidArtifact(
+            "the root is marked verification but is not inside a replay unit"
+        )
     if not replay_tiled[root.digest]:
         raise _offending_step(root, replay_tiled, "replay")
     root.interior_total  # noqa: B018 - every replay unit's Out(R) ⊆ ⋃ Out(V), by count

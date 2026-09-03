@@ -50,7 +50,9 @@ def log2_sum(values: np.ndarray, axis: int | None = None) -> np.ndarray:
         total = np.sum(np.exp2(values - safe), axis=axis, keepdims=True)
         result = safe + np.log2(total)
     result = np.where(np.isfinite(peak), result, NEG_INF)
-    return _up(np.squeeze(result, axis=axis) if axis is not None else result.reshape(()), terms)
+    return _up(
+        np.squeeze(result, axis=axis) if axis is not None else result.reshape(()), terms
+    )
 
 
 def log2_binomials(n: int, upto: int) -> np.ndarray:
@@ -174,7 +176,9 @@ def _binomial_power(weight: float, copies: int, limit: int) -> ErrorSeries:
         )
         return ErrorSeries(head, float(log2_sum(_up(rest, 1))))
     # log2(1 + 2**w) = w + log2(1 + 2**-w): the sum over every subset.
-    everything = copies * float(_up(weight + math.log1p(math.exp2(-weight)) / math.log(2), 3))
+    everything = copies * float(
+        _up(weight + math.log1p(math.exp2(-weight)) / math.log(2), 3)
+    )
     return ErrorSeries(head, everything)
 
 
@@ -207,7 +211,9 @@ def cap(series: ErrorSeries, out_bits: int) -> ErrorSeries:
 # -- cost series -------------------------------------------------------------
 
 
-def sparse_power(exponents: np.ndarray, values: np.ndarray, copies: int, limit: int) -> np.ndarray:
+def sparse_power(
+    exponents: np.ndarray, values: np.ndarray, copies: int, limit: int
+) -> np.ndarray:
     """``log2`` coefficients of ``P**copies`` up to degree ``limit``.
 
     ``P = sum_i 2**values[i] x**exponents[i]`` with distinct exponents
@@ -243,7 +249,9 @@ def sparse_power(exponents: np.ndarray, values: np.ndarray, copies: int, limit: 
     return result
 
 
-def sparse_multiply(dense: np.ndarray, exponents: np.ndarray, values: np.ndarray) -> np.ndarray:
+def sparse_multiply(
+    dense: np.ndarray, exponents: np.ndarray, values: np.ndarray
+) -> np.ndarray:
     """``dense * P`` truncated to ``len(dense)``, ``O(len(dense) * terms)``."""
 
     limit = len(dense)
@@ -254,7 +262,9 @@ def sparse_multiply(dense: np.ndarray, exponents: np.ndarray, values: np.ndarray
     return log2_sum(stacked, axis=0)
 
 
-def _miller(exponents: np.ndarray, values: np.ndarray, copies: int, limit: int) -> np.ndarray:
+def _miller(
+    exponents: np.ndarray, values: np.ndarray, copies: int, limit: int
+) -> np.ndarray:
     """``P**copies`` by ``j p_0 f_j = sum_i ((n+1) e_i - j) p_i f_{j-e_i}``."""
 
     constant = values[0]
@@ -270,7 +280,11 @@ def _miller(exponents: np.ndarray, values: np.ndarray, copies: int, limit: int) 
         gathered = np.where(valid, result[np.where(valid, sources, 0)], NEG_INF)
         factors = (copies + 1) * shifts[:, None] - positions[None, :]
         with np.errstate(divide="ignore", invalid="ignore"):
-            terms = np.where(valid, np.log2(np.maximum(factors, 1)) + weights[:, None] + gathered, NEG_INF)
+            terms = np.where(
+                valid,
+                np.log2(np.maximum(factors, 1)) + weights[:, None] + gathered,
+                NEG_INF,
+            )
         summed = log2_sum(terms, axis=0)
         result[positions] = _up(summed - np.log2(positions) - constant, 2)
     return result

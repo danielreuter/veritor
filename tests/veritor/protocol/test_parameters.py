@@ -68,7 +68,11 @@ def expectation_for(compilation: Compilation, **overrides) -> Expectation:
     circuit = compilation.compiled.circuit
     values = circuit.evaluate(compilation.inputs)
     outputs = tuple(values[o] for o in circuit.outputs)
-    arguments = {"parameters": VerifierParameters(max_capacity=None), **SEEDS, **overrides}
+    arguments = {
+        "parameters": VerifierParameters(max_capacity=None),
+        **SEEDS,
+        **overrides,
+    }
     return make_expectation(compilation, CHECK_EVERYTHING, outputs, **arguments)
 
 
@@ -91,7 +95,9 @@ def test_the_proposal_is_theta_alone_and_the_header_binds_the_verifiers_eta(
     compiled, expect
 ) -> None:
     proposal = VerificationPolicy(1, Fraction(1, 2))
-    admitted = expect(proposal, parameters=VerifierParameters(EIGHTH, max_capacity=None))
+    admitted = expect(
+        proposal, parameters=VerifierParameters(EIGHTH, max_capacity=None)
+    )
 
     assert admitted.policy == proposal
     assert admitted.parameters.eta == EIGHTH
@@ -135,7 +141,10 @@ def test_a_transcript_recorded_under_another_eta_is_rejected(
     assert other.transcript is not None
     assert other.transcript.header.digest != run.transcript.header.digest
     reverse = verify_transcript(encode_transcript(other.transcript), recorded, compiled)
-    assert reverse.code is VerificationCode.EXPECTATION_MISMATCH and "eta" in reverse.detail
+    assert (
+        reverse.code is VerificationCode.EXPECTATION_MISMATCH
+        and "eta" in reverse.detail
+    )
 
 
 # -- denominators are capped ----------------------------------------------------
@@ -154,12 +163,16 @@ def test_huge_denominators_are_rejected_at_admission_and_in_derivation(
     assert run.report.sampled_replay_units == ()
     # the verifier's own eta is bound into the header and decoded under the same cap
     huge_eta = run_protocol(
-        compiled, expect(parameters=VerifierParameters(Fraction(1, 1 << 70), max_capacity=None)), honest_values
+        compiled,
+        expect(parameters=VerifierParameters(Fraction(1, 1 << 70), max_capacity=None)),
+        honest_values,
     )
     assert huge_eta.report.code is VerificationCode.RESOURCE_LIMIT
 
     with pytest.raises(ResourceLimit, match="probability_denominator_bits"):
-        bernoulli_subset(b"Q" * 32, b"stage", b"\0" * 32, 5, huge.q, VerificationLimits())
+        bernoulli_subset(
+            b"Q" * 32, b"stage", b"\0" * 32, 5, huge.q, VerificationLimits()
+        )
     relaxed = VerificationLimits(max_probability_denominator_bits=71)
     assert bernoulli_subset(b"Q" * 32, b"stage", b"\0" * 32, 5, huge.q, relaxed) == ()
 
@@ -202,7 +215,10 @@ def test_oversized_units_are_rejected_at_session_start() -> None:
     assert run.transcript is None
 
     accepted = run_protocol(
-        compiled, expectation, values, limits=VerificationLimits(max_positions_per_unit=2)
+        compiled,
+        expectation,
+        values,
+        limits=VerificationLimits(max_positions_per_unit=2),
     )
     assert accepted.report.accepted
 
@@ -217,7 +233,9 @@ def test_a_limit_hit_during_the_run_is_a_reject_not_an_exception() -> None:
     run = run_protocol(compiled, expectation, values, limits=limits)
 
     assert run.report.code is VerificationCode.RESOURCE_LIMIT
-    assert "openings is 3" in run.report.detail  # the input cell's one, then the block's two
+    assert (
+        "openings is 3" in run.report.detail
+    )  # the input cell's one, then the block's two
     assert run.report.sampled_replay_units == (0,)
     assert run.report.sampled_verification_units == (0, 1)
 
@@ -246,7 +264,9 @@ def test_expected_work_follows_the_documented_formula(compiled, workload) -> Non
     for unit in range(index.verification_unit_count):
         node = index.verification_unit(unit)
         reads = node.frame.definition.input_count
-        assert reads == len(compiled.circuit.In(node))  # each unit reads each declared input
+        assert reads == len(
+            compiled.circuit.In(node)
+        )  # each unit reads each declared input
         assert (reads == 0) == compiled.circuit[node.interval.start].is_source
         positions += len(compiled.circuit.Out(node)) + reads
         gates += node.size
@@ -256,7 +276,10 @@ def test_expected_work_follows_the_documented_formula(compiled, workload) -> Non
     for q, s in ((Fraction(1), Fraction(1)), (Fraction(1, 2), Fraction(1, 3))):
         work = expected_work(compiled, VerificationPolicy(q, s), io)
         assert work == (
-            (io + q * s * positions) * (1 + depth) + q * s * gates + 1 + q * index.replay_units.count
+            (io + q * s * positions) * (1 + depth)
+            + q * s * gates
+            + 1
+            + q * index.replay_units.count
         )
     assert expected_work(compiled, CHECK_EVERYTHING, io) > expected_work(
         compiled, VerificationPolicy(Fraction(1, 2), 1), io
@@ -271,10 +294,16 @@ def test_runs_above_the_work_budget_are_rejected_before_any_commitment(
     assert work.denominator == 1
 
     exact = run_protocol(
-        compiled, expect(parameters=VerifierParameters(max_work=int(work), max_capacity=None)), honest_values
+        compiled,
+        expect(parameters=VerifierParameters(max_work=int(work), max_capacity=None)),
+        honest_values,
     )
     short = run_protocol(
-        compiled, expect(parameters=VerifierParameters(max_work=int(work) - 1, max_capacity=None)), honest_values
+        compiled,
+        expect(
+            parameters=VerifierParameters(max_work=int(work) - 1, max_capacity=None)
+        ),
+        honest_values,
     )
 
     assert exact.report.accepted
@@ -308,7 +337,9 @@ def test_runs_whose_bound_exceeds_u_max_are_rejected_before_any_commitment(
     compiled, honest_values, expect
 ) -> None:
     tight, loose = capacity_caps(compiled)
-    capped = expect(LEAKY, parameters=VerifierParameters(Fraction(1, 4), max_capacity=tight))
+    capped = expect(
+        LEAKY, parameters=VerifierParameters(Fraction(1, 4), max_capacity=tight)
+    )
 
     rejected = run_protocol(compiled, capped, honest_values)
 
@@ -324,7 +355,9 @@ def test_runs_whose_bound_exceeds_u_max_are_rejected_before_any_commitment(
         VerifierParameters(Fraction(1, 4), max_capacity=None),
         VerifierParameters(Fraction(1, 4), max_capacity=loose),
     ):
-        run = run_protocol(compiled, expect(LEAKY, parameters=parameters), honest_values)
+        run = run_protocol(
+            compiled, expect(LEAKY, parameters=parameters), honest_values
+        )
         assert run.report.accepted and run.transcript is not None
 
 
@@ -336,7 +369,9 @@ def test_u_max_zero_admits_a_fully_checked_run(compiled, honest_values, expect) 
 
     run = run_protocol(
         compiled,
-        expect(everything, parameters=VerifierParameters(Fraction(1, 4), max_capacity=0)),
+        expect(
+            everything, parameters=VerifierParameters(Fraction(1, 4), max_capacity=0)
+        ),
         honest_values,
     )
 
@@ -351,7 +386,9 @@ def test_u_max_is_checked_at_the_verifiers_eta(compiled, honest_values, expect) 
 
     run = run_protocol(
         compiled,
-        expect(LEAKY, parameters=VerifierParameters(Fraction(1, 64), max_capacity=loose)),
+        expect(
+            LEAKY, parameters=VerifierParameters(Fraction(1, 64), max_capacity=loose)
+        ),
         honest_values,
     )
 
@@ -362,7 +399,9 @@ def test_a_transcript_recorded_under_a_permissive_cap_is_rejected_by_a_tight_one
     compiled, honest_values, expect
 ) -> None:
     tight, loose = capacity_caps(compiled)
-    permissive = expect(LEAKY, parameters=VerifierParameters(Fraction(1, 4), max_capacity=loose))
+    permissive = expect(
+        LEAKY, parameters=VerifierParameters(Fraction(1, 4), max_capacity=loose)
+    )
     run = run_protocol(compiled, permissive, honest_values)
     assert run.transcript is not None
     data = encode_transcript(run.transcript)
@@ -370,7 +409,9 @@ def test_a_transcript_recorded_under_a_permissive_cap_is_rejected_by_a_tight_one
 
     report = verify_transcript(
         data,
-        expect(LEAKY, parameters=VerifierParameters(Fraction(1, 4), max_capacity=tight)),
+        expect(
+            LEAKY, parameters=VerifierParameters(Fraction(1, 4), max_capacity=tight)
+        ),
         compiled,
     )
 

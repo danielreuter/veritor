@@ -151,7 +151,9 @@ def small_config(
 ) -> DemoConfig:
     """Runs end to end in well under a minute: two pods, sixteen steps, a dozen requests."""
 
-    shape = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=16, width=16, sampling=sampling)
+    shape = LMShape(
+        vocab=8, d_model=4, heads=2, layers=1, context=16, width=16, sampling=sampling
+    )
     workload = WorkloadConfig(
         pods=pods,
         slots=slots,
@@ -176,7 +178,9 @@ def medium_config(
 ) -> DemoConfig:
     """A few minutes: three pods of three slots, fifty requests, a wider model (about 500k gates)."""
 
-    shape = LMShape(vocab=16, d_model=8, heads=2, layers=1, context=24, width=16, sampling=sampling)
+    shape = LMShape(
+        vocab=16, d_model=8, heads=2, layers=1, context=24, width=16, sampling=sampling
+    )
     workload = WorkloadConfig(
         pods=pods,
         slots=slots,
@@ -280,7 +284,9 @@ def run(config: DemoConfig) -> Summary:
     policy = config.policy
     with _Timer() as bound_timer:
         bound_result = bound(compiled, policy, config.eta)
-    policy_summary = _policy_summary(config, compilation, compile_summary.out_bits, io_count)
+    policy_summary = _policy_summary(
+        config, compilation, compile_summary.out_bits, io_count
+    )
     verifier_parameters = VerifierParameters(
         config.eta,
         max_capacity=math.ceil(bound_result.bits),
@@ -346,7 +352,9 @@ def run(config: DemoConfig) -> Summary:
     return Summary(
         scale=config.scale,
         seed=config.workload.seed,
-        workload=_workload_summary(simulation, advice, matches, shape, simulation_timer.total),
+        workload=_workload_summary(
+            simulation, advice, matches, shape, simulation_timer.total
+        ),
         model=ModelSummary(
             vocab=shape.vocab,
             d_model=shape.d_model,
@@ -388,7 +396,9 @@ def _workload_summary(
         unserved=simulation.unserved,
         joins=len(simulation.schedule.joins),
         restarts=simulation.restarts,
-        failures=tuple(FailureRecord(f.pod, f.step, f.aborted) for f in simulation.failures),
+        failures=tuple(
+            FailureRecord(f.pod, f.step, f.aborted) for f in simulation.failures
+        ),
         eos_token=shape.vocab - 1 if config.eos is None else config.eos,
         eos_stops=outcomes.count(EOS),
         completed=outcomes.count(COMPLETE),
@@ -399,7 +409,9 @@ def _workload_summary(
         advice_bytes=len(advice),
         advice_bits=simulation.schedule.bit_length(),
         arrival_records=tuple(
-            ArrivalRecord(a.index, a.time, len(a.request.prompt), a.request.max_new, a.request_id)
+            ArrivalRecord(
+                a.index, a.time, len(a.request.prompt), a.request.max_new, a.request_id
+            )
             for a in simulation.arrivals
         ),
         attempts=tuple(
@@ -465,8 +477,11 @@ def _compile_summary(
         boundary_positions=boundary,
         interior_positions=circuit.n - boundary - index.weight_count,
         W_R=sum(row.copies * row.out_bits for row in replay_rows) / replay_units,
-        W_V=sum(row.copies * cut_bits(row) for row in verification_rows) / verification_units,
-        positions_per_vu=sum(row.copies * positions_per_unit(row) for row in verification_rows)
+        W_V=sum(row.copies * cut_bits(row) for row in verification_rows)
+        / verification_units,
+        positions_per_vu=sum(
+            row.copies * positions_per_unit(row) for row in verification_rows
+        )
         / verification_units,
     )
 
@@ -491,7 +506,9 @@ def _policy_summary(
             config.eta,
             config.grid,
             max_bits=out_bits,
-            accept=lambda policy: expected_work(compiled, policy, io_count) <= config.work_budget,
+            accept=lambda policy: (
+                expected_work(compiled, policy, io_count) <= config.work_budget
+            ),
         )
         evaluated = found.evaluated if found is not None else 0
     return PolicySummary(
@@ -508,7 +525,9 @@ def _policy_summary(
         optimize_s=None if found is None else str(found.policy.s),
         optimize_bits=None if found is None else found.bound.bits,
         optimize_cost=None if found is None else float(found.cost.total),
-        grid_points=0 if config.grid is None else sum(1 for _ in config.grid.policies()),
+        grid_points=0
+        if config.grid is None
+        else sum(1 for _ in config.grid.policies()),
         grid_evaluated=evaluated,
     )
 
@@ -525,7 +544,9 @@ def _bound_summary(
     c1 = unit_cost(policy, 1)
     vus_to_eta = math.ceil(budget_nats / c1) if c1 > 0 else 0
     return BoundSummary(
-        eta=f"2^-{eta.denominator.bit_length() - 1}" if eta.numerator == 1 else str(eta),
+        eta=f"2^-{eta.denominator.bit_length() - 1}"
+        if eta.numerator == 1
+        else str(eta),
         bits=result.bits,
         capped=result.capped,
         out_bits=result.out_bits,
@@ -572,7 +593,9 @@ def _honest_run(
     transcript_bytes = 0
     try:
         with verifier_time:
-            verifier = VerifierSession(expectation, compiled, limits=config.verification_limits)
+            verifier = VerifierSession(
+                expectation, compiled, limits=config.verification_limits
+            )
         prover = ProverSession(
             compiled,
             verifier.header,
@@ -653,10 +676,16 @@ def _attack_rows(
 ) -> tuple[AttackRow, ...]:
     compiled = compilation.compiled
     vocab_bits = config.shape.vocab_bits
-    sizes = attack_sizes(len(layout)) if config.attack_sizes is None else config.attack_sizes
+    sizes = (
+        attack_sizes(len(layout))
+        if config.attack_sizes is None
+        else config.attack_sizes
+    )
     rows: list[AttackRow] = []
     for size in sizes:
-        secret = adversary.random_secret(size * vocab_bits, f"{config.workload.seed}/{size}")
+        secret = adversary.random_secret(
+            size * vocab_bits, f"{config.workload.seed}/{size}"
+        )
         attack = adversary.plan_attack(
             compiled, compilation.inputs, weights, layout, secret, vocab_bits
         )
@@ -714,7 +743,9 @@ def _attack_rows(
     return tuple(rows)
 
 
-def _notes(config: DemoConfig, result: BoundResult, compiled: CompileSummary) -> tuple[str, ...]:
+def _notes(
+    config: DemoConfig, result: BoundResult, compiled: CompileSummary
+) -> tuple[str, ...]:
     sampling = (
         "Nondeterminism: token sampling is the `sample` VU of the toy LM (a division-free CDF "
         "compare over squared scores); the random word of every generated position is a public "

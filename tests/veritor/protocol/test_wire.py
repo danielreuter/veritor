@@ -59,7 +59,9 @@ def test_encoding_is_canonical_json_and_round_trips(recorded) -> None:
     assert PROTOCOL_VERSION == "veritor/protocol/v8" == json.loads(data)["version"]
 
 
-def test_the_header_carries_the_constructor_and_the_advice_as_hex(recorded_with_advice) -> None:
+def test_the_header_carries_the_constructor_and_the_advice_as_hex(
+    recorded_with_advice,
+) -> None:
     data, compiled, expectation = recorded_with_advice
     header = json.loads(data)["header"]
 
@@ -79,7 +81,9 @@ def test_the_header_carries_the_constructor_and_the_advice_as_hex(recorded_with_
         pytest.param("constructor", "UPPER", id="uppercase-constructor"),
     ],
 )
-def test_noncanonical_header_fields_are_rejected(recorded_with_advice, field, value) -> None:
+def test_noncanonical_header_fields_are_rejected(
+    recorded_with_advice, field, value
+) -> None:
     data, compiled, expectation = recorded_with_advice
     document = json.loads(data)
     original = document["header"][field]
@@ -104,15 +108,25 @@ def test_noncanonical_header_fields_are_rejected(recorded_with_advice, field, va
 @pytest.mark.parametrize(
     "field, value, detail",
     [
-        pytest.param("advice", 5, "header.advice must be a hex string", id="advice-int"),
-        pytest.param("advice", "abc", "header.advice is not hexadecimal", id="advice-odd"),
-        pytest.param("advice", "xyz1", "header.advice is not hexadecimal", id="advice-nonhex"),
-        pytest.param("constructor", 5, "header.constructor must be a string", id="ctor-int"),
+        pytest.param(
+            "advice", 5, "header.advice must be a hex string", id="advice-int"
+        ),
+        pytest.param(
+            "advice", "abc", "header.advice is not hexadecimal", id="advice-odd"
+        ),
+        pytest.param(
+            "advice", "xyz1", "header.advice is not hexadecimal", id="advice-nonhex"
+        ),
+        pytest.param(
+            "constructor", 5, "header.constructor must be a string", id="ctor-int"
+        ),
         pytest.param("constructor", "ab" * 31, "constructor digest", id="ctor-short"),
         pytest.param("constructor", "zz" * 32, "constructor digest", id="ctor-nonhex"),
     ],
 )
-def test_malformed_header_fields_are_rejected(recorded_with_advice, field, value, detail) -> None:
+def test_malformed_header_fields_are_rejected(
+    recorded_with_advice, field, value, detail
+) -> None:
     data, compiled, expectation = recorded_with_advice
     document = json.loads(data)
     document["header"][field] = value
@@ -185,14 +199,19 @@ def test_noncanonical_bytes_are_rejected(compiled, recorded, rewrite) -> None:
     [
         pytest.param(lambda data: data[:-1], id="truncated"),
         pytest.param(lambda data: b"[]", id="not-an-object"),
-        pytest.param(lambda data: data.replace(b'"version"', b'"verzion"'), id="unknown-key"),
+        pytest.param(
+            lambda data: data.replace(b'"version"', b'"verzion"'), id="unknown-key"
+        ),
         pytest.param(
             lambda data: data.replace(b"veritor/protocol/v8", b"veritor/protocol/v7"),
             id="version",
         ),
-        pytest.param(lambda data: data.replace(b'"count":', b'"count":1.0,"c":', 1), id="float"),
         pytest.param(
-            lambda data: data.replace(b'"count":', b'"count":1,"count":', 1), id="duplicate-key"
+            lambda data: data.replace(b'"count":', b'"count":1.0,"c":', 1), id="float"
+        ),
+        pytest.param(
+            lambda data: data.replace(b'"count":', b'"count":1,"count":', 1),
+            id="duplicate-key",
         ),
     ],
 )

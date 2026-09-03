@@ -24,7 +24,11 @@ def lazy_and_flat(helpers, payload: bytes) -> tuple[DescriptionCircuit, object]:
 def assert_same_circuit(helpers, lazy: DescriptionCircuit, flat) -> None:
     """``C[i]``, interfaces, sizes and costs of every copy agree with the flat scan."""
 
-    assert (lazy.n, lazy.input_count, lazy.weight_count) == (flat.n, flat.input_count, flat.weight_count)
+    assert (lazy.n, lazy.input_count, lazy.weight_count) == (
+        flat.n,
+        flat.input_count,
+        flat.weight_count,
+    )
     assert (list(lazy.inputs), list(lazy.weights), list(lazy.outputs)) == (
         list(flat.inputs),
         list(flat.weights),
@@ -58,7 +62,10 @@ def test_lazy_circuit_matches_flat_on_matmul(helpers):
     assert isinstance(lazy, Circuit)
     assert lazy.n == layout["n"] == rows * k + k * cols + rows * cols * 7
     assert lazy[0] == GateRef("in", (), 8, "input") and lazy[0].is_input
-    assert lazy[rows * k] == GateRef("weight", (), 8, "weight") and lazy[rows * k].is_weight
+    assert (
+        lazy[rows * k] == GateRef("weight", (), 8, "weight")
+        and lazy[rows * k].is_weight
+    )
     assert list(lazy.inputs) == list(layout["inputs"])
     assert list(lazy.weights) == list(layout["weights"])
     assert (lazy.input_count, lazy.weight_count) == (rows * k, k * cols)
@@ -69,7 +76,9 @@ def test_lazy_circuit_matches_flat_on_matmul(helpers):
     weights = tuple(v for row in w for v in row)
     tape = lazy.evaluate(inputs, weights)
     assert tape == flat.evaluate(inputs, weights)
-    assert tape[: rows * k] == inputs and tape[rows * k : rows * k + k * cols] == weights
+    assert (
+        tape[: rows * k] == inputs and tape[rows * k : rows * k + k * cols] == weights
+    )
     expected = [
         sum(x[r][i] * w[i][j] for i in range(4)) & 255
         for r in range(2)
@@ -103,7 +112,9 @@ def test_interfaces_of_matmul_units_are_resolved_through_the_frame(helpers):
     dot = row1.child(0, 2)  # column 2 of row 1
     assert dot.depth == 2 and dot.j == 2
     # x_1 (input gates) and column 2 of W (weight gates)
-    assert lazy.In(dot) == tuple(range(k, 2 * k)) + tuple(rows * k + i * cols + 2 for i in range(k))
+    assert lazy.In(dot) == tuple(range(k, 2 * k)) + tuple(
+        rows * k + i * cols + 2 for i in range(k)
+    )
     assert lazy.Out(dot) == (dot.base + 6,)
     assert lazy.Cost(dot, "proof") == 11
 

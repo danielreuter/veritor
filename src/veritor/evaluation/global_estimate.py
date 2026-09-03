@@ -115,7 +115,9 @@ class Inputs:
     def requests(self) -> int:
         """Requests in the year, rounded to whole batches."""
 
-        batches = max(1, round(self.tokens_per_year / self.tokens_per_request / self.shape.batch))
+        batches = max(
+            1, round(self.tokens_per_year / self.tokens_per_request / self.shape.batch)
+        )
         return batches * self.shape.batch
 
     @property
@@ -150,7 +152,12 @@ class Estimate:
 
     @property
     def overhead(self) -> float:
-        return self.replay_overhead + self.commit_overhead + self.proof_overhead + self.boundary_overhead
+        return (
+            self.replay_overhead
+            + self.commit_overhead
+            + self.proof_overhead
+            + self.boundary_overhead
+        )
 
     def record(self) -> dict[str, object]:
         inputs = {
@@ -202,18 +209,27 @@ def estimate(inputs: Inputs | None = None, *, grid: int = 240) -> Estimate:
     shape = replace(inputs.shape, requests=inputs.requests)
     table = serving_table(shape, "request", "cell")
     rows = {row.kind: row for row in table.rows}
-    request = next(row for row in table.rows if row.role == "replay" and row.replay_cost > 0)
+    request = next(
+        row for row in table.rows if row.role == "replay" and row.replay_cost > 0
+    )
     honest = rows[table.root].replay_cost
     ru_cost = request.replay_cost
     if inputs.interior == "vu":
         ru_positions = request.interior_count
     else:
         ru_positions = request.size - request.source_inputs - request.source_weights
-    boundary_positions = request.copies * (request.out_count + request.source_inputs) + rows[table.root].source_inputs
-    verification_units = sum(row.copies for row in table.rows if row.role == "verification")
+    boundary_positions = (
+        request.copies * (request.out_count + request.source_inputs)
+        + rows[table.root].source_inputs
+    )
+    verification_units = sum(
+        row.copies for row in table.rows if row.role == "verification"
+    )
 
     h = inputs.hash_units
-    replay_unit_factor = 1 + h * ru_positions / ru_cost  # replay plus interior commitment per opened RU
+    replay_unit_factor = (
+        1 + h * ru_positions / ru_cost
+    )  # replay plus interior commitment per opened RU
     boundary = h * boundary_positions / honest
     proving = inputs.budget - boundary
     if proving <= 0:
@@ -251,7 +267,15 @@ def estimate(inputs: Inputs | None = None, *, grid: int = 240) -> Estimate:
 # -- sensitivity ---------------------------------------------------------------
 
 SENSITIVITY: tuple[tuple[str, tuple[object, ...]], ...] = (
-    ("alpha", (alpha_dot("openvm-tc-matmul"), alpha_dot("openvm-tc-dot"), alpha_dot("sp1-tc-dot"), 1e9)),
+    (
+        "alpha",
+        (
+            alpha_dot("openvm-tc-matmul"),
+            alpha_dot("openvm-tc-dot"),
+            alpha_dot("sp1-tc-dot"),
+            1e9,
+        ),
+    ),
     ("budget", (0.001, 0.01, 0.1)),
     ("lam", (30.0, 40.0, 60.0)),
     ("hash_macs", (1e4, 1e5, 1e6)),
@@ -297,7 +321,11 @@ def _tb(bits: float) -> str:
     return f"{bits / 8 / 1e12:.2f} TB"
 
 
-def render(base: Estimate, rows: list[tuple[str, object, Estimate]], by_shape: list[tuple[str, Estimate]]) -> str:
+def render(
+    base: Estimate,
+    rows: list[tuple[str, object, Estimate]],
+    by_shape: list[tuple[str, Estimate]],
+) -> str:
     i = base.inputs
     lines = [
         "# The headline estimate",
@@ -336,7 +364,13 @@ def render(base: Estimate, rows: list[tuple[str, object, Estimate]], by_shape: l
         "|---|---|---:|---:|---:|---|",
     ]
     for name, value, est in rows:
-        shown = _e(value) if isinstance(value, float) and value < 1e-2 or (isinstance(value, float) and value >= 1e4) else str(value)
+        shown = (
+            _e(value)
+            if isinstance(value, float)
+            and value < 1e-2
+            or (isinstance(value, float) and value >= 1e4)
+            else str(value)
+        )
         lines.append(
             f"| {name} | {shown} | {_e(est.q)} | {_e(est.s)} | {_tb(est.capacity_bits)} |"
             f" {est.replay_overhead:.2%} / {est.commit_overhead:.2%} / {est.proof_overhead:.2%} |"
@@ -360,7 +394,7 @@ def render(base: Estimate, rows: list[tuple[str, object, Estimate]], by_shape: l
         "- `alpha` is measured on an RTX 4090 for the dot relations of an fp8 tile; the elementwise gates",
         "  (LayerNorm, softmax, GELU) are not in the measurement and are a small fraction of the compute.",
         "- The cost model is the recompute-honest one: replaying any part of a request re-executes the request.",
-        "- `interior = \"vu\"` is what the protocol commits (VU outputs); the `gate` row prices the interior at",
+        '- `interior = "vu"` is what the protocol commits (VU outputs); the `gate` row prices the interior at',
         "  gate granularity, as the prototype did before. `values_per_leaf = 32` is the packed commitment",
         "  layout the real-scale path needs; the prototype hashes one value per leaf (the `values_per_leaf = 1` row).",
         "- W_V = 16 takes a VU's declared output to be its 16-bit activation; if the fp32 accumulator of a",
@@ -375,19 +409,36 @@ def render(base: Estimate, rows: list[tuple[str, object, Estimate]], by_shape: l
 def main(out_dir: Path = Path("docs")) -> None:
     base = estimate()
     rows = sensitivity()
-    by_shape = [(name, estimate(replace(Inputs(), shape=shape))) for name, shape in shapes()]
+    by_shape = [
+        (name, estimate(replace(Inputs(), shape=shape))) for name, shape in shapes()
+    ]
     (out_dir / "global-estimate.md").write_text(render(base, rows, by_shape))
     payload = {
         "base": base.record(),
-        "sensitivity": [{"input": name, "value": value, **est.record()} for name, value, est in rows],
+        "sensitivity": [
+            {"input": name, "value": value, **est.record()} for name, value, est in rows
+        ],
         "shapes": [{"request": name, **est.record()} for name, est in by_shape],
     }
-    (out_dir / "data" / "global-estimate.json").write_text(json.dumps(payload, indent=1, default=str) + "\n")
-    print(f"U = {base.capacity_bits:.3e} bits = {base.capacity_terabytes:.2f} TB at q = {base.q:.2e}, s = {base.s:.2e}")
+    (out_dir / "data" / "global-estimate.json").write_text(
+        json.dumps(payload, indent=1, default=str) + "\n"
+    )
+    print(
+        f"U = {base.capacity_bits:.3e} bits = {base.capacity_terabytes:.2f} TB at q = {base.q:.2e}, s = {base.s:.2e}"
+    )
 
 
 if __name__ == "__main__":
     main()
 
 
-__all__ = ["UNITS_PER_MAC", "Estimate", "Inputs", "estimate", "main", "render", "sensitivity", "shapes"]
+__all__ = [
+    "UNITS_PER_MAC",
+    "Estimate",
+    "Inputs",
+    "estimate",
+    "main",
+    "render",
+    "sensitivity",
+    "shapes",
+]

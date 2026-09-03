@@ -37,7 +37,9 @@ def test_grid_lists_every_combination_and_validates():
     grid = PolicyGrid.uniform(2)
     assert grid.q == grid.s == (Fraction(0), Fraction(1, 2), Fraction(1))
     assert len(list(grid.policies())) == 9
-    assert [(p.q, p.s) for p in grid.policies()] == [(q, s) for q in grid.q for s in grid.s]
+    assert [(p.q, p.s) for p in grid.policies()] == [
+        (q, s) for q in grid.q for s in grid.s
+    ]
     assert PolicyGrid(("1/3",), (1,)).q == (Fraction(1, 3),)
     with pytest.raises(ValueError, match="q must list"):
         PolicyGrid((), (1,))

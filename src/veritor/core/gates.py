@@ -258,7 +258,9 @@ def namespaced(name: str, namespace: str) -> str:
     return f"{name}{NAMESPACE_SEPARATOR}{namespace}"
 
 
-def union_gate_set(members: Mapping[str, GateSet], *, name: str, version: str) -> GateSet:
+def union_gate_set(
+    members: Mapping[str, GateSet], *, name: str, version: str
+) -> GateSet:
     """Σ for a heterogeneous fleet: every member's gates under its namespace.
 
     A member's operator gate ``g`` becomes ``g@namespace`` with the same
@@ -275,8 +277,14 @@ def union_gate_set(members: Mapping[str, GateSet], *, name: str, version: str) -
     sources: dict[str, Gate] = {}
     gates: list[Gate] = []
     for namespace, member in members.items():
-        if type(namespace) is not str or not namespace or NAMESPACE_SEPARATOR in namespace:
-            raise ValueError(f"gate namespace {namespace!r} must be nonempty and contain no '@'")
+        if (
+            type(namespace) is not str
+            or not namespace
+            or NAMESPACE_SEPARATOR in namespace
+        ):
+            raise ValueError(
+                f"gate namespace {namespace!r} must be nonempty and contain no '@'"
+            )
         if not isinstance(member, GateSet):
             raise TypeError("gate-set union members are GateSets")
         for gate in member:
@@ -294,7 +302,9 @@ def union_gate_set(members: Mapping[str, GateSet], *, name: str, version: str) -
                 )
             elif gate.name in sources:
                 if sources[gate.name].manifest != gate.manifest:
-                    raise ValueError(f"members disagree on the source gate {gate.name!r}")
+                    raise ValueError(
+                        f"members disagree on the source gate {gate.name!r}"
+                    )
             else:
                 sources[gate.name] = gate
     return GateSet((*sources.values(), *gates), name=name, version=version)

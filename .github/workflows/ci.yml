@@ -30,6 +30,7 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - run: uv run ruff check src tests benchmarks zk
+      - run: uv run ruff format --check src tests benchmarks zk
 
   typecheck:
     name: mypy

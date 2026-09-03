@@ -41,15 +41,21 @@ SHAPE = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=6, width=16)
 DEEP = LMShape(vocab=8, d_model=4, heads=2, layers=2, context=6, width=16)
 
 
-def single_request(shape: LMShape, request: Request, parameters: Parameters) -> tuple[int, ...]:
+def single_request(
+    shape: LMShape, request: Request, parameters: Parameters
+) -> tuple[int, ...]:
     """Run one request alone on a one-slot cluster and return its generated tokens."""
 
     constructor = ClusterG(shape, pods=1, slots=1, steps=request.max_new)
     schedule = schedule_fcfs((request,), 1, 1, request.max_new)
     description, inputs = constructor((request,), schedule.encode())
-    compiled: Compiled = Compiler(make_isa_gate_set(shape.width)).compile(description, inputs)
+    compiled: Compiled = Compiler(make_isa_gate_set(shape.width)).compile(
+        description, inputs
+    )
     values = compiled.circuit.evaluate(inputs, parameters.flatten())
-    assert constructor.output_layout((request,), schedule) == tuple((0, g) for g in range(request.max_new))
+    assert constructor.output_layout((request,), schedule) == tuple(
+        (0, g) for g in range(request.max_new)
+    )
     return tuple(values[address] for address in compiled.circuit.outputs)
 
 
@@ -59,7 +65,14 @@ def test_shape_derives_head_and_hidden_sizes_and_the_weight_count() -> None:
     assert SHAPE.weight_count == 8 * 4 + 4 * 16 + 2 * 32 + 4 * 8 + 8 + 1 == 201
     assert DEEP.weight_count == 201 + 128
     assert SHAPE.state_size(3) == 2 * 1 * 3 * 4
-    assert SHAPE.manifest == {"context": 6, "d_model": 4, "heads": 2, "layers": 1, "vocab": 8, "width": 16}
+    assert SHAPE.manifest == {
+        "context": 6,
+        "d_model": 4,
+        "heads": 2,
+        "layers": 1,
+        "vocab": 8,
+        "width": 16,
+    }
 
 
 @pytest.mark.parametrize(
@@ -75,7 +88,17 @@ def test_shape_derives_head_and_hidden_sizes_and_the_weight_count() -> None:
 )
 def test_shape_rejects_bad_dimensions(fields: dict, match: str) -> None:
     with pytest.raises(ValueError, match=match):
-        LMShape(**{"vocab": 8, "d_model": 4, "heads": 2, "layers": 1, "context": 6, "width": 16, **fields})
+        LMShape(
+            **{
+                "vocab": 8,
+                "d_model": 4,
+                "heads": 2,
+                "layers": 1,
+                "context": 6,
+                "width": 16,
+                **fields,
+            }
+        )
 
 
 def test_parameters_flatten_in_weight_gate_order() -> None:
@@ -83,7 +106,9 @@ def test_parameters_flatten_in_weight_gate_order() -> None:
     flat = parameters.flatten()
 
     assert len(flat) == SHAPE.weight_count
-    assert flat[:4] == parameters.embedding[0] and flat[28:32] == parameters.embedding[7]
+    assert (
+        flat[:4] == parameters.embedding[0] and flat[28:32] == parameters.embedding[7]
+    )
     layer = parameters.layers[0]
     assert flat[32:36] == layer.w_q[0] and flat[48:52] == layer.w_k[0]
     assert flat[96:104] == layer.w_1[0] and flat[128:132] == layer.w_2[0]
@@ -101,12 +126,25 @@ def test_parameters_are_validated() -> None:
     with pytest.raises(ValueError, match="embedding must be a tuple of 8 rows"):
         Parameters(SHAPE, good.embedding[:7], good.layers, good.unembedding, good.shift)
     with pytest.raises(ValueError, match=r"unembedding\[1\] must be a tuple of 8"):
-        Parameters(SHAPE, good.embedding, good.layers, (good.unembedding[0], (1, 2)) + good.unembedding[2:], 0)
+        Parameters(
+            SHAPE,
+            good.embedding,
+            good.layers,
+            (good.unembedding[0], (1, 2)) + good.unembedding[2:],
+            0,
+        )
     with pytest.raises(ValueError, match="16-bit value"):
         Parameters(SHAPE, good.embedding, good.layers, good.unembedding, 1 << 16)
     with pytest.raises(ValueError, match="layers must be a tuple of 1"):
         Parameters(SHAPE, good.embedding, (), good.unembedding, 0)
-    bad_layer = LayerParameters(good.layers[0].w_q, good.layers[0].w_k, good.layers[0].w_v, good.layers[0].w_o, good.layers[0].w_2, good.layers[0].w_1)
+    bad_layer = LayerParameters(
+        good.layers[0].w_q,
+        good.layers[0].w_k,
+        good.layers[0].w_v,
+        good.layers[0].w_o,
+        good.layers[0].w_2,
+        good.layers[0].w_1,
+    )
     with pytest.raises(ValueError, match=r"layers\[0\].w_1 must be a tuple of 4 rows"):
         Parameters(SHAPE, good.embedding, (bad_layer,), good.unembedding, 0)
     with pytest.raises(TypeError, match="LMShape"):
@@ -134,11 +172,17 @@ def test_zero_weights_generate_the_first_token_by_the_tie_rule() -> None:
     square = tuple(tuple(0 for _ in range(4)) for _ in range(4))
     up, down = tuple((0,) * 8 for _ in range(4)), tuple((0,) * 4 for _ in range(8))
     parameters = Parameters(
-        SHAPE, zero, (LayerParameters(square, square, square, square, up, down),), tuple((0,) * 8 for _ in range(4)), 0
+        SHAPE,
+        zero,
+        (LayerParameters(square, square, square, square, up, down),),
+        tuple((0,) * 8 for _ in range(4)),
+        0,
     )
     request = Request((3, 5), 3)
 
-    assert reference_generate(SHAPE, parameters, (request,)) == ((0, 0, 0),)  # all logits tie: token 0
+    assert reference_generate(SHAPE, parameters, (request,)) == (
+        (0, 0, 0),
+    )  # all logits tie: token 0
     assert single_request(SHAPE, request, parameters) == (0, 0, 0)
 
 
@@ -148,37 +192,68 @@ def test_the_unembedding_alone_picks_the_argmax_with_first_tie_kept() -> None:
     base = random_parameters(SHAPE, seed=5)
     # Zero the layer so x is the embedding row; E rows all (1, 0, 0, 0): logits are U[0].
     square = tuple((0,) * 4 for _ in range(4))
-    layer = LayerParameters(square, square, square, square, tuple((0,) * 8 for _ in range(4)), tuple((0,) * 4 for _ in range(8)))
+    layer = LayerParameters(
+        square,
+        square,
+        square,
+        square,
+        tuple((0,) * 8 for _ in range(4)),
+        tuple((0,) * 4 for _ in range(8)),
+    )
     embedding = tuple((1, 0, 0, 0) for _ in range(8))
-    for row, expected in (((3, 9, 9, 1, 0, 2, 9, 4), 1), ((0, 0, 0, 0, 0, 0, 0, 7), 7), ((5, 5, 5, 5, 5, 5, 5, 5), 0)):
+    for row, expected in (
+        ((3, 9, 9, 1, 0, 2, 9, 4), 1),
+        ((0, 0, 0, 0, 0, 0, 0, 7), 7),
+        ((5, 5, 5, 5, 5, 5, 5, 5), 0),
+    ):
         unembedding = (row,) + base.unembedding[1:]
         parameters = Parameters(SHAPE, embedding, (layer,), unembedding, 0)
         request = Request((2,), 2)
-        assert reference_generate(SHAPE, parameters, (request,)) == ((expected, expected),)
+        assert reference_generate(SHAPE, parameters, (request,)) == (
+            (expected, expected),
+        )
         assert single_request(SHAPE, request, parameters) == (expected, expected)
 
 
 @pytest.mark.parametrize("shape", (SHAPE, DEEP))
-@pytest.mark.parametrize("prompt", (Request((1, 2), 3), Request((4,), 4), Request((6, 7, 0), 2)))
-def test_single_request_circuit_decodes_like_the_reference(shape: LMShape, prompt: Request) -> None:
+@pytest.mark.parametrize(
+    "prompt", (Request((1, 2), 3), Request((4,), 4), Request((6, 7, 0), 2))
+)
+def test_single_request_circuit_decodes_like_the_reference(
+    shape: LMShape, prompt: Request
+) -> None:
     parameters = random_parameters(shape, seed=10 * shape.layers + prompt.max_new)
 
-    assert single_request(shape, prompt, parameters) == reference_generate(shape, parameters, (prompt,))[0]
+    assert (
+        single_request(shape, prompt, parameters)
+        == reference_generate(shape, parameters, (prompt,))[0]
+    )
 
 
 def test_kinds_are_row_sized_and_shared_across_positions() -> None:
     lm = ToyLM(SHAPE)
     prefill, decode = lm.prefill(3), lm.decode(4)
 
-    assert prefill.input_count == SHAPE.weight_count and prefill.output_count == SHAPE.state_size(3) + 1
+    assert (
+        prefill.input_count == SHAPE.weight_count
+        and prefill.output_count == SHAPE.state_size(3) + 1
+    )
     assert decode.input_count == SHAPE.weight_count + 1 + SHAPE.state_size(3)
     assert decode.output_count == SHAPE.state_size(1) + 1
     assert lm.dot(4).role == "verification" and lm.dot(4, marked=False).role is None
     assert lm.dot(4).digest != lm.dot(4, marked=False).digest
-    assert lm.attend_head(3).role == lm.argmax().role == lm.onehot().role == "verification"
-    assert lm.attend_head(3).input_count == 2 + 2 * 3 * 2 + 1 and lm.attend_head(3).output_count == 2
+    assert (
+        lm.attend_head(3).role == lm.argmax().role == lm.onehot().role == "verification"
+    )
+    assert (
+        lm.attend_head(3).input_count == 2 + 2 * 3 * 2 + 1
+        and lm.attend_head(3).output_count == 2
+    )
     assert lm.matvec(4, 8).role is None and lm.embed_row().role is None
-    assert lm.weights_unit().role == "replay" and lm.weights_unit().output_count == SHAPE.weight_count
+    assert (
+        lm.weights_unit().role == "replay"
+        and lm.weights_unit().output_count == SHAPE.weight_count
+    )
     # tracing a second prefill of the same length adds nothing
     before = lm.tracer.definition_count
     assert lm.prefill(3) is prefill and lm.decode(4) is decode
@@ -191,21 +266,32 @@ def test_kinds_are_row_sized_and_shared_across_positions() -> None:
         ToyLM(object())  # type: ignore[arg-type]
 
 
-SAMPLED = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=8, width=16, sampling=True)
+SAMPLED = LMShape(
+    vocab=8, d_model=4, heads=2, layers=1, context=8, width=16, sampling=True
+)
 
 
 def test_a_sampling_shape_has_a_bit_budget_and_two_more_constants() -> None:
     assert (SAMPLED.vocab_bits, SAMPLED.score_bits, SAMPLED.random_bits) == (3, 4, 5)
-    assert SAMPLED.vocab_bits + 2 * SAMPLED.score_bits + SAMPLED.random_bits == SAMPLED.width
+    assert (
+        SAMPLED.vocab_bits + 2 * SAMPLED.score_bits + SAMPLED.random_bits
+        == SAMPLED.width
+    )
     assert SAMPLED.score_shift == 12 and SAMPLED.sampler_constants == (12, 5)
-    assert SAMPLED.weight_count == SHAPE.weight_count + 2 and SHAPE.sampler_constants == ()
+    assert (
+        SAMPLED.weight_count == SHAPE.weight_count + 2 and SHAPE.sampler_constants == ()
+    )
     assert SAMPLED.manifest == {**SHAPE.manifest, "context": 8, "sampling": True}
     parameters = random_parameters(SAMPLED, seed=3)
     assert parameters.flatten()[-3:] == (4, 12, 5)  # shift, score_shift, random_bits
-    wide = LMShape(vocab=32, d_model=4, heads=2, layers=1, context=8, width=16, sampling=True)
+    wide = LMShape(
+        vocab=32, d_model=4, heads=2, layers=1, context=8, width=16, sampling=True
+    )
     assert (wide.vocab_bits, wide.score_bits, wide.random_bits) == (5, 3, 5)
     with pytest.raises(ValueError, match="sampling needs width"):
-        LMShape(vocab=8, d_model=4, heads=2, layers=1, context=8, width=5, sampling=True)
+        LMShape(
+            vocab=8, d_model=4, heads=2, layers=1, context=8, width=5, sampling=True
+        )
     with pytest.raises(ValueError, match="sampling must be a bool"):
         LMShape(vocab=8, d_model=4, heads=2, layers=1, context=8, width=16, sampling=1)  # type: ignore[arg-type]
 
@@ -217,8 +303,12 @@ def test_the_reference_sampler_draws_by_the_squared_score_cdf() -> None:
     thresholds = [(r * 302) >> 5 for r in range(32)]
     drawn = [sample_token(SAMPLED, logits, r) for r in range(32)]
     assert all(0 <= t < 302 for t in thresholds)
-    assert drawn == [sum(entry <= t for entry in cdf) for t in thresholds]  # the first j with cdf_j > t
-    assert drawn.count(0) == 24 and drawn[24] == 1 and set(drawn) == {0, 1, 2, 3}  # 226/302 of the mass on token 0
+    assert drawn == [
+        sum(entry <= t for entry in cdf) for t in thresholds
+    ]  # the first j with cdf_j > t
+    assert (
+        drawn.count(0) == 24 and drawn[24] == 1 and set(drawn) == {0, 1, 2, 3}
+    )  # 226/302 of the mass on token 0
     # all-zero logits: every weight is one, the token is r * vocab >> random_bits
     assert [sample_token(SAMPLED, [0] * 8, r) for r in (0, 4, 31)] == [0, 1, 7]
     with pytest.raises(ValueError, match="5-bit word"):
@@ -233,7 +323,9 @@ def test_randomness_is_checked_against_the_shape() -> None:
     with pytest.raises(ValueError, match="argmax model takes no randomness"):
         SHAPE.check_randomness(Request((1,), 1, (3,)))
     with pytest.raises(ValueError, match="argmax model takes no randomness"):
-        reference_generate(SHAPE, random_parameters(SHAPE, 0), (Request((1,), 1, (3,)),))
+        reference_generate(
+            SHAPE, random_parameters(SHAPE, 0), (Request((1,), 1, (3,)),)
+        )
     with pytest.raises(ValueError, match="sampling model needs a random word"):
         Decoder(random_parameters(SAMPLED, 0)).forward(1)
 
@@ -244,7 +336,11 @@ def test_the_sample_unit_computes_the_reference_sampler(seed: int) -> None:
 
     rng = random.Random(seed)
     parameters = random_parameters(SAMPLED, seed=seed)
-    request = Request(tuple(rng.randrange(8) for _ in range(rng.randint(1, 3))), 4, tuple(rng.randrange(32) for _ in range(4)))
+    request = Request(
+        tuple(rng.randrange(8) for _ in range(rng.randint(1, 3))),
+        4,
+        tuple(rng.randrange(32) for _ in range(4)),
+    )
     reference = reference_generate(SAMPLED, parameters, (request,))[0]
 
     assert single_request(SAMPLED, request, parameters) == reference
@@ -264,13 +360,26 @@ def test_the_sample_kind_is_a_verification_unit_reading_the_random_word() -> Non
     lm = ToyLM(SAMPLED)
     sample = lm.sample()
 
-    assert sample.role == "verification" and sample.input_count == 8 + 4 and sample.output_count == 1
-    assert lm.prefill(2).output_count == SAMPLED.state_size(2) + 1 and lm.decode(3).output_count == SAMPLED.state_size(1) + 1
+    assert (
+        sample.role == "verification"
+        and sample.input_count == 8 + 4
+        and sample.output_count == 1
+    )
+    assert (
+        lm.prefill(2).output_count == SAMPLED.state_size(2) + 1
+        and lm.decode(3).output_count == SAMPLED.state_size(1) + 1
+    )
     request = Request((1, 2), 3, (0, 1, 2))
     constructor = ClusterG(SAMPLED, pods=1, slots=1, steps=3)
     schedule = schedule_fcfs((request,), 1, 1, 3)
     description, inputs = constructor((request,), schedule.encode())
-    assert inputs == (1, 2, 0, 1, 2)  # the prompt, then one random word per position, step by step
+    assert inputs == (
+        1,
+        2,
+        0,
+        1,
+        2,
+    )  # the prompt, then one random word per position, step by step
     compiled = Compiler(make_isa_gate_set(16)).compile(description, inputs)
     assert compiled.circuit.input_count == 5
     kinds = {row.kind: row for row in compiled.index.kinds()}
@@ -291,11 +400,18 @@ def test_the_masked_argmax_is_the_first_maximum_among_the_allowed_tokens() -> No
         best = max(logits[k] for k in range(8) if allowed[k])
         expected = min(k for k in range(8) if allowed[k] and logits[k] == best)
         assert argmax_token(logits, allowed) == expected
-    assert argmax_token([0] * 8, [False, True, *[False] * 6]) == 1  # token 0 banned, all logits zero
+    assert (
+        argmax_token([0] * 8, [False, True, *[False] * 6]) == 1
+    )  # token 0 banned, all logits zero
     assert argmax_token([5, 5, 5], [True] * 3) == argmax_token([5, 5, 5]) == 0
     with pytest.raises(ValueError, match="at least one allowed"):
         argmax_token([1, 2], [False, False])
-    assert allowed_mask(4, ()) is None and allowed_mask(4, (1, 3)) == (True, False, True, False)
+    assert allowed_mask(4, ()) is None and allowed_mask(4, (1, 3)) == (
+        True,
+        False,
+        True,
+        False,
+    )
 
 
 def test_the_masked_sampler_never_draws_a_banned_token() -> None:
@@ -327,7 +443,9 @@ def test_banned_lists_are_checked_and_the_reference_respects_them() -> None:
 
 
 @pytest.mark.parametrize("tensor_parallel", (2, 4))
-def test_a_tensor_parallel_dot_is_partial_dots_and_a_fixed_order_reduction(tensor_parallel: int) -> None:
+def test_a_tensor_parallel_dot_is_partial_dots_and_a_fixed_order_reduction(
+    tensor_parallel: int,
+) -> None:
     """The marked ``dot_k`` splits into ``t`` unmarked partial dots and ``t - 1`` sums; unmarked dots do not."""
 
     plain, sharded = ToyLM(SHAPE), ToyLM(SHAPE, tensor_parallel=tensor_parallel)
@@ -336,9 +454,14 @@ def test_a_tensor_parallel_dot_is_partial_dots_and_a_fixed_order_reduction(tenso
     assert sharded.dot(k).digest != plain.dot(k).digest
     assert sharded.dot(k, marked=False).digest == plain.dot(k, marked=False).digest
     assert sharded.dot(k).role == "verification" and sharded.dot(k).input_count == 2 * k
-    steps = cast("list[dict[str, object]]", sharded.tracer._bodies[sharded.dot(k).digest]["steps"])
+    steps = cast(
+        "list[dict[str, object]]",
+        sharded.tracer._bodies[sharded.dot(k).digest]["steps"],
+    )
     partial = sharded.dot(k // tensor_parallel, marked=False).digest
-    calls = [step for step in steps if step["kind"] == "call" and step["digest"] == partial]
+    calls = [
+        step for step in steps if step["kind"] == "call" and step["digest"] == partial
+    ]
     gates = [step for step in steps if step["kind"] == "gate"]
     assert len(calls) == tensor_parallel and len(gates) == tensor_parallel - 1
     assert all(step["gate"] == "add" for step in gates)
@@ -346,7 +469,10 @@ def test_a_tensor_parallel_dot_is_partial_dots_and_a_fixed_order_reduction(tenso
         ToyLM(SHAPE, tensor_parallel=3)
     with pytest.raises(ValueError, match="positive integer"):
         ToyLM(SHAPE, tensor_parallel=0)
-    assert sharded.manifest == {"tensor_parallel": tensor_parallel} and plain.manifest == {}
+    assert (
+        sharded.manifest == {"tensor_parallel": tensor_parallel}
+        and plain.manifest == {}
+    )
 
 
 def test_concat_requires_consecutive_ranges() -> None:

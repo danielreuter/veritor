@@ -77,7 +77,9 @@ class Model:
         self.circuit = self.compiled.circuit
         self.weight_addresses = frozenset(self.circuit.weights)
         self.values = dict(
-            enumerate(self.circuit.evaluate(workload.public_inputs, workload.weight_values))
+            enumerate(
+                self.circuit.evaluate(workload.public_inputs, workload.weight_values)
+            )
         )
         self.weights, self.tree = commit_weights(GATE_SET, workload.weight_values)
 
@@ -89,7 +91,9 @@ class Model:
         return [
             (unit, index, address, item)
             for unit, batch in zip(
-                run.report.sampled_verification_units, run.transcript.evidence.units, strict=True
+                run.report.sampled_verification_units,
+                run.transcript.evidence.units,
+                strict=True,
             )
             for index, ((owner, address), item) in enumerate(
                 zip(layout.required(unit), batch, strict=True)
@@ -106,7 +110,10 @@ class Model:
             **overrides,
         }
         return make_expectation(
-            self.compilation, CHECK_EVERYTHING, arguments.pop("claimed_outputs"), **arguments
+            self.compilation,
+            CHECK_EVERYTHING,
+            arguments.pop("claimed_outputs"),
+            **arguments,
         )
 
     def tampered(self, rank: int) -> tuple[Expectation, dict[int, object]]:
@@ -114,7 +121,9 @@ class Model:
 
         weights = list(self.request.weight_values)
         weights[rank] = (weights[rank] + 1) % 256
-        values = dict(enumerate(self.circuit.evaluate(self.request.public_inputs, weights)))
+        values = dict(
+            enumerate(self.circuit.evaluate(self.request.public_inputs, weights))
+        )
         outputs = tuple(values[o] for o in self.circuit.outputs)
         return self.expectation(claimed_outputs=outputs), values
 
@@ -138,13 +147,17 @@ def test_matmul_request_separates_activations_from_weights() -> None:
 
     assert request.weight_values == tuple(v for row in request.weights for v in row)
     assert len(request.weight_values) == 9 and len(request.public_inputs) == 6
-    assert request.public_inputs == tuple(v for row in request.activations[0] for v in row)
+    assert request.public_inputs == tuple(
+        v for row in request.activations[0] for v in row
+    )
 
 
 def test_honest_run_under_a_weight_root_accepts_and_round_trips(model: Model) -> None:
     expectation = model.expectation()
 
-    run = run_protocol(model.compiled, expectation, model.values, weight_tree=model.tree)
+    run = run_protocol(
+        model.compiled, expectation, model.values, weight_tree=model.tree
+    )
 
     assert run.report.accepted
     assert run.transcript is not None
@@ -164,8 +177,12 @@ def test_honest_run_under_a_weight_root_accepts_and_round_trips(model: Model) ->
     assert without_tree.report.accepted
 
 
-def test_sampled_evidence_opens_weights_under_kappa_w_at_their_ranks(model: Model) -> None:
-    run = run_protocol(model.compiled, model.expectation(), model.values, weight_tree=model.tree)
+def test_sampled_evidence_opens_weights_under_kappa_w_at_their_ranks(
+    model: Model,
+) -> None:
+    run = run_protocol(
+        model.compiled, model.expectation(), model.values, weight_tree=model.tree
+    )
     weight_openings = model.weight_openings(run)
 
     # every weight cell opens itself and every dot opens the column it reads
@@ -174,7 +191,10 @@ def test_sampled_evidence_opens_weights_under_kappa_w_at_their_ranks(model: Mode
         merkle.merkle_depth(model.weights.count)
     }
     # a weight opening names the weight's rank, the position in kappa_W, not its address
-    assert all(item.position == model.circuit.weight_rank(a) for _, _, a, item in weight_openings)
+    assert all(
+        item.position == model.circuit.weight_rank(a)
+        for _, _, a, item in weight_openings
+    )
     assert {a for _, _, a, _ in weight_openings} == model.weight_addresses
     assert {item.position for *_, item in weight_openings} == set(range(16))
     assert all(
@@ -202,7 +222,10 @@ def test_one_weight_root_serves_every_batch_shape_of_the_model() -> None:
         )
         assert run.report.accepted and run.transcript is not None
         assert run.transcript.header.weights == two_rows.weights
-        assert len(model.weight_openings(run)) == 16 + model.request.output_shapes[0][0] * 16
+        assert (
+            len(model.weight_openings(run))
+            == 16 + model.request.output_shapes[0][0] * 16
+        )
 
     # the root is the model's under this gate set: other words, other root
     wider, _ = commit_weights(make_word_gate_set(16), two_rows.request.weight_values)
@@ -236,24 +259,35 @@ def test_a_prover_cannot_substitute_its_own_weight_root(model: Model) -> None:
 
 def test_a_forged_weight_opening_fails_under_kappa_w(model: Model) -> None:
     expectation = model.expectation()
-    run = run_protocol(model.compiled, expectation, model.values, weight_tree=model.tree)
+    run = run_protocol(
+        model.compiled, expectation, model.values, weight_tree=model.tree
+    )
     assert run.transcript is not None
     units = list(run.transcript.evidence.units)
     unit, position, address, item = model.weight_openings(run)[0]
     batch = list(units[unit])
-    batch[position] = Opening(item.position, bytes((item.value[0] ^ 1,)) + item.value[1:], item.path)
+    batch[position] = Opening(
+        item.position, bytes((item.value[0] ^ 1,)) + item.value[1:], item.path
+    )
     units[unit] = tuple(batch)
-    tampered = replace(run.transcript, evidence=replace(run.transcript.evidence, units=tuple(units)))
+    tampered = replace(
+        run.transcript, evidence=replace(run.transcript.evidence, units=tuple(units))
+    )
 
     report = verify_transcript(encode_transcript(tampered), expectation, model.compiled)
 
     assert report.code is VerificationCode.INVALID_OPENING
-    assert f"address {address}" in report.detail and f"owner {WEIGHT_OWNER}" in report.detail
+    assert (
+        f"address {address}" in report.detail
+        and f"owner {WEIGHT_OWNER}" in report.detail
+    )
 
     # ... and so does an opening moved to another rank
     batch[position] = Opening((item.position + 1) % 16, item.value, item.path)
     units[unit] = tuple(batch)
-    moved = replace(run.transcript, evidence=replace(run.transcript.evidence, units=tuple(units)))
+    moved = replace(
+        run.transcript, evidence=replace(run.transcript.evidence, units=tuple(units))
+    )
     report = verify_transcript(encode_transcript(moved), expectation, model.compiled)
     assert report.code is VerificationCode.COVERAGE_MISMATCH
 
@@ -262,11 +296,15 @@ def test_kappa_w_must_bind_exactly_the_circuits_weight_gates(model: Model) -> No
     count = model.compiled.index.weight_count
     wrong_count = Weights(count + 1, model.weights.root)
 
-    run = run_protocol(model.compiled, model.expectation(weights=wrong_count), model.values)
+    run = run_protocol(
+        model.compiled, model.expectation(weights=wrong_count), model.values
+    )
     assert run.report.code is VerificationCode.INVALID_COMPILED_RESULT
     assert "binds 17 weights" in run.report.detail
 
-    unbound = run_protocol(model.compiled, model.expectation(weights=None), model.values)
+    unbound = run_protocol(
+        model.compiled, model.expectation(weights=None), model.values
+    )
     assert unbound.report.code is VerificationCode.INVALID_COMPILED_RESULT
     assert "no kappa_W" in unbound.report.detail
 
@@ -277,7 +315,10 @@ def test_kappa_w_must_bind_exactly_the_circuits_weight_gates(model: Model) -> No
     short, short_tree = commit_weights(GATE_SET, model.request.weight_values[:-1])
     assert short.count == 15
     rejected = run_protocol(
-        model.compiled, model.expectation(weights=short), model.values, weight_tree=short_tree
+        model.compiled,
+        model.expectation(weights=short),
+        model.values,
+        weight_tree=short_tree,
     )
     assert rejected.report.code is VerificationCode.INVALID_COMPILED_RESULT
     assert "binds 15 weights" in rejected.report.detail
@@ -315,7 +356,16 @@ def test_the_weight_domain_is_the_rank_space_and_the_boundary_excludes_the_weigh
     with pytest.raises(ProtocolError, match="GateSet"):
         weight_domain(model.compiled, 16)  # type: ignore[arg-type]
     weightless = GateSet(
-        (Gate("add", 2, 8, replay_cost=1, proof_cost=1, evaluate=lambda a: (a[0] + a[1]) % 256),),
+        (
+            Gate(
+                "add",
+                2,
+                8,
+                replay_cost=1,
+                proof_cost=1,
+                evaluate=lambda a: (a[0] + a[1]) % 256,
+            ),
+        ),
         name="weightless",
         version="1",
     )
@@ -328,9 +378,15 @@ def test_ownership_rule_weights_then_boundary_then_interior(model: Model) -> Non
     layout = session._layout
     index = model.compiled.index
 
-    assert all(layout.owner(address) == WEIGHT_OWNER for address in model.circuit.weights)
-    assert all(layout.owner(address) == BOUNDARY_OWNER for address in layout.public_inputs)
-    assert all(layout.owner(address) == BOUNDARY_OWNER for address in model.circuit.outputs)
+    assert all(
+        layout.owner(address) == WEIGHT_OWNER for address in model.circuit.weights
+    )
+    assert all(
+        layout.owner(address) == BOUNDARY_OWNER for address in layout.public_inputs
+    )
+    assert all(
+        layout.owner(address) == BOUNDARY_OWNER for address in model.circuit.outputs
+    )
     assert index.interior(0).count == index.interior(1).count == 0  # the source units
     # a dot's declared sum is its row's output, so the matmul commits no interior at
     # all: every row output lives in the boundary and the products between are recomputed
@@ -396,11 +452,15 @@ class BoundaryPhase:
         self.expectation = expectation
         self.io = len(header.public_inputs) + len(header.claimed_outputs)
         self.weight_count = model.weights.count
-        self.hashes_expected = self.io * (1 + merkle.merkle_depth(self.boundary.commitment.count))
+        self.hashes_expected = self.io * (
+            1 + merkle.merkle_depth(self.boundary.commitment.count)
+        )
         """Leaf plus path hashes for the public I/O openings, the only per-run hashing."""
 
     def __call__(self) -> object:
-        return VerifierSession(self.expectation, self.compiled).receive_boundary(self.boundary)
+        return VerifierSession(self.expectation, self.compiled).receive_boundary(
+            self.boundary
+        )
 
 
 def count_hashes(monkeypatch, action: Callable[[], object]) -> int:

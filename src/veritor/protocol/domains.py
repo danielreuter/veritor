@@ -64,7 +64,9 @@ def weight_domain(gate_set: GateSet, count: int) -> CommitmentDomain:
         raise ProtocolError("the weight domain requires a GateSet")
     if type(count) is not int or count < 0:
         raise ProtocolError("weight count must be a nonnegative integer")
-    binding = raw_digest(WEIGHT_TAG, {"gate_set": gate_set.digest, "owner": WEIGHT_OWNER})
+    binding = raw_digest(
+        WEIGHT_TAG, {"gate_set": gate_set.digest, "owner": WEIGHT_OWNER}
+    )
     return CommitmentDomain(binding, WEIGHT_OWNER, RangeIndexedDomain(count))
 
 
@@ -84,7 +86,9 @@ def interior_domain(
     )
 
 
-def commit_weights(gate_set: GateSet, values: Sequence[object]) -> tuple[Weights, MerkleTree]:
+def commit_weights(
+    gate_set: GateSet, values: Sequence[object]
+) -> tuple[Weights, MerkleTree]:
     """Commit a model's weight vector, once per model: leaf ``k`` holds ``values[k]``.
 
     No circuit is needed: the model is committed before any request exists.

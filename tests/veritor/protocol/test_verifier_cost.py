@@ -82,7 +82,9 @@ def fastest(action: Callable[[], object], repetitions: int = 20) -> float:
 
 
 @pytest.mark.parametrize("n", [16, 128])
-def test_verifier_setup_and_boundary_phase_never_touch_interior_gates(monkeypatch, n) -> None:
+def test_verifier_setup_and_boundary_phase_never_touch_interior_gates(
+    monkeypatch, n
+) -> None:
     workload = matmul_workload(n)
     compilation = compile_matmul(workload)
     compiled = compilation.compiled
@@ -99,7 +101,9 @@ def test_verifier_setup_and_boundary_phase_never_touch_interior_gates(monkeypatc
         compilation, POLICY, outputs, parameters=NO_CAPACITY, weights=weights, **SEEDS
     )
     header = VerifierSession(expectation, compiled).header
-    boundary = ProverSession(compiled, header, boundary_values, weight_tree=tree).boundary()
+    boundary = ProverSession(
+        compiled, header, boundary_values, weight_tree=tree
+    ).boundary()
 
     looked_up: list[int] = []
     original_getitem = DescriptionCircuit.__getitem__
@@ -132,8 +136,12 @@ def test_verifier_construction_time_is_flat_in_gate_count() -> None:
 
     def construction(compilation: Compilation) -> Callable[[], object]:
         compiled: Compiled = compilation.compiled
-        outputs = tuple(compiled.circuit.evaluate((3,))[o] for o in compiled.circuit.outputs)
-        expectation = make_expectation(compilation, POLICY, outputs, parameters=NO_CAPACITY, **SEEDS)
+        outputs = tuple(
+            compiled.circuit.evaluate((3,))[o] for o in compiled.circuit.outputs
+        )
+        expectation = make_expectation(
+            compilation, POLICY, outputs, parameters=NO_CAPACITY, **SEEDS
+        )
         return lambda: VerifierSession(expectation, compiled)
 
     small_time = fastest(construction(small))

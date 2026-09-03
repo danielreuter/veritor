@@ -35,7 +35,10 @@ def test_word_gate_set_has_an_input_and_a_weight_source_gate():
     for name, source in (("in", "input"), ("weight", "weight")):
         gate = gates[name]
         assert (gate.arity, gate.width, gate.source) == (0, 8, source)
-        assert (gate.replay_cost, gate.proof_cost) == (0, 1)  # free to replay, cheapest to prove
+        assert (gate.replay_cost, gate.proof_cost) == (
+            0,
+            1,
+        )  # free to replay, cheapest to prove
         assert gate.manifest["source"] == source
         with pytest.raises(InvalidArtifact, match="is a source gate"):
             gate.evaluate(())
@@ -50,16 +53,34 @@ def test_toy_isa_extends_the_word_arithmetic_with_what_a_decoder_needs():
     gates = make_isa_gate_set(16)
     top = (1 << 16) - 1
 
-    assert [gate.name for gate in gates] == ["add", "eq", "in", "lt", "mul", "shr", "sub", "weight"]
+    assert [gate.name for gate in gates] == [
+        "add",
+        "eq",
+        "in",
+        "lt",
+        "mul",
+        "shr",
+        "sub",
+        "weight",
+    ]
     assert gates.id == "veritor.toy-isa@1"
     assert gates.digest != make_word_gate_set(16).digest
     assert make_isa_gate_set(16).digest == gates.digest
     assert (gates.input_gates, gates.weight_gates) == (("in",), ("weight",))
     assert all(gate.width == 16 for gate in gates)
     assert {gate.name: gate.replay_cost for gate in gates} == {
-        "add": 1, "sub": 1, "mul": 2, "lt": 1, "eq": 1, "shr": 1, "in": 0, "weight": 0,
+        "add": 1,
+        "sub": 1,
+        "mul": 2,
+        "lt": 1,
+        "eq": 1,
+        "shr": 1,
+        "in": 0,
+        "weight": 0,
     }
-    assert all(gate.proof_cost == gate.replay_cost for gate in gates if gate.source is None)
+    assert all(
+        gate.proof_cost == gate.replay_cost for gate in gates if gate.source is None
+    )
     assert gates["add"].evaluate((top, 2)) == 1
     assert gates["sub"].evaluate((0, 1)) == top and gates["sub"].evaluate((5, 3)) == 2
     assert gates["mul"].evaluate((1 << 8, 1 << 8)) == 0
@@ -68,7 +89,9 @@ def test_toy_isa_extends_the_word_arithmetic_with_what_a_decoder_needs():
     assert gates["eq"].evaluate((4, 4)) == 1 and gates["eq"].evaluate((4, 5)) == 0
     assert gates["shr"].evaluate((top, 4)) == top >> 4
     assert gates["shr"].evaluate((top, 15)) == 1
-    assert gates["shr"].evaluate((top, 16)) == 0 and gates["shr"].evaluate((top, top)) == 0
+    assert (
+        gates["shr"].evaluate((top, 16)) == 0 and gates["shr"].evaluate((top, top)) == 0
+    )
     assert make_isa_gate_set(4)["shr"].evaluate((15, 4)) == 0
     with pytest.raises(ValueError, match="positive bit count"):
         make_isa_gate_set(0)
@@ -82,11 +105,36 @@ def test_source_gates_are_exactly_the_zero_arity_gates():
     with pytest.raises(ValueError, match="gate source must be None or one of"):
         Gate("in", 0, 8, replay_cost=0, proof_cost=1, source="advice")
     with pytest.raises(TypeError, match="source gates have no executable relation"):
-        Gate("in", 0, 8, replay_cost=0, proof_cost=1, source="input", evaluate=lambda args: 0)
+        Gate(
+            "in",
+            0,
+            8,
+            replay_cost=0,
+            proof_cost=1,
+            source="input",
+            evaluate=lambda args: 0,
+        )
     with pytest.raises(TypeError, match="source gates have no executable relation"):
-        Gate("in", 0, 8, replay_cost=0, proof_cost=1, source="input", check=lambda a, o: True)
+        Gate(
+            "in",
+            0,
+            8,
+            replay_cost=0,
+            proof_cost=1,
+            source="input",
+            check=lambda a, o: True,
+        )
     plain = GateSet(
-        (Gate("add", 2, 8, replay_cost=1, proof_cost=1, evaluate=lambda a: (a[0] + a[1]) & 255),),
+        (
+            Gate(
+                "add",
+                2,
+                8,
+                replay_cost=1,
+                proof_cost=1,
+                evaluate=lambda a: (a[0] + a[1]) & 255,
+            ),
+        ),
         name="tests.plain",
         version="1",
     )
@@ -103,8 +151,16 @@ def test_source_gates_are_exactly_the_zero_arity_gates():
     assert two.input_gates == ("x", "y") and two.weight_gates == ("w",)
     # the source is part of the identity
     assert (
-        GateSet((Gate("s", 0, 8, replay_cost=0, proof_cost=1, source="input"),), name="t", version="1").digest
-        != GateSet((Gate("s", 0, 8, replay_cost=0, proof_cost=1, source="weight"),), name="t", version="1").digest
+        GateSet(
+            (Gate("s", 0, 8, replay_cost=0, proof_cost=1, source="input"),),
+            name="t",
+            version="1",
+        ).digest
+        != GateSet(
+            (Gate("s", 0, 8, replay_cost=0, proof_cost=1, source="weight"),),
+            name="t",
+            version="1",
+        ).digest
     )
 
 
@@ -145,9 +201,25 @@ def test_gate_arg_widths_default_to_the_output_width_and_may_differ_per_argument
     with pytest.raises(InvalidArtifact, match="output is not a 32-bit value"):
         widen.check((1, 1), 1 << 32)
     with pytest.raises(ValueError, match="arg_widths"):
-        Gate("bad", 2, 8, replay_cost=1, proof_cost=1, evaluate=lambda args: 0, arg_widths=(8,))
+        Gate(
+            "bad",
+            2,
+            8,
+            replay_cost=1,
+            proof_cost=1,
+            evaluate=lambda args: 0,
+            arg_widths=(8,),
+        )
     # the same declaration written out explicitly is the same gate: no digest change for single-width sets
-    explicit = Gate("add", 2, 4, replay_cost=add.replay_cost, proof_cost=add.proof_cost, evaluate=lambda args: 0, arg_widths=(4, 4))
+    explicit = Gate(
+        "add",
+        2,
+        4,
+        replay_cost=add.replay_cost,
+        proof_cost=add.proof_cost,
+        evaluate=lambda args: 0,
+        arg_widths=(4, 4),
+    )
     assert explicit.manifest == add.manifest
 
 
@@ -214,7 +286,12 @@ def test_a_union_namespaces_the_operators_and_shares_the_sources():
             assert copy.evaluate((7, 3)) == isa[name].evaluate((7, 3))
     assert fleet.id == "tests.fleet@1"
     assert fleet.digest != isa.digest
-    assert fleet.digest == union_gate_set({"sm90": isa, "sm80": isa}, name="tests.fleet", version="1").digest
+    assert (
+        fleet.digest
+        == union_gate_set(
+            {"sm90": isa, "sm80": isa}, name="tests.fleet", version="1"
+        ).digest
+    )
     with pytest.raises(InvalidArtifact, match="unknown gate"):
         fleet["add@sm70"]
 
@@ -234,7 +311,9 @@ def test_a_union_checks_its_namespaces_and_its_members_sources():
         union_gate_set({"a": object()}, name="x", version="1")  # type: ignore[dict-item]
     # a union of one member is that member with its operators renamed
     solo = union_gate_set({"only": isa}, name="x", version="1")
-    assert [gate.name for gate in solo] == sorted([*(f"{g.name}@only" for g in isa if g.source is None), "in", "weight"])
+    assert [gate.name for gate in solo] == sorted(
+        [*(f"{g.name}@only" for g in isa if g.source is None), "in", "weight"]
+    )
 
 
 def test_value_codec_is_fixed_width_big_endian():

@@ -32,7 +32,9 @@ class Compiler:
 
     __slots__ = ("gate_set", "limits")
 
-    def __init__(self, gate_set: GateSet, limits: CompilationLimits | None = None) -> None:
+    def __init__(
+        self, gate_set: GateSet, limits: CompilationLimits | None = None
+    ) -> None:
         if not isinstance(gate_set, GateSet):
             raise TypeError("Compiler requires a GateSet")
         if limits is not None and not isinstance(limits, CompilationLimits):
@@ -55,4 +57,3 @@ class Compiler:
         return Compiled(
             circuit, index, Compiled.digest_of(parsed.digest, self.gate_set.digest)
         )
-

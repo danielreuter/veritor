@@ -47,7 +47,9 @@ def survival_factor(policy: VerificationPolicy, errors: int) -> Fraction:
     return 1 - policy.q + policy.q * (1 - policy.s) ** errors
 
 
-def survival(policy: VerificationPolicy, errors_per_replay_unit: Iterable[int]) -> Fraction:
+def survival(
+    policy: VerificationPolicy, errors_per_replay_unit: Iterable[int]
+) -> Fraction:
     """``sigma(E) = prod_r f(l_r)`` from the per-replay-unit error counts."""
 
     result = Fraction(1)

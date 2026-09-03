@@ -31,7 +31,9 @@ from veritor.evaluation import (
 from veritor.evaluation.frontier import load, save
 from veritor.protocol.parameters import expected_work
 
-TOY = ServingShape(vocab=8, d_model=4, heads=2, layers=1, prompt=2, generated=3, requests=4, batch=2)
+TOY = ServingShape(
+    vocab=8, d_model=4, heads=2, layers=1, prompt=2, generated=3, requests=4, batch=2
+)
 GRID = PolicyGrid(q=(Fraction(1, 2), Fraction(1, 8)), s=(1, Fraction(1, 4)))
 ETAS = (Fraction(1, 2), Fraction(1, 100))
 
@@ -48,22 +50,40 @@ def test_a_point_is_the_protocol_functions_over_the_honest_computation() -> None
     point = price(table, TOY, "request", "row", policy, Fraction(1, 100))
 
     base = honest_cost(table)
-    assert base == next(row.replay_cost for row in table.rows if row.kind == table.root) > table.n
+    assert (
+        base
+        == next(row.replay_cost for row in table.rows if row.kind == table.root)
+        > table.n
+    )
     assert point.bits == bound(table, policy, Fraction(1, 100), FRONTIER_OPTIONS).bits
     assert point.overhead == cost(table, policy).total / base
     assert point.recompute == cost(table, policy).recompute / base
-    assert point.work == expected_work(table, policy, TOY.input_count + TOY.output_count) / base
+    assert (
+        point.work
+        == expected_work(table, policy, TOY.input_count + TOY.output_count) / base
+    )
     assert point.out_bits == TOY.output_count * TOY.width and 0 <= point.fraction <= 1
     assert point.policy == policy and point.eta == Fraction(1, 100)
     # requests are closed: the recomputation is ``q`` of the requests; a cell is not: the sampled cells
     # force their requests to be re-executed, here (a toy) with probability well below one
-    requests = sum(row.copies * row.replay_cost for row in table.rows if row.role == "replay")
+    requests = sum(
+        row.copies * row.replay_cost for row in table.rows if row.role == "replay"
+    )
     assert point.recompute == policy.q * Fraction(requests, base)
-    fine = price(serving_table(TOY, "cell", "gate"), TOY, "cell", "gate", policy, Fraction(1, 100))
+    fine = price(
+        serving_table(TOY, "cell", "gate"),
+        TOY,
+        "cell",
+        "gate",
+        policy,
+        Fraction(1, 100),
+    )
     assert fine.recompute > point.recompute and fine.recompute < 1
 
 
-def test_the_laplace_only_bound_is_the_laplace_term_and_never_below_the_full_fold() -> None:
+def test_the_laplace_only_bound_is_the_laplace_term_and_never_below_the_full_fold() -> (
+    None
+):
     table = serving_table(TOY, "cell", "gate")
     policy = VerificationPolicy(Fraction(1, 2), Fraction(1, 2))
 
@@ -71,15 +91,27 @@ def test_the_laplace_only_bound_is_the_laplace_term_and_never_below_the_full_fol
     laplace = bound(table, policy, Fraction(1, 100), BoundOptions(knapsack=False))
 
     assert laplace.knapsack_bits == float("inf")
-    assert laplace.bits == pytest.approx(min(laplace.laplace_bits, laplace.out_bits), abs=1e-9)
+    assert laplace.bits == pytest.approx(
+        min(laplace.laplace_bits, laplace.out_bits), abs=1e-9
+    )
     assert laplace.bits >= full.bits - 1e-9
 
 
 def test_the_sweep_covers_every_partition_policy_and_eta(points: list[Point]) -> None:
     keys = {(p.replay, p.verification, p.q, p.s, p.eta) for p in points}
     assert len(points) == len(keys) == 12 * 4 * 2
-    assert {(p.replay, p.verification) for p in points} >= {("request", "cell"), ("row", "cell"), ("step", "cell")}
-    assert all(p.seconds >= 0 and p.overhead > 0 and p.work > 0 and 0 <= p.recompute <= p.overhead for p in points)
+    assert {(p.replay, p.verification) for p in points} >= {
+        ("request", "cell"),
+        ("row", "cell"),
+        ("step", "cell"),
+    }
+    assert all(
+        p.seconds >= 0
+        and p.overhead > 0
+        and p.work > 0
+        and 0 <= p.recompute <= p.overhead
+        for p in points
+    )
 
 
 def test_certify_is_monotone_in_the_budgets(points: list[Point]) -> None:
@@ -109,7 +141,9 @@ def test_points_round_trip_through_json(points: list[Point], tmp_path: Path) -> 
 
 
 def test_the_tables_render(points: list[Point]) -> None:
-    table = calibration_table(points, eta=Fraction(1, 2), overheads=(Fraction(1, 10), 1, 10), works=(1, 100))
+    table = calibration_table(
+        points, eta=Fraction(1, 2), overheads=(Fraction(1, 10), 1, 10), works=(1, 100)
+    )
     lines = table.splitlines()
     assert lines[0].startswith("| verifier work") and len(lines) == 4
     assert "--" in lines[2] and "`" in lines[3]

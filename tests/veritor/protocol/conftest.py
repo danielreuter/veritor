@@ -36,7 +36,9 @@ def workload() -> MatmulWorkload:
 def compilation(workload: MatmulWorkload) -> Compilation:
     """``Compile(MatmulG, workload, b"")``: what the verifier records for the request."""
 
-    return Compile(MatmulG(workload.width), workload, b"", make_word_gate_set(workload.width))
+    return Compile(
+        MatmulG(workload.width), workload, b"", make_word_gate_set(workload.width)
+    )
 
 
 @pytest.fixture(scope="session")
@@ -54,7 +56,9 @@ def model_weights(workload: MatmulWorkload) -> tuple[Weights, MerkleTree]:
 @pytest.fixture
 def honest_values(compiled: Compiled, workload: MatmulWorkload) -> dict[int, object]:
     return dict(
-        enumerate(compiled.circuit.evaluate(workload.public_inputs, workload.weight_values))
+        enumerate(
+            compiled.circuit.evaluate(workload.public_inputs, workload.weight_values)
+        )
     )
 
 
@@ -79,7 +83,9 @@ def expect(
         return make_expectation(
             compilation,
             policy,
-            expected_matmul_outputs(workload) if claimed_outputs is None else claimed_outputs,
+            expected_matmul_outputs(workload)
+            if claimed_outputs is None
+            else claimed_outputs,
             parameters=parameters,
             weights=weights,
             session_id=session_id,
