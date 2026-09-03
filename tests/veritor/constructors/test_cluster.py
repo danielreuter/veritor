@@ -248,10 +248,13 @@ def test_kinds_are_shared_across_pods_and_steps() -> None:
     for pods, slots, steps in ((1, 2, 9), (3, 2, 3), (6, 1, 3)):
         constructor = ClusterG(SHAPE, pods=pods, slots=slots, steps=steps)
         schedule = schedule_fcfs(requests, pods, slots, steps)
-        started = time.perf_counter()
-        description, inputs = constructor(requests, schedule.encode())
-        compiled = Compiler(GATES).compile(description, inputs)
-        runs[pods] = (description, compiled, time.perf_counter() - started)
+        best = float("inf")
+        for _ in range(3):  # the fastest of three: a shape comparison, not a benchmark
+            started = time.perf_counter()
+            description, inputs = constructor(requests, schedule.encode())
+            compiled = Compiler(GATES).compile(description, inputs)
+            best = min(best, time.perf_counter() - started)
+        runs[pods] = (description, compiled, best)
         assert generated(constructor, compiled, requests, schedule, random_parameters(SHAPE, 0)) == (
             reference_generate(SHAPE, random_parameters(SHAPE, 0), requests)
         )
