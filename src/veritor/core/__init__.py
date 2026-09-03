@@ -51,6 +51,7 @@ from .indexed import (
     position_domain,
 )
 from .limits import CompilationLimits, VerificationLimits
+from .ml_gates import make_ml_gate_set
 from .policy import (
     ProbabilityInput,
     VerificationPolicy,
@@ -111,6 +112,7 @@ __all__ = [
     "identity_digest",
     "iter_domain",
     "make_isa_gate_set",
+    "make_ml_gate_set",
     "make_word_gate_set",
     "parse_probability",
     "position",
