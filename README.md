@@ -22,7 +22,10 @@ at the same point in the interaction.
 - **Description**: the wire format a constructor `G` produces. A hash-consed
   sequence of definitions built from three steps, `gate`, `call`, and
   `repeat`, with relative range arguments, so a transformer-sized circuit is a
-  few kilobytes. Definitions may carry a mark, `replay` or `verification`.
+  few kilobytes. Definitions may carry a mark, `replay` or `verification`;
+  the root may declare *check* outputs, outputs the verifier requires to
+  equal a constant of the description (an in-circuit consistency word, a
+  blank slot), which carry no capacity.
 - **Circuit** `C` (`veritor.core.Circuit`): `C[i]` gives the operator and the
   absolute argument addresses of gate `i`. The circuit's inputs are its `in`
   gates and its weights its `weight` gates: they sit inside units like any
@@ -36,8 +39,11 @@ at the same point in the interaction.
   gates -- every gate, source gates included, lies in exactly one replay unit
   and one verification unit -- and the verification units refine them.
   `I.inputs()` and `I.weights()` are the source gates by rank; `I.boundary()`
-  is `In ∪ ⋃_r Out(R_r)`; `I.interior(r)` is `R_r` minus its interface minus
-  its source gates. `In` and `Out` of a unit are its *declared* interfaces,
+  is `In ∪ ⋃_r Out(R_r)`; `I.interior(r)` is `⋃_V Out(V)` over the
+  verification units `V` inside `R_r`, minus `Out(R_r)`: the values the
+  units of `R_r` hand each other, which the prover commits when `R_r` is
+  opened (a unit's internal gates are never committed; they are recomputed).
+  `In` and `Out` of a unit are its *declared* interfaces,
   held per kind as arithmetic runs of addresses, so the per-kind table, the
   boundary and the interiors cost by the number of runs, never by the
   addresses they span; `Out` excludes a unit's *pinned* (source) gates, which
@@ -50,12 +56,20 @@ at the same point in the interaction.
   the description, its marks and the gate set.
 - **Compilation**: what `Compile(G, x, a)` returns and the verifier keeps:
   `compiled`, `constructor` (`G.digest`), `inputs` and `advice`, charged at
-  `advice_bits = 8|a|`.
+  `advice_bits`: the exact bit length `G.advice_bits(x, a)` declares, once
+  `a` is checked to be its canonical zero-padded encoding, else `8|a|`.
 - **Policy** `θ = (q, s)`: the client's proposed sampling rates, as exact
   rationals. `η`, the acceptance threshold, belongs to the verifier
-  (`VerifierParameters`), together with `U_max`, `A = max_advice_bits` and
-  `W_max`. `U_max` has no default: a verifier states it, and waiving it
+  (`VerifierParameters`), together with `U_max`, `A = max_advice_bits`,
+  `W_max` and `f_max`, the number of verification units a prover may declare
+  faulty after the replay challenge (`Bound` charges the adaptive prover for
+  them). `U_max` has no default: a verifier states it, and waiving it
   (`max_capacity=None`) has to be written out.
+- **Epoch** (`veritor.protocol.epoch`): the unit of the guarantee. Runs are
+  admitted and their boundaries committed into a hash chain as they happen;
+  at each round's close the verifier draws a private round seed, derives
+  every run's challenges from it, and bounds the round by `Bound` over the
+  union of the runs' kind tables at `η / rounds`. `docs/epoch.md`.
 
 ## Trust boundary
 
@@ -77,14 +91,25 @@ what is only achieved by convention.
 
 ~~~text
 src/veritor/
-  core/          GateSet, Circuit, Index, Compiled, VerificationPolicy   (trusted)
+  core/          GateSet, Circuit, Index, Compiled, VerificationPolicy;   (trusted)
+                 silicon.py: pinned tensor-core and fp32 gate semantics
   compile/       Compiler: description bytes -> Compiled; Constructor,    (trusted)
                  Compilation: the record of one Compile(G, x, a)
-  protocol/      the two-stage protocol, Merkle commitments, wire format  (trusted)
-  analysis/      Bound, Cost, Optimize as folds over the kinds of I
-  constructors/  Tracer, DemoG, MatmulG, the toy LM and ClusterG         (untrusted)
+  protocol/      the two-stage protocol, Merkle commitments, wire format, (trusted)
+                 the epoch layer; proofs/: obligations, batches, the
+                 transparent and SP1 backends
+  analysis/      Bound, Cost, Optimize, the closed-form rate, fault charge,
+                 union of kind tables, exact references
+  evaluation/    serving shapes, the honest-server frontier, the global estimate
+  constructors/  Tracer, DemoG, MatmulG, the toy LM (MoE, speculative),  (untrusted)
+                 ClusterG and schedules, GPT-2 on pinned gates
+  simulation/    the datacenter simulation and its exfiltration adversary
+  stress/        the stress-test rows and their report
   research.py    the paper-level facade
-docs/            reports, measurements (docs/data), notes
+benchmarks/      scale sweeps behind docs/benchmarks.md
+zk/sp1/          the SP1 guest and host, shared Rust checker, test vectors
+gpu/             CUDA kernels and captures behind the hardware documents
+docs/            documents and the data they are rendered from (docs/README.md)
 ~~~
 
 ## Compile
@@ -97,8 +122,8 @@ per output dot product; `DemoG` traces batches of multiply-accumulate chains.
 `Compile(G, x, a)` is the verifier's: it runs `G` on the request's public
 inputs and the client's advice, compiles the bytes `G` produced and records
 what it ran on. The advice is admitted up to `max_advice_bits` and charged at
-`8|a|` bits on top of `Bound`; a `G` that raises is a `CompileError`, a
-rejection, never a crash.
+its declared bit length on top of `Bound`; a `G` that raises is a
+`CompileError`, a rejection, never a crash.
 
 ~~~python
 from veritor import Compile, MatmulCompileRequest, compile_matmul, make_word_gate_set
@@ -213,9 +238,13 @@ challenge before the values it constrains are fixed.
 2. Replay units are selected at rate `q`. The prover commits the interior of
    each selected unit; the verifier reveals `s_seed`.
 3. Verification units inside selected replay units are selected at rate `s`.
-   The prover opens every value each selected unit reads or writes; the
-   verifier recomputes the gate relations, checks each input gate against
-   `x` and each weight gate by its opening under `κ_W` at its rank.
+   The prover opens each selected unit's inputs and outputs (boundary,
+   interior or `κ_W` positions, each with exactly one owner); the verifier
+   recomputes the unit from its opened inputs and compares with its opened
+   outputs, checks each input gate against `x` and each weight gate by its
+   opening under `κ_W` at its rank. With the interior commitment the prover
+   may declare up to `f_max` units faulty; a declared unit is authenticated
+   but not checked, and `Bound` prices the declaration.
 
 Selection is `Binomial(N, q)` followed by Floyd's uniform subset, so the
 verifier's work is `O(K log N)` in the number `K` of selected units, never in
@@ -284,7 +313,11 @@ is taken alongside and the smaller reported. No copy is ever enumerated: a
 (`veritor.analysis.rate`) reads a closed-form slope `ρ` off four numbers of
 the table -- RUs, widest RU and VU bottlenecks, VUs per RU -- with
 `log2|Y_η| ≤ ρ log2(1/η) + log2 e` proved directly; `Bound(...).rho` is the
-fold's own slope, and the two are compared in the tests.
+fold's own slope, and the two are compared in the tests. Check outputs are
+worth zero bits in every cut (an output fixed to a constant contributes a
+factor 1 to `|Y|`); `Bound(..., max_faults=f)` is the minimum of the rigorous
+bounds for a prover who declares `f` units after seeing the replay challenge
+(`veritor.analysis.faults`).
 
 ~~~python
 from fractions import Fraction
@@ -293,13 +326,13 @@ from veritor import Bound, Capacity, Cost, CostParameters, Optimize, PolicyGrid,
 theta = VerificationPolicy(Fraction(1, 2), Fraction(1, 2))
 eta = Fraction(1, 100)                                  # the verifier's threshold
 print(Bound(compiled, theta, eta).bits)                 # U in bits
-print(Capacity(compilation, theta, eta))                # U + 8|a|: what the paper charges
+print(Capacity(compilation, theta, eta))                # U + advice bits: what the paper charges
 print(Cost(compiled, theta, CostParameters(hash_cost=1, proof_overhead=0)).total)
 
 best = Optimize(compiled, eta, PolicyGrid.uniform(8), max_bits=20)
 ~~~
 
-`Capacity(Compile(G, x, a), θ, η)` is `Bound(C, I, θ) + 8|a|`: beyond the
+`Capacity(Compile(G, x, a), θ, η)` is `Bound(C, I, θ) + advice_bits`: beyond the
 degrees of freedom `Bound` leaves uncharged in the circuit, the only freedom
 the client has is the advice, everything else being a deterministic function
 of `(G, x, a)`. With `U_max` and `A` enforced at admission, every accepted
@@ -307,8 +340,10 @@ request has capacity at most `U_max + A`.
 
 `Cost` is the exact per-request expectation
 `h|∂| + Recompute + q Σ_r h|Int(r)| + q s Σ_v (α proof(V_v) + c_0)`, with
-`|∂| = |In| + Σ_r |Out(R_r)|` and `α = CostParameters.proof_factor` the cost
-of proving one VU relative to executing it natively (`1` by default).
+`|∂| = |In| + Σ_r |Out(R_r)|`, `|Int(r)|` the interior positions of `R_r`
+(`KindSummary.interior_count`: its units' outputs less its own) and
+`α = CostParameters.proof_factor` the cost of proving one VU relative to
+executing it natively (`1` by default).
 `Recompute` assumes the honest prover retains
 only the circuit inputs and the weights: a sampled replay unit whose ports
 are all fed by source gates (a *closed* kind, `KindSummary.closed`) costs its
@@ -327,11 +362,16 @@ result against `U_max` and `W_max`.
 
 ~~~bash
 uv sync
-uv run pytest tests -q
-uv run ruff check src tests
+uv run pytest -q                 # the fast suite, about three minutes
+uv run pytest -q -m slow         # SP1 proofs, GPU-simulator comparisons, large perf sizes
+uv run ruff check src tests benchmarks zk && uv run ruff format --check src tests benchmarks zk
+uv run mypy src/veritor
 ~~~
 
 The tests in `tests/veritor/analysis` check the fold against exhaustive
 enumeration of error sets on small circuits and against an exact min-cut
-(`veritor.analysis.reference`); `tests/veritor/protocol/test_scaling.py`
-checks that verifier time is flat in the number of gates.
+(`veritor.analysis.reference`); `tests/veritor/security/` holds one attack
+test per failure mode of `docs/security-argument.md`;
+`tests/veritor/protocol/test_scaling.py` checks that verifier time is flat in
+the number of gates; `tests/veritor/stress/` records the rows of
+`docs/stress-tests.md`.
