@@ -435,7 +435,7 @@ def test_c2_moe_routing_padded_and_advised() -> None:
                 overhead=padded.overhead,
                 description_bytes=padded.description_bytes,
                 gates=padded.gates,
-                verdict="no advice; E/k times the expert work",
+                verdict="no advice, E/k times the expert work; lowest U at equal theta, and at equal cost while E/k <= 4 (C2c)",
                 notes=(
                     f"{tokens} tokens; {per_token(padded.gates, tokens)} gates/token vs {per_token(advised.gates, tokens)} advised "
                     f"({ratio:.2f}x); U = {padded.bound_bits:.0f} bits = the interface (capped); route check 0 bits."
@@ -450,7 +450,10 @@ def test_c2_moe_routing_padded_and_advised() -> None:
                 overhead=advised.overhead,
                 description_bytes=advised.description_bytes,
                 gates=advised.gates,
-                verdict="the honest server's pick: 1/E of the expert compute for log2(E) bits per position",
+                verdict=(
+                    "the honest server's pick once E/k is large (from E=8, k=1 here, C2c): k/E of the expert compute "
+                    "for k*log2(E) bits per position, spent on a stronger theta"
+                ),
                 notes=(
                     f"exact route description {pair.exact_advice_bits} bits, charged {advised.advice_bits} (byte granularity); "
                     f"ok word: +{WIDTH} output bits per request and reach inflation (U {advised.bound_bits:.0f} vs {padded.bound_bits:.0f}); "
