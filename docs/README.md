@@ -29,4 +29,4 @@ What each file is, what it is generated from, and where to start.
 
 ## Data
 
-`data/` holds the recorded measurements the documents above are rendered from: `benchmarks.json`, `frontier-70b.json`, `global-estimate.json`, `stress.json`, `stress-control-flow.json`, `stress-protocol.json`. They are inputs to the renderers, not hand-edited.
+`data/` holds the recorded measurements the documents above are rendered from: `benchmarks.json`, `frontier-70b.json`, `global-estimate.json`, `stress.json`, `stress-control-flow.json`, `stress-protocol.json`, `stress-honest.json`. They are inputs to the renderers, not hand-edited.
