@@ -48,6 +48,7 @@ from .indexed import (
     RangeIndexedDomain,
     domains_equal,
     iter_domain,
+    iter_members,
     position_domain,
 )
 from .limits import CompilationLimits, VerificationLimits
@@ -111,6 +112,7 @@ __all__ = [
     "exact_fraction",
     "identity_digest",
     "iter_domain",
+    "iter_members",
     "make_isa_gate_set",
     "make_ml_gate_set",
     "make_word_gate_set",

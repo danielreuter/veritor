@@ -24,7 +24,8 @@ from veritor.core import (
     ResourceLimit,
     VerificationLimits,
     VerificationPolicy,
-    iter_domain,
+    encode_value,
+    iter_members,
 )
 
 from .challenge import derive_replay_selection, derive_sample_selection
@@ -472,13 +473,17 @@ class ProverSession:
     def _commit(self, domain: CommitmentDomain, values: Values) -> MerkleTree:
         circuit = self._layout.circuit
         encoded: dict[int, bytes] = {}
-        for address in iter_domain(domain.positions):
+        schemas: dict[int, str] = {}
+        for member in iter_members(domain.positions):
+            address = int(member)
             try:
-                value = values[int(address)]
+                value = values[address]
             except KeyError as error:
                 raise ProtocolError(f"prover has no value for address {address}") from error
-            encoded[int(address)] = circuit.encode(address, value)
-        tree = MerkleTree(domain, encoded, lambda address: leaf_schema(circuit, address))
+            width = circuit[address].width  # one lazy lookup per position, shared by value and schema
+            encoded[address] = encode_value(width, value)
+            schemas[address] = f"u{width}"
+        tree = MerkleTree(domain, encoded, schemas.__getitem__)
         self._trees[domain.owner] = tree
         return tree
 

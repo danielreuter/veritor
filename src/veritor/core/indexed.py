@@ -422,10 +422,24 @@ class IntervalDifferenceDomain:
 
 
 def iter_domain[T](domain: IndexedDomain[T]) -> Iterator[T]:
-    """Iterate a domain in canonical rank order."""
+    """Iterate a domain in canonical rank order, one ``unrank`` per member (the reference enumeration)."""
 
     for rank in range(domain.count):
         yield domain.unrank(rank)
+
+
+def iter_members[T](domain: IndexedDomain[T]) -> Iterator[T]:
+    """Iterate a domain in rank order by its own ``__iter__`` when it has one, else by :func:`iter_domain`.
+
+    Every domain's iteration order is its rank order (``tests/veritor``
+    holds each to :func:`iter_domain`); the lazy domains walk their members in
+    linear time where ``unrank`` costs a descent per member, so hot loops
+    (committing an interior) go through this.
+    """
+
+    if isinstance(domain, Iterable):
+        return iter(domain)
+    return iter_domain(domain)
 
 
 def domains_equal[T](

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from veritor.compile.description import parse_description
+from veritor.constructors import compile_demo_g
 from veritor.core import (
     CompilationLimits,
     DescriptionCircuit,
@@ -11,6 +12,7 @@ from veritor.core import (
     InvalidArtifact,
     KindSummary,
     iter_domain,
+    iter_members,
     make_word_gate_set,
 )
 from veritor.core.description import Frame
@@ -130,6 +132,20 @@ def test_boundary_and_interiors_match_the_reference_derivation(helpers):
         assert index.interior(2).count == 0
         assert boundary.identity_digest != index.interior(0).identity_digest
     assert len(boundary) == boundary.count
+
+
+def test_every_domain_iterates_in_rank_order(helpers):
+    """``iter_members`` (the commit paths' linear walk) must agree with the ``unrank`` enumeration."""
+
+    indices = [build(helpers, helpers.matmul_payload(4, 3, 2))[0], compile_demo_g().compiled.index]
+    for index in indices:
+        domains = [index.boundary(), index.weights(), index.inputs()]
+        domains += [index.interior(r) for r in range(index.replay_units.count)]
+        for domain in domains:
+            walked = list(iter_members(domain))
+            assert walked == list(iter_domain(domain))
+            assert walked == list(domain)
+            assert [domain.rank(a) for a in walked] == list(range(domain.count))
 
 
 def test_input_and_weight_domains_are_lazy_and_ranked_in_address_order(helpers):

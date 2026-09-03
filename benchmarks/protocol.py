@@ -5,8 +5,10 @@ each phase is timed around the public API: the prover's boundary commitment,
 its replay of the selected replay units (RUs) and the interior commitments
 (split by timing the ``replay`` callback), its openings; the verifier's
 admission, its boundary check and challenge derivation, its interior check,
-and its evidence check, split into Merkle openings (``verify_opening`` is
-wrapped for the duration of the run) and gate recomputation.  Message sizes
+and its evidence check, split into Merkle openings (the transparent
+backend's ``_open_all``, which authenticates one VU's openings, and the
+session's ``verify_opening`` for the boundary I/O are wrapped for the
+duration of the run) and gate recomputation.  Message sizes
 are the canonical JSON of each message's manifest and of the whole transcript.
 """
 
@@ -30,6 +32,7 @@ from veritor.protocol import (
 )
 from veritor.protocol import session as session_module
 from veritor.protocol.merkle import MerkleTree
+from veritor.protocol.proofs.transparent import TransparentBackend
 from veritor.protocol.session import replay_unit
 
 from ._harness import Benchmark, Point, Scale, Series, measure
@@ -126,6 +129,7 @@ def _run_once(
         return result
 
     original = session_module.verify_opening
+    original_open_all = TransparentBackend._open_all
 
     def timed_verify(*args, **kwargs):
         nonlocal merkle_time, merkle_calls
@@ -133,6 +137,14 @@ def _run_once(
         result = original(*args, **kwargs)
         merkle_time += time.perf_counter() - start
         merkle_calls += 1
+        return result
+
+    def timed_open_all(self, obligation, openings):
+        nonlocal merkle_time, merkle_calls
+        start = time.perf_counter()
+        result = original_open_all(self, obligation, openings)
+        merkle_time += time.perf_counter() - start
+        merkle_calls += len(openings)
         return result
 
     def clock(name: str, fn: Callable[[], object]) -> object:
@@ -150,6 +162,7 @@ def _run_once(
         **seeds(seed),
     )
     session_module.verify_opening = timed_verify
+    TransparentBackend._open_all = timed_open_all  # type: ignore[method-assign]
     try:
         verifier = clock(
             "verifier_admit_s", lambda: VerifierSession(expectation, compiled)
@@ -192,6 +205,7 @@ def _run_once(
         timings["openings_verified"] = merkle_calls - calls_before
     finally:
         session_module.verify_opening = original
+        TransparentBackend._open_all = original_open_all  # type: ignore[method-assign]
     if not report.accepted:
         raise RuntimeError(f"honest run rejected: {report.code}: {report.detail}")
     timings["prover_total_s"] = (

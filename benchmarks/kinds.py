@@ -54,7 +54,7 @@ def _address_set_point(compiled, x: float, scale: Scale, extra: dict) -> Point:
                 lambda pair: pair[0].unrank(pair[1]), interior_ranks, scale
             ),
             "interior_contains_s": per_call(
-                lambda pair: pair[0].contains(pair[0].start + pair[1]),
+                lambda pair: pair[0].contains(pair[0].interval.start + pair[1]),
                 interior_ranks,
                 scale,
             ),
