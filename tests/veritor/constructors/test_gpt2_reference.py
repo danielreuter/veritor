@@ -112,12 +112,12 @@ def test_the_request_replay_reproduces_the_recorded_interior_and_the_tokens(run)
     weights, result, compilation, addresses, values = run
     compiled = compilation.compiled
 
-    interior = replay_unit(compiled, 1, values)
-    recorded = [a for a in interior if a in values]
-    assert len(recorded) == values.recorded_count - 2 * 3  # minus the prompt (``in`` gates) and the tokens (outputs)
-    assert all(interior[a] == values[a] for a in recorded)
+    replayed = replay_unit(compiled, 1, values)  # every computed gate of the request, its tokens included
+    recorded = [a for a in replayed if a in values]
+    assert len(recorded) == values.recorded_count - 3  # minus the prompt: ``in`` gates are read, not replayed
+    assert all(replayed[a] == values[a] for a in recorded)
     outputs = compiled.circuit.outputs
-    assert tuple(values[a] for a in outputs) == result.tokens and not any(a in interior for a in outputs)
+    assert tuple(values[a] for a in outputs) == tuple(replayed[a] for a in outputs) == result.tokens
     # and the whole circuit, from the prompt and the weights alone
     assignment = compiled.circuit.evaluate(compilation.inputs, weights.flat().tolist())
     assert tuple(assignment[a] for a in outputs) == result.tokens

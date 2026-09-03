@@ -451,7 +451,7 @@ def test_c2_moe_routing_padded_and_advised() -> None:
                 description_bytes=advised.description_bytes,
                 gates=advised.gates,
                 verdict=(
-                    "the honest server's pick once E/k is large (from E=8, k=1 here, C2c): k/E of the expert compute "
+                    "the honest server's pick once E/k is large (from E=16, k=1 under the VU-output interior, C2c): k/E of the expert compute "
                     "for k*log2(E) bits per position, spent on a stronger theta"
                 ),
                 notes=(
@@ -506,7 +506,7 @@ def test_c2_crossover_in_experts_and_top_k() -> None:
     winners: dict[tuple[int, int], str] = {}
     gate_set = make_isa_gate_set(WIDTH)
     tokens = sum(r.max_new for r in CROSSOVER_REQUESTS)
-    for experts, top_k in ((2, 1), (4, 1), (8, 1), (8, 2)):
+    for experts, top_k in ((2, 1), (4, 1), (8, 1), (8, 2), (16, 1)):
         shape = moe_shape(experts, top_k)
         parameters = random_parameters(shape, 3)
         padded_g, advised_g = RequestsG(shape, PADDED), RequestsG(shape, ADVICE)
@@ -539,13 +539,13 @@ def test_c2_crossover_in_experts_and_top_k() -> None:
             f"(overhead {grid_p[POLICY].overhead:.3f} vs {grid_a[POLICY].overhead:.3f}); "
             f"at equal absolute cost {budget:.0f}: padding {best_padded:.0f} vs advice {best_advised:.0f} -> {winner}"
         )
-    assert winners[(2, 1)] == "padding" and winners[(8, 1)] == "advice", winners
+    assert winners[(2, 1)] == "padding" and winners[(16, 1)] == "advice", winners
     crossover = next((e, k) for (e, k), w in sorted(winners.items()) if w == "advice")
     record(
         [
             Row(
                 id="C2c",
-                what="MoE crossover sweep: (E, k) in {(2,1), (4,1), (8,1), (8,2)}, 32 requests x 4 tokens, theta grid q in {1/2, 1}, s in {1/8..7/8}",
+                what="MoE crossover sweep: (E, k) in {(2,1), (4,1), (8,1), (8,2), (16,1)}, 32 requests x 4 tokens, theta grid q in {1/2, 1}, s in {1/8..7/8}",
                 mechanism="M5 vs M4 compared at equal theta (equal relative overhead) and at equal absolute prover cost",
                 advice_bits=0,
                 capacity_bits=0,
