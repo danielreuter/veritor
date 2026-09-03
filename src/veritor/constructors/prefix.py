@@ -25,7 +25,7 @@ from veritor.compile import constructor_digest
 from veritor.core import Digest, JSONValue
 from veritor.core.description import REPLAY
 
-from .lm import LMShape, ToyLM, wires
+from .lm import LMShape, ToyLM
 from .schedule import Request
 from .tracer import TracedDefinition, TracerError, Wire, Wires
 
@@ -181,7 +181,7 @@ class PrefixG:
                 return produced[-1]
 
             token = remember(
-                wires(self.lm.prefill(length, cached=prefix)(w, kv)), length
+                self.lm.prefill(length, cached=prefix)(w, kv), length
             )
             tokens = [token]
             for step in range(1, max_new):
@@ -190,7 +190,7 @@ class PrefixG:
                     args.extend(keys[layer])
                     args.extend(values[layer])
                 token = remember(
-                    wires(self.lm.decode(prefix + length + step)(*args)), 1
+                    self.lm.decode(prefix + length + step)(*args), 1
                 )
                 tokens.append(token)
             return tokens
@@ -202,8 +202,8 @@ class PrefixG:
 
         @self.lm.tracer.definition(input_count=0)
         def root(_v: Wires) -> object:
-            w = wires(self.lm.weights_unit()())
-            kv = wires(self.prefix_unit(prefix)(w))
+            w = self.lm.weights_unit()()
+            kv = self.prefix_unit(prefix)(w)
             outputs: list[Wire | Wires] = []
             for (length, max_new), members in self.groups(requests):
                 definition = self.suffix(prefix, length, max_new)

@@ -653,22 +653,10 @@ def reference_generate(
 # -- the traced definitions ---------------------------------------------------------
 
 
-def wires(value: Wire | Wires) -> Wires:
-    """A call's result as a range (a one-output call returns a single wire)."""
+def wires(value: Wires) -> Wires:
+    """Identity: a one-value range is a :class:`Wire` already (kept for :mod:`.gpt2`)."""
 
-    if isinstance(value, Wire):
-        return Wires(value.trace, value.space, value.index, 1, 0)
     return value
-
-
-def wire(value: Wire | Wires) -> Wire:
-    """A one-output call's result as the single wire it is."""
-
-    if isinstance(value, Wire):
-        return value
-    if len(value) != 1:
-        raise TracerError(f"expected one wire, got {len(value)}")
-    return value[0]
 
 
 def concat(parts: Sequence[Wires]) -> Wires:
@@ -685,7 +673,7 @@ def concat(parts: Sequence[Wires]) -> Wires:
         if (
             part.trace is not first.trace
             or part.space != first.space
-            or part.stride != 1
+            or (part.count > 1 and part.stride != 1)
             or part.jstride
             or part.start != first.start + total
         ):
@@ -1086,7 +1074,7 @@ class ToyLM:
 
         @self.define(input_count=vocab + 4, key="sample", role=VERIFICATION)
         def sample(v: Wires) -> object:
-            return self._sampler(wires(v[:vocab]), None, v[vocab:])
+            return self._sampler(v[:vocab], None, v[vocab:])
 
         return sample
 
@@ -1098,7 +1086,7 @@ class ToyLM:
 
         @self.define(input_count=2 * vocab + 4, key="masked_sample", role=VERIFICATION)
         def masked_sample(v: Wires) -> object:
-            return self._sampler(wires(v[:vocab]), v[vocab : 2 * vocab], v[2 * vocab :])
+            return self._sampler(v[:vocab], v[vocab : 2 * vocab], v[2 * vocab :])
 
         return masked_sample
 
@@ -1285,7 +1273,7 @@ class ToyLM:
             for p, route in enumerate(routes):
                 x_p = x[p * d : (p + 1) * d]
                 logits = self.matvec(d, experts)(x_p, w_r)
-                ok = wire(self.route_check(route)(logits, one, kconst, ok))
+                ok = self.route_check(route)(logits, one, kconst, ok)[0]
                 mixture: Wires | None = None
                 for e in route:
                     y = self.expert_mlp(*expert_ports(weights, e, d, hidden), x_p, 1)
@@ -1309,8 +1297,8 @@ class ToyLM:
 
         shape = self.shape
         assert layer.w_r is not None and layer.experts is not None and len(routes) == positions
-        result = wires(
-            self.moe_block(routes)(x, layer.w_r, layer.experts, constants[1], constants[shape.top_k], ok)
+        result = self.moe_block(routes)(
+            x, layer.w_r, layer.experts, constants[1], constants[shape.top_k], ok
         )
         return result[: positions * shape.d_model], result[positions * shape.d_model]
 
@@ -1500,7 +1488,7 @@ class ToyLM:
             r = self.randomness() if heads == 1 else None
             embed = self.embed_row()
             if not inside and new == 1:
-                x = wires(embed(tokens[0], ports.constants, ports.embedding))  # a lone token is a call
+                x = embed(tokens[0], ports.constants, ports.embedding)  # a lone token is a call
             else:
                 x = self.tracer.repeat(new, embed, tokens[0].by(1), ports.constants, ports.embedding)
             state, x, ok = self.forward(ports, x, new, caches, routes, ok)

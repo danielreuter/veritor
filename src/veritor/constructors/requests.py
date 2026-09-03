@@ -57,7 +57,7 @@ from veritor.compile import constructor_digest
 from veritor.core import Digest, JSONValue
 from veritor.core.description import REPLAY
 
-from .lm import ADVICE, PADDED, LMShape, Parameters, Routes, ToyLM, wires
+from .lm import ADVICE, PADDED, LMShape, Parameters, Routes, ToyLM
 from .moe import RequestRoutes, decode_routes, encode_routes, reference_routes
 from .schedule import Request
 from .tracer import TracedDefinition, TracerError, Wire, Wires
@@ -214,10 +214,10 @@ class RequestsG:
             mask: tuple[Wires, ...] = ()
             if banned:
                 ids = self.lm.tracer.inputs(banned)
-                mask = (wires(self.lm.allowed(banned)(ports.constants, ids, ports.constants[1])),)
+                mask = (self.lm.allowed(banned)(ports.constants, ids, ports.constants[1]),)
             check: list[Wire] = [ok] if ok is not None else []
             prefill = self.lm.prefill(prompt, step_routes(0), masked=masked)
-            token = remember(wires(prefill(w, *mask, *check)), prompt)
+            token = remember(prefill(w, *mask, *check), prompt)
             tokens = [token]
             for step in range(1, max_new):
                 args: list[Wire | Wires] = [w, token]
@@ -228,7 +228,7 @@ class RequestsG:
                 if ok is not None:
                     args.append(ok)
                 decode = self.lm.decode(prompt + step, step_routes(step), masked=masked)
-                token = remember(wires(decode(*args)), 1)
+                token = remember(decode(*args), 1)
                 tokens.append(token)
             return [ok, *tokens] if ok is not None else tokens
 
@@ -240,7 +240,7 @@ class RequestsG:
 
         @self.lm.tracer.definition(input_count=0)
         def root(_v: Wires) -> object:
-            w = wires(self.lm.weights_unit()())
+            w = self.lm.weights_unit()()
             outputs: list[Wire | Wires] = []
             for kind, members in self.groups(requests):
                 if routes is not None:  # a kind per request: its routes are its own

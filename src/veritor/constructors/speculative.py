@@ -57,7 +57,7 @@ from veritor.compile import constructor_digest
 from veritor.core import Digest, JSONValue, make_isa_gate_set
 from veritor.core.description import REPLAY, VERIFICATION
 
-from .lm import ADVICE, PADDED, Decoder, LMShape, Parameters, ToyLM, wire, wires
+from .lm import ADVICE, PADDED, Decoder, LMShape, Parameters, ToyLM
 from .schedule import Request
 from .tracer import TracedDefinition, Tracer, TracerError, Wire, Wires
 
@@ -400,10 +400,10 @@ class SpeculativeG:
                     args.extend(values[layer])
                 return args
 
-            block = wires(self.target.prefill_ports(prompt)(w_target, tokens))
+            block = self.target.prefill_ports(prompt)(w_target, tokens)
             file_values(remember(block, prompt, dt, keys_t, values_t), values_t)
             y: Wire = block[-1]
-            block = wires(self.draft.prefill_ports(prompt)(w_draft, tokens))
+            block = self.draft.prefill_ports(prompt)(w_draft, tokens)
             file_values(remember(block, prompt, dd, keys_d, values_d), values_d)  # its token is unused
             outputs: list[Wire | Wires] = [y]
             ok: Wire | None = one if acceptances is not None else None
@@ -418,19 +418,17 @@ class SpeculativeG:
                 drafts: list[Wire] = []
                 token = y
                 for i in range(drafted):
-                    step = wires(self.draft.decode(cached + i + 1)(w_draft, token, *cache_args(keys_d, values_d)))
+                    step = self.draft.decode(cached + i + 1)(w_draft, token, *cache_args(keys_d, values_d))
                     file_values(remember(step, 1, dd, keys_d, values_d), values_d)
                     token = step[-1]
                     drafts.append(token)
-                block = wires(
-                    self.target.extend(cached, verified)(
-                        w_target, y, *drafts[: verified - 1], *cache_args(keys_t, values_t)
-                    )
+                block = self.target.extend(cached, verified)(
+                    w_target, y, *drafts[: verified - 1], *cache_args(keys_t, values_t)
                 )
                 target_values = remember(block, verified, dt, keys_t, values_t)
                 z = block[-verified:]
                 if m is None:
-                    decision = wires(self.acceptance_unit()(*drafts[:gamma], z, one, top))
+                    decision = self.acceptance_unit()(*drafts[:gamma], z, one, top)
                     acc, slots, y = decision[:gamma], decision[gamma : 2 * gamma + 1], decision[-1]
                     outputs.append(slots)
                     # Position 0 of the step is y, always kept; positions 1..gamma keep their V
@@ -446,13 +444,13 @@ class SpeculativeG:
                         del values_d[layer][-drafted:]
                         values_d[layer].append(filed[0])
                         values_d[layer].extend(
-                            wires(self.mask_row(dd)(acc[i - 1], filed[i])) for i in range(1, drafted)
+                            self.mask_row(dd)(acc[i - 1], filed[i]) for i in range(1, drafted)
                         )
                     cached += gamma + 1
                 else:
                     assert ok is not None
                     checked = drafts if m < gamma else drafts[:gamma]
-                    ok = wire(self.acceptance_check(m)(*checked, z, one, ok))
+                    ok = self.acceptance_check(m)(*checked, z, one, ok)[0]
                     for layer, values in enumerate(target_values):
                         values_t[layer].append(values)
                     new_tokens: list[Wire] = [*drafts[:m], z[m]]
@@ -467,8 +465,8 @@ class SpeculativeG:
     def root(self, requests: tuple[Request, ...], acceptances: Sequence[Acceptances] | None) -> TracedDefinition:
         @self.tracer.definition(input_count=0)
         def root(_v: Wires) -> object:
-            w_target = wires(self.target.weights_unit()())
-            w_draft = wires(self.draft.weights_unit()())
+            w_target = self.target.weights_unit()()
+            w_draft = self.draft.weights_unit()()
             return [
                 self.request(len(r.prompt), r.max_new, None if acceptances is None else acceptances[i])(
                     w_target, w_draft

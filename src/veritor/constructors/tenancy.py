@@ -41,7 +41,7 @@ from veritor.compile import constructor_digest
 from veritor.core import Digest, JSONValue
 from veritor.core.description import REPLAY
 
-from .lm import LMShape, Matrix, Parameters, wires
+from .lm import LMShape, Matrix, Parameters
 from .requests import RequestsG
 from .schedule import Request
 from .tracer import TracedDefinition, TracerError
@@ -155,7 +155,7 @@ class ModelsG:
 
         @self.inner.lm.tracer.definition(input_count=0)
         def root(_v: object) -> object:
-            w = wires(self.weights_unit()())
+            w = self.weights_unit()()
             return [
                 self.inner.request(len(assignments[i][1].prompt), assignments[i][1].max_new)(
                     w[assignments[i][0] * n : (assignments[i][0] + 1) * n]
@@ -259,11 +259,11 @@ class AdaptedRequestsG:
 
         @self.inner.lm.tracer.definition(input_count=0)
         def root(_v: object) -> object:
-            w = wires(self.inner.lm.weights_unit()())
+            w = self.inner.lm.weights_unit()()
             results = []
             for i in order:
                 request = requests[i][1]
-                adapter = wires(self.adapter_unit()())
+                adapter = self.adapter_unit()()
                 results.append(
                     self.inner.request(len(request.prompt), request.max_new)(w[:first], adapter, w[stop:])
                 )

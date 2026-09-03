@@ -38,7 +38,7 @@ Closed forms. `gate_budget(shape, prompt, max_new)` gives the computed gates of 
 |---|---|---|---|---|---|---|---|---|---|---|
 | tiny (2L, d 8, 2 heads, d_ff 16, vocab 11, ctx 8) | (3+3), (2+2) | 46,806 | 4 ms | 6 ms | 2 ms | 27,783 | 1,386 | 64 | 3 | 4,177 |
 | reduced (4L, d 128, 4 heads, d_ff 512, vocab 1024, ctx 128) | 2 x (16+16) | 222,161 | 20 ms | 29 ms | 10 ms | 127,362,567 | 941,831 | 188 | 3 | 1,747,719 |
-| GPT-2 Small | 3 x (32+32) | 773,651 | 75 ms | 106 ms | 56 ms | 54,589,340,261 | 124,490,072 | 348 | 4 | 176,763,749 |
+| GPT-2 Small | 3 x (32+32) | 773,587 | 75 ms | 106 ms | 56 ms | 54,589,340,261 | 124,490,072 | 348 | 4 | 176,763,749 |
 | GPT-2 Small | 1000 x (32+32) | 773,657 | 367 ms | 105 ms | 56 ms | 18,155,074,553,072 | 124,490,072 | 348 | 1001 | 17,549,049,072 |
 
 "Trace" is `GPT2G.__call__` (Python tracing plus canonical JSON), "compile" is `Compiler.compile` (parse, validate, `Index`), "kind table" is `Compiled.kind_table()`; wall time on one core, `CompilationLimits()` defaults. Nothing dominates: the compile is `O(|description|)` and the description is 348 definitions at GPT-2 Small, whatever the number of gates. The 1000-request run costs 0.3 s more tracing (1000 `Request` objects go through `requests()`, `flatten_inputs` and the grouping) and six more bytes of description (one `repeat` step in place of three calls). Per request at GPT-2 Small, 63 processed positions and 32 predictions: 18,154,950,063 gates, of which embedding 4,866,483,951 (26.8%: the one-hot, 77.2 M per position), attention 3,644,186,112 (20.1%), softmax 1,442,448, MLP 7,158,316,032 (39.4%), LayerNorm 8,303,632, residual 1,161,216, LM head 2,470,232,064 (13.6%), argmax 4,824,576.

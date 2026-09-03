@@ -493,7 +493,7 @@ def test_gpt2_small_compiles_and_the_table_has_the_documented_numbers(small) -> 
     table = compiled.kind_table()
 
     description, _ = constructor(SMALL_REQUESTS, b"")
-    assert len(description) == 773_651
+    assert len(description) == 773_587  # count-one ranges carry stride 0
     assert index.n == 54_589_340_261
     assert index.weight_count == 124_490_072 and index.input_count == 96
     assert index.replay_units.count == 4 and index.verification_unit_count == 176_763_749
