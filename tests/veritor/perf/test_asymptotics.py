@@ -215,12 +215,20 @@ def test_output_reach_is_flat_in_n() -> None:
     )
 
 
-@pytest.mark.xfail(
-    reason="known: output_reach is super-quadratic in a chain of dependent steps (docs/benchmarks.md)",
-    strict=False,
-)
 def test_output_reach_is_at_most_linear_in_chained_steps() -> None:
+    """Step `k` reads step `k - 1`: `Down(j) = [j, S)`, one interval per step in the sweep."""
+
     small, large = _root(chain_steps(256)), _root(chain_steps(1024))
+    assert (
+        best_of(lambda: output_reach(large)) / best_of(lambda: output_reach(small))
+        < 4 * 3
+    )
+
+
+def test_output_reach_is_at_most_linear_in_siblings_reading_one_step() -> None:
+    """`N` independent calls all reading the source step (requests over one weights step): `Down(source) = [0, N + 1)`."""
+
+    small, large = _root(unrolled_units(256)), _root(unrolled_units(1024))
     assert (
         best_of(lambda: output_reach(large)) / best_of(lambda: output_reach(small))
         < 4 * 3

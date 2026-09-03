@@ -901,6 +901,33 @@ def transient_ports(root: Definition) -> dict[str, tuple[Run, ...]]:
 # which the closure follows, while the copies of a ``repeat`` are independent
 # and one copy's reach is computed from the outputs attributable to one copy.
 #
+# The closure is kept as *intervals of step indices*, never as a set of steps.
+# ``Down(j) ⊆ [j, S)`` for a definition of ``S`` steps, and the two structures
+# that matter are (unions of) a few intervals: along a chain (step ``k`` reads
+# step ``k - 1``, or every earlier step as a KV cache does) ``Down(j) = [j, S)``;
+# for ``N`` independent siblings reading one broadcast step ``Down(sibling) =
+# {sibling}`` and ``Down(broadcast) = [broadcast, N + 1)``.  Reads are recorded
+# on the *reader's* side as ranges of steps: an argument run of step ``k``
+# covers the steps ``[a, b)`` between the ones holding its first and last slot
+# (two bisections on ``step_slot``), exactly when the run is dense and as a
+# superset when it is strided over more than ``_EXACT_READ_STEPS`` steps (a
+# narrower strided run is enumerated through ``_split``).  The steps are then
+# swept last to first: a reader ``k`` is *active* while the sweep is inside
+# one of its ranges, ``Down(k)`` is already final then (``b <= k``), and a
+# segment tree over the step positions counts, per position, the active
+# readers whose ``Down`` contains it, so the union ``U_j`` of their closures is
+# the set of positions with a positive count.  ``reach(j)`` is ``share(j)``
+# plus the output bits over ``U_j`` (read off the root: the bits at count zero
+# are the uncovered ones), and ``Down(j) = {j} ∪ U_j`` is extracted as maximal
+# intervals by descent, at most ``_MAX_DOWN_INTERVALS`` of them, beyond which
+# the hull ``[j, max Down(j) + 1)`` stands in.  Both approximations only add
+# edges and only enlarge a closure, which keeps every reach a downstream cut;
+# both are exact on every definition with at most ``_EXACT_READ_STEPS`` steps.
+# The sweep costs ``O((S + R) · I · log S)`` for ``R`` recorded ranges and
+# ``I <= _MAX_DOWN_INTERVALS`` intervals per closure, ``O((S + R) log S)`` on
+# the chain and sibling shapes, against ``Θ(S³ / w)`` and ``Θ(N² / w)`` for the
+# bitmask closure this replaces.
+#
 # What a step reaches is measured in bits of the *caller's* declared outputs.
 # At the root those are the circuit outputs, cut at step boundaries into
 # segments whose widths (through ``_call_pieces``) sum to ``out_bits``; a copy
@@ -945,6 +972,237 @@ def _segment_bits(definition: Definition, index: int, first: int, taken: int, st
     return width, min(width, per_copy * max(run.width for run in runs))
 
 
+_EXACT_READ_STEPS = 64
+"""A strided argument run spanning at most this many steps names its steps exactly; wider, its hull."""
+
+_MAX_DOWN_INTERVALS = 64
+"""Maximal intervals kept for a step's closure ``Down``; beyond it the hull ``[j, max + 1)`` stands in."""
+
+type _Intervals = list[tuple[int, int]]
+
+
+class _Coverage:
+    """Counts over the step positions ``[0, S)`` under range addition of ``±1``.
+
+    A segment tree with lazy addition (a node's values include its own pending
+    addition, not its ancestors').  Per node: the minimum and maximum count in
+    its subtree and the ``out`` weight of the positions at the minimum, so the
+    weight of the *covered* positions (positive count) is the total weight
+    minus the weight at count zero, read off the root, and the covered
+    positions come out as maximal intervals by descending into the nodes
+    whose maximum is positive and stopping at those whose minimum is.  The
+    positions ``[S, size)`` padding the tree to a power of two mirror position
+    ``S - 1``: a suffix ``[low, S)`` is added as ``[low, size)``, so they never
+    hold the minimum on their own and intervals are clipped to ``S``.
+    """
+
+    __slots__ = ("count", "lz", "mn", "mx", "size", "sm", "total")
+
+    def __init__(self, out: list[int]) -> None:
+        count = len(out)
+        size = 1
+        while size < count:
+            size <<= 1
+        self.count = count
+        self.size = size
+        self.mn = [0] * (2 * size)
+        self.mx = [0] * (2 * size)
+        self.lz = [0] * (2 * size)
+        sm = [0] * (2 * size)
+        sm[size : size + count] = out
+        for node in range(size - 1, 0, -1):
+            sm[node] = sm[2 * node] + sm[2 * node + 1]
+        self.sm = sm
+        self.total = sm[1]
+
+    def covered_out(self) -> int:
+        """The ``out`` weight of the positions with a positive count."""
+
+        return self.total - self.sm[1] if self.mn[1] == 0 else self.total
+
+    def add(self, low: int, high: int, delta: int, dirty: list[int]) -> None:
+        """Add ``delta`` to the counts of positions ``[low, high)`` on the ``O(log S)`` nodes covering it.
+
+        The ancestors of those nodes are stale until :meth:`settle` is
+        called with ``dirty``, to which the parents of the boundary leaves
+        are appended; several additions may share one settlement.  Every
+        stale node is an ancestor of leaf ``low`` or of leaf ``high - 1``,
+        and for a suffix (which reaches the last leaf of the tree) the
+        latter are ancestors of leaf ``low`` too.
+        """
+
+        mn, mx, lz = self.mn, self.mx, self.lz
+        size = self.size
+        if high == self.count:
+            high = size
+        left = low + size
+        right = high + size
+        dirty.append(left >> 1)
+        if high != size:
+            dirty.append((right - 1) >> 1)
+        while left < right:
+            if left & 1:
+                mn[left] += delta
+                mx[left] += delta
+                lz[left] += delta
+                left += 1
+            if right & 1:
+                right -= 1
+                mn[right] += delta
+                mx[right] += delta
+                lz[right] += delta
+            left >>= 1
+            right >>= 1
+
+    def settle(self, dirty: list[int]) -> None:
+        """Recompute the ancestors of the boundary leaves recorded in ``dirty``, bottom-up, once each.
+
+        ``O(log S)`` per addition and less for many: the paths merge on the
+        way up, so ``N`` point additions over adjacent positions settle in
+        ``O(N)``.
+        """
+
+        mn, mx, lz, sm = self.mn, self.mx, self.lz, self.sm
+        nodes = sorted(set(dirty)) if len(dirty) > 2 else dirty  # all at the level above the leaves
+        while nodes[0]:
+            parents: list[int] = []
+            last = 0
+            for node in nodes:
+                if node == last:
+                    continue
+                last = node
+                a = node << 1
+                b = a | 1
+                ma = mn[a]
+                mb = mn[b]
+                if ma < mb:
+                    mn[node] = ma + lz[node]
+                    sm[node] = sm[a]
+                elif mb < ma:
+                    mn[node] = mb + lz[node]
+                    sm[node] = sm[b]
+                else:
+                    mn[node] = ma + lz[node]
+                    sm[node] = sm[a] + sm[b]
+                xa = mx[a]
+                xb = mx[b]
+                mx[node] = max(xb, xa) + lz[node]
+                parents.append(node >> 1)
+            nodes = parents
+
+    def intervals(self, first: int, cap: int) -> _Intervals:
+        """``{first}`` and the covered positions as maximal intervals, left to right.
+
+        ``first`` lies left of every covered position.  Past ``cap``
+        intervals the hull ``[first, last covered + 1)`` is returned instead.
+        """
+
+        mn, mx, lz = self.mn, self.mx, self.lz
+        size, count = self.size, self.count
+        found: _Intervals = [(first, first + 1)]
+
+        def emit(low: int, high: int) -> bool:
+            """Record the fully covered ``[low, high)``, clipped; ``True`` once the cap is exceeded."""
+
+            if low >= count:
+                return False
+            high = min(high, count)
+            start, end = found[-1]
+            if end == low:
+                found[-1] = (start, high)
+            elif len(found) < cap:
+                found.append((low, high))
+            else:
+                return True
+            return False
+
+        if mx[1] <= 0:
+            return found
+        # ``node`` holds covered and uncovered positions both (the root: ``first`` is uncovered);
+        # ``acc`` is the pending addition of its proper ancestors.  The right child waits on the
+        # stack while the left is done, as itself when partial or as a marker when fully covered.
+        stack: list[tuple[int, int, int, int]] = []
+        node, low, high, acc = 1, 0, size, 0
+        while True:
+            acc += lz[node]
+            mid = (low + high) >> 1
+            a = node << 1
+            b = a | 1
+            if mx[b] + acc > 0:
+                stack.append((-1, mid, high, 0) if mn[b] + acc > 0 else (b, mid, high, acc))
+            if mx[a] + acc > 0:
+                if mn[a] + acc <= 0:
+                    node, high = a, mid
+                    continue
+                if emit(low, mid):
+                    return [(first, self._last_covered() + 1)]
+            while stack:
+                node, low, high, acc = stack.pop()
+                if node >= 0:
+                    break
+                if emit(low, high):
+                    return [(first, self._last_covered() + 1)]
+            else:
+                return found
+
+    def _last_covered(self) -> int:
+        """The rightmost position with a positive count (some position has one)."""
+
+        mx, lz = self.mx, self.lz
+        size = self.size
+        node, acc = 1, 0
+        while node < size:
+            acc += lz[node]
+            node <<= 1
+            if mx[node | 1] + acc > 0:
+                node |= 1
+        return min(node - size, self.count - 1)
+
+
+def _read_steps(step_slot: tuple[int, ...], start: int, count: int, stride: int, ranges: _Intervals) -> None:
+    """Append, as step ranges ``[a, b)``, the steps whose slots ``start + k * stride`` (``k < count``) visit.
+
+    Exact for a dense run (every step between its first and last slot is
+    visited) and for a strided one spanning at most ``_EXACT_READ_STEPS``
+    steps; a wider strided run, which may skip a step narrower than its
+    stride, is recorded as the hull of the steps it spans.
+    """
+
+    a = bisect_right(step_slot, start) - 1
+    if count == 1 or stride == 0:
+        ranges.append((a, a + 1))
+        return
+    b = bisect_right(step_slot, start + (count - 1) * stride)
+    if stride == 1 or b - a <= 2 or b - a > _EXACT_READ_STEPS:
+        ranges.append((a, b))
+        return
+    low = high = -1
+    for index, _, _ in _split(step_slot, start, count, stride):
+        if index != high:
+            if high >= 0:
+                ranges.append((low, high))
+            low = index
+        high = index + 1
+    ranges.append((low, high))
+
+
+def _disjoint(ranges: _Intervals) -> _Intervals:
+    """The union of ``ranges`` as sorted, pairwise disjoint, non-adjacent intervals."""
+
+    if len(ranges) == 1:
+        return ranges
+    ranges.sort()
+    merged = [ranges[0]]
+    for low, high in ranges[1:]:
+        start, end = merged[-1]
+        if low <= end:
+            if high > end:
+                merged[-1] = (start, high)
+        else:
+            merged.append((low, high))
+    return merged
+
+
 def _step_reach(definition: Definition, total: int, exact: bool) -> list[int]:
     """Per step of ``definition``, the bits of its declared outputs reachable from one copy of the step.
 
@@ -952,50 +1210,82 @@ def _step_reach(definition: Definition, total: int, exact: bool) -> list[int]:
     (the root) the declared outputs are the circuit outputs and their
     segments are weighed by :func:`_segment_bits`; otherwise every output
     segment weighs ``total`` and a step reaches ``total`` or nothing.  Steps
-    are processed last to first, so ``Down`` of a step is the union of the
-    ``Down`` of the steps that read it, as bitmasks over the steps.
+    are swept last to first with the closure ``Down`` as intervals of steps
+    (see the comment above :func:`_segment_bits`): ``Down(j)`` is ``j`` with
+    the union of the ``Down`` of the steps reading it, and a step reaches its
+    own share of the outputs plus the outputs of the rest of its closure,
+    capped at ``total``.
     """
 
     steps = definition.steps
     count = len(steps)
-    readers = [0] * count  # step j -> the later steps whose arguments read a slot of j
+    step_slot = definition.step_slot
+    # reader k -> its ranges of read steps, as events of the sweep: k becomes active
+    # (its Down is added to the counts) at the last step of a range and inactive
+    # (subtracted) below the first; a range from step 0 is never left
+    on_at: list[list[int] | None] = [None] * count
+    off_at: list[list[int] | None] = [None] * count
+    uses = [0] * count  # events left for k: its Down is dropped after the last one
+    reads = [False] * count
     for k, step in enumerate(steps):
         copies = step.count if isinstance(step, CallStep) else 1
+        ranges: _Intervals = []
         for item in step.args:
             if item.space != LOCAL:
                 continue
             for start, run, stride, _, _ in _argument_grid(item, copies):
-                for index, _, _ in _split(definition.step_slot, start, run, stride):
-                    readers[index] |= 1 << k
+                _read_steps(step_slot, start, run, stride, ranges)
+        if not ranges:
+            continue
+        reads[k] = True
+        for low, high in _disjoint(ranges):
+            arriving = on_at[high - 1]
+            if arriving is None:
+                arriving = on_at[high - 1] = []
+            arriving.append(k)
+            uses[k] += 1
+            if low:
+                leaving = off_at[low - 1]
+                if leaving is None:
+                    leaving = off_at[low - 1] = []
+                leaving.append(k)
+                uses[k] += 1
     out = [0] * count  # bits of declared outputs held by every copy of the step
     share = [0] * count  # ... and by any one copy of it
     for item in definition.outputs:
         if item.space != LOCAL:
             continue
-        for index, first, taken in _split(definition.step_slot, item.start, item.count, item.stride):
+        for index, first, taken in _split(step_slot, item.start, item.count, item.stride):
             if exact:
                 width, single = _segment_bits(definition, index, item.element(first), taken, item.stride)
             else:
                 width = single = total
             out[index] += width
             share[index] += single
-    down = [0] * count
+    cover = _Coverage(out)
+    add = cover.add
+    down: list[_Intervals | None] = [None] * count
     reach = [0] * count
-    for j in reversed(range(count)):
-        mask = 1 << j
-        rest = readers[j]
-        while rest:
-            low = rest & -rest
-            mask |= down[low.bit_length() - 1]
-            rest ^= low
-        down[j] = mask
-        bits = share[j]
-        rest = mask ^ (1 << j)
-        while rest and bits < total:
-            low = rest & -rest
-            bits += out[low.bit_length() - 1]
-            rest ^= low
-        reach[j] = min(bits, total)
+    dirty: list[int] = []
+    for j in range(count - 1, -1, -1):
+        for events, delta in ((off_at[j], -1), (on_at[j], 1)):
+            if events is None:
+                continue
+            for k in events:
+                intervals = down[k]
+                assert intervals is not None  # k > j read a slot of j: its closure is final
+                for low, high in intervals:
+                    add(low, high, delta, dirty)
+                uses[k] -= 1
+                if not uses[k]:
+                    down[k] = None
+        if dirty:
+            cover.settle(dirty)
+            dirty = []
+        bits = share[j] + cover.covered_out()
+        reach[j] = min(total, bits)
+        if reads[j]:
+            down[j] = cover.intervals(j, _MAX_DOWN_INTERVALS)
     return reach
 
 
@@ -1006,9 +1296,12 @@ def output_reach(root: Definition) -> dict[str, int]:
     in reverse post-order, so a definition's reach is final when its own
     call steps are processed: a child called at step ``j`` receives the reach
     of that step (:func:`_step_reach`) and keeps the maximum over its call
-    sites.  ``O(|description|)`` up to the number of progressions the
-    argument grids cut into and the closure over the steps of one
-    definition; copies are never enumerated.
+    sites.  ``O(|description| · log S)`` for definitions of at most ``S``
+    steps, up to the number of progressions the argument grids cut into and
+    the intervals (at most ``_MAX_DOWN_INTERVALS``) a step's closure is kept
+    as: the closure is swept with a segment tree over the steps, never as
+    per-step sets, so a chain of ``S`` dependent steps or ``S`` siblings
+    reading one step cost ``O(S log S)``; copies are never enumerated.
     """
 
     reach: dict[str, int] = {root.digest: root.out_bits}
