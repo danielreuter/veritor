@@ -203,17 +203,22 @@ class SP1Backend:
     # -- the three modes ------------------------------------------------------
 
     @staticmethod
-    def _execution(document: Mapping[str, object]) -> ExecutionReport:
-        tracker = document.get("cycle_tracker", {})
-        syscalls = document.get("syscalls", {})
+    def _counters(document: Mapping[str, object], key: str) -> dict[str, int]:
+        table = document.get(key, {})
+        if not isinstance(table, Mapping):
+            raise ProtocolError(f"veritor-zk-host {key} is not an object")
+        return {str(name): int(str(value)) for name, value in table.items()}
+
+    @classmethod
+    def _execution(cls, document: Mapping[str, object]) -> ExecutionReport:
         gas = document.get("gas")
         return ExecutionReport(
             verdict=bool(document["verdict"]),
             statement_digest=bytes.fromhex(str(document["statement_digest"])),
             total_cycles=int(str(document["total_cycles"])),
-            cycle_tracker={str(k): int(str(v)) for k, v in dict(tracker).items()},  # type: ignore[arg-type]
+            cycle_tracker=cls._counters(document, "cycle_tracker"),
             gas=None if gas is None else int(str(gas)),
-            syscalls={str(k): int(str(v)) for k, v in dict(syscalls).items()},  # type: ignore[arg-type]
+            syscalls=cls._counters(document, "syscalls"),
             execute_seconds=float(str(document.get("execute_seconds", 0.0))),
         )
 

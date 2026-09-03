@@ -35,6 +35,7 @@ from .statement import (
     LOCAL,
     PORT,
     Arg,
+    ArgSpace,
     CommitmentRef,
     GateOp,
     KindProgram,
@@ -47,8 +48,8 @@ from .statement import (
 STATEMENT_MAGIC = b"veritor/proofs/statement/v1\0"
 WITNESS_MAGIC = b"veritor/proofs/witness/v1\0"
 
-_SPACE_CODE = {PORT: 0, LOCAL: 1}
-_SPACE_NAME = {0: PORT, 1: LOCAL}
+_SPACE_CODE: dict[ArgSpace, int] = {PORT: 0, LOCAL: 1}
+_SPACE_NAME: dict[int, ArgSpace] = {0: PORT, 1: LOCAL}
 
 
 class _Writer:
@@ -74,12 +75,12 @@ class _Writer:
             raise ProtocolError("digests are 32 bytes")
         self._parts.append(value)
 
-    def bytes(self, value: bytes) -> None:
+    def blob(self, value: bytes) -> None:
         self.u32(len(value))
         self._parts.append(value)
 
     def string(self, value: str) -> None:
-        self.bytes(value.encode("utf-8"))
+        self.blob(value.encode("utf-8"))
 
     def getvalue(self) -> bytes:
         return b"".join(self._parts)
@@ -116,12 +117,12 @@ class _Reader:
     def digest(self, what: str) -> bytes:
         return self.take(32, what)
 
-    def bytes(self, what: str) -> bytes:
+    def blob(self, what: str) -> bytes:
         return self.take(self.u32(what), what)
 
     def string(self, what: str) -> str:
         try:
-            return self.bytes(what).decode("utf-8")
+            return self.blob(what).decode("utf-8")
         except UnicodeDecodeError:
             raise ProtocolError(f"{what} is not UTF-8") from None
 
@@ -178,7 +179,7 @@ def _write_obligation(writer: _Writer, obligation: Obligation) -> None:
             writer.u8(0)
         else:
             writer.u8(1)
-            writer.bytes(position.expected)
+            writer.blob(position.expected)
     for slots in (obligation.inputs, obligation.gates):
         writer.u32(len(slots))
         for slot in slots:
@@ -265,7 +266,7 @@ def _read_obligation(reader: _Reader) -> Obligation:
         if flag == 0:
             expected = None
         elif flag == 1:
-            expected = reader.bytes("expected value")
+            expected = reader.blob("expected value")
         else:
             raise ProtocolError(f"bad expected flag {flag}")
         positions.append(PositionRef(commitment, rank, position, schema, expected))
@@ -319,7 +320,7 @@ def encode_witness(witness: Witness) -> bytes:
     for openings in witness.obligations:
         writer.u32(len(openings))
         for value, path in openings:
-            writer.bytes(value)
+            writer.blob(value)
             writer.u32(len(path))
             for digest in path:
                 writer.digest(digest)
@@ -337,7 +338,7 @@ def decode_witness(data: bytes) -> Witness:
     for _ in range(reader.count("witness obligations")):
         openings: list[tuple[bytes, tuple[bytes, ...]]] = []
         for _ in range(reader.count("openings")):
-            value = reader.bytes("opening value")
+            value = reader.blob("opening value")
             path = tuple(
                 reader.digest("path digest") for _ in range(reader.count("path"))
             )
