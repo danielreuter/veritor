@@ -1,0 +1,181 @@
+{
+ "hashes": {
+  "blake2b": {
+   "1024": {
+    "cycles_nominal": 3289.469970703125,
+    "mb_per_s": 747.1112434185521,
+    "ns_per_hash": 1370.6124877929688
+   },
+   "1048576": {
+    "cycles_nominal": 2957524.003125,
+    "mb_per_s": 850.9085293444485,
+    "ns_per_hash": 1232301.66796875
+   },
+   "32": {
+    "cycles_nominal": 787.120166015625,
+    "mb_per_s": 97.57087077156076,
+    "ns_per_hash": 327.96673583984375
+   },
+   "64": {
+    "cycles_nominal": 787.3890930175781,
+    "mb_per_s": 195.07509230455005,
+    "ns_per_hash": 328.0787887573242
+   }
+  },
+  "blake3": {
+   "1024": {
+    "cycles_nominal": 2440.367468261719,
+    "mb_per_s": 1007.0614495408579,
+    "ns_per_hash": 1016.8197784423828
+   },
+   "1048576": {
+    "cycles_nominal": 306413.071875,
+    "mb_per_s": 8213.038642903035,
+    "ns_per_hash": 127672.11328125
+   },
+   "32": {
+    "cycles_nominal": 792.9741394042969,
+    "mb_per_s": 96.85057328312648,
+    "ns_per_hash": 330.40589141845703
+   },
+   "64": {
+    "cycles_nominal": 792.9111511230469,
+    "mb_per_s": 193.71653404350192,
+    "ns_per_hash": 330.37964630126953
+   }
+  },
+  "sha256": {
+   "1024": {
+    "cycles_nominal": 2014.9171508789063,
+    "mb_per_s": 1219.7027549882116,
+    "ns_per_hash": 839.5488128662109
+   },
+   "1048576": {
+    "cycles_nominal": 1291398.80625,
+    "mb_per_s": 1948.7259766854845,
+    "ns_per_hash": 538082.8359375
+   },
+   "32": {
+    "cycles_nominal": 789.4028778076172,
+    "mb_per_s": 97.28872564196134,
+    "ns_per_hash": 328.9178657531738
+   },
+   "64": {
+    "cycles_nominal": 811.0366882324219,
+    "mb_per_s": 189.38724009484298,
+    "ns_per_hash": 337.9319534301758
+   }
+  },
+  "sha3_256": {
+   "1024": {
+    "cycles_nominal": 5404.390649414063,
+    "mb_per_s": 454.74136853272256,
+    "ns_per_hash": 2251.8294372558594
+   },
+   "1048576": {
+    "cycles_nominal": 4339253.49375,
+    "mb_per_s": 579.9574520420929,
+    "ns_per_hash": 1808022.2890625
+   },
+   "32": {
+    "cycles_nominal": 1418.0417907714843,
+    "mb_per_s": 54.159193685129004,
+    "ns_per_hash": 590.8507461547852
+   },
+   "64": {
+    "cycles_nominal": 1430.9612731933594,
+    "mb_per_s": 107.34043113355781,
+    "ns_per_hash": 596.2338638305664
+   }
+  },
+  "sha512": {
+   "1024": {
+    "cycles_nominal": 4022.4317138671877,
+    "mb_per_s": 610.9737031774866,
+    "ns_per_hash": 1676.0132141113281
+   },
+   "1048576": {
+    "cycles_nominal": 2929356.028125,
+    "mb_per_s": 859.0906587789518,
+    "ns_per_hash": 1220565.01171875
+   },
+   "32": {
+    "cycles_nominal": 1145.0248168945313,
+    "mb_per_s": 67.07278206274378,
+    "ns_per_hash": 477.0936737060547
+   },
+   "64": {
+    "cycles_nominal": 1150.9700866699218,
+    "mb_per_s": 133.45264293045852,
+    "ns_per_hash": 479.5708694458008
+   }
+  }
+ },
+ "machine": {
+  "blake3": "1.0.9",
+  "cpu": "Intel(R) Xeon(R) Processor",
+  "cpus": "4",
+  "flags": [
+   "avx2",
+   "avx512bw",
+   "avx512f",
+   "avx512vl",
+   "sha_ni",
+   "sse4_1"
+  ],
+  "nominal_mhz": 2400.0,
+  "openssl": "OpenSSL 3.0.13 30 Jan 2024",
+  "platform": "Linux-6.12.94+-x86_64-with-glibc2.39",
+  "python": "3.12.3"
+ },
+ "marginal_block": {
+  "blake2b": {
+   "block_bytes": 128,
+   "cycles_per_block_nominal": 333.61078369140625,
+   "ns_per_block": 139.0044932047526,
+   "ns_per_byte": 1.0859726031621297
+  },
+  "blake3": {
+   "block_bytes": 64,
+   "cycles_per_block_nominal": 109.83042114257813,
+   "ns_per_block": 45.76267547607422,
+   "ns_per_byte": 0.7150418043136597
+  },
+  "sha256": {
+   "block_bytes": 64,
+   "cycles_per_block_nominal": 80.25869750976562,
+   "ns_per_block": 33.441123962402344,
+   "ns_per_byte": 0.5225175619125366
+  },
+  "sha3_256": {
+   "block_bytes": 136,
+   "cycles_per_block_nominal": 562.9024949645996,
+   "ns_per_block": 234.54270623524985,
+   "ns_per_byte": 1.7245787223180136
+  },
+  "sha512": {
+   "block_bytes": 128,
+   "cycles_per_block_nominal": 382.8615502929687,
+   "ns_per_block": 159.52564595540363,
+   "ns_per_byte": 1.2462941090265909
+  }
+ },
+ "method": "median of 7 loops of >= 0.05 s each; one hash object per call, digest() included",
+ "payload_bytes": [
+  32,
+  64,
+  1024,
+  1048576
+ ],
+ "python_call_floor_ns": 58.33858585357666,
+ "veritor_frames": {
+  "leaf_ns": 1333.2263641357422,
+  "leaf_preimage_bytes": 124,
+  "leaf_sha256_blocks": 3,
+  "node_ns": 1301.9960021972656,
+  "node_preimage_bytes": 179,
+  "node_sha256_blocks": 3,
+  "note": "one leaf frame plus one node frame per committed value (a large binary tree has one internal node per leaf); 16-bit value, schema u16, depth-20 range domain",
+  "per_committed_value_ns": 2635.222366333008
+ }
+}
