@@ -26,6 +26,7 @@ from veritor.protocol.proofs.costs import (
     SP1_CYCLES_PER_GATE,
     SP1_CYCLES_PER_LEAF,
     SP1_CYCLES_PER_MERKLE_LEVEL,
+    SP1_CYCLES_PER_PARSE_BYTE,
     alpha_dot,
     alpha_toy_isa,
     estimate_cycles,
@@ -149,7 +150,7 @@ class TestCosts:
         assert batched.proof_overhead < deep.proof_overhead / 100
         assert batched.hash_cost == deep.hash_cost
         assert float(deep.hash_cost) == pytest.approx(
-            (SP1_CYCLES_PER_LEAF + 20 * SP1_CYCLES_PER_MERKLE_LEVEL + 11.7 * (40 + 640))
+            (SP1_CYCLES_PER_LEAF + 20 * SP1_CYCLES_PER_MERKLE_LEVEL + SP1_CYCLES_PER_PARSE_BYTE * (40 + 640))
             / (LAPTOP_M_SERIES.khz * 1000)
         )
         with pytest.raises(ValueError):
