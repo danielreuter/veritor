@@ -1,0 +1,32 @@
+{
+ "Ampere_simulator": {
+  "pipeline": "ampere_bf16_m16n8k16",
+  "tiles": 3000,
+  "elements": 384000,
+  "mismatches": 12409,
+  "mismatches_on_randn_tiles": 0,
+  "randn_elements": 192000,
+  "port_results_outside_fp32_range": 12409,
+  "seconds": 27.977125883102417
+ },
+ "Hopper_simulator": {
+  "pipeline": "hopper_bf16_m16n8k16",
+  "tiles": 3000,
+  "elements": 384000,
+  "mismatches": 12544,
+  "mismatches_on_randn_tiles": 0,
+  "randn_elements": 192000,
+  "port_results_outside_fp32_range": 12544,
+  "seconds": 26.57371735572815
+ },
+ "Hopper_fp8_simulator": {
+  "pipeline": "hopper_e4m3_wgmma_k32",
+  "tiles": 3000,
+  "elements": 384000,
+  "mismatches": 0,
+  "mismatches_on_randn_tiles": 0,
+  "randn_elements": 192000,
+  "port_results_outside_fp32_range": 0,
+  "seconds": 31.402103185653687
+ }
+}
