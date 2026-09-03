@@ -268,7 +268,8 @@ def test_source_gates_are_pinned_pieces_with_prefix_summed_ranks(helpers):
     # copies at stride 5 lift the unit's runs as one progression per member: two interleaved runs
     assert r.input_runs == (Run(10**9, 3, 5, 8), Run(10**9 + 2, 3, 5, 8))
     assert r.weight_runs == (Run(0, 10**9, 1, 8), Run(10**9 + 3, 3, 5, 8))
-    assert r.out_runs == (Run(10**9 + 1, 2, 3, 8), Run(10**9 + 6, 2, 3, 8), Run(10**9 + 11, 2, 3, 8))
+    # whole copies declared through the repeat lift the unit's two gate pieces once each
+    assert r.out_runs == (Run(10**9 + 1, 3, 5, 8), Run(10**9 + 4, 3, 5, 8))
     # the unit's pass-through port resolves to a weight of the block: pinned in the root, not Out
     assert all(kind is not PieceKind.PORT for kind, _ in r.resolved_outputs)
     pinned = {

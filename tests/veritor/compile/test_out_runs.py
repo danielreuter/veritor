@@ -409,11 +409,12 @@ def test_disjoint_interleaved_strides_are_accepted(helpers):
     root = parse_description(payload, GATES).root
     definition = root.steps[1].child
 
-    assert definition.out_runs == (Run(0, 3, 2, 8), Run(1, 3, 2, 8), Run(6, 2, 3, 8), Run(7, 1, 0, 8))
+    # the two interleaved runs at stride 2 are woven into the six gates they cover
+    assert definition.out_runs == (Run(0, 6, 1, 8), Run(6, 2, 3, 8), Run(7, 1, 0, 8))
     assert definition.out_count == 9 and definition.out_bits == 72
     assert sorted(definition.out_offset(r) for r in range(9)) == [0, 1, 2, 3, 4, 5, 6, 7, 9]
     # the same interface seen from the wrapping root, shifted past its two `in` gates
-    assert root.out_runs == (Run(2, 3, 2, 8), Run(3, 3, 2, 8), Run(8, 2, 3, 8), Run(9, 1, 0, 8))
+    assert root.out_runs == (Run(2, 6, 1, 8), Run(8, 2, 3, 8), Run(9, 1, 0, 8))
 
 
 # -- resolving an interface costs what it produces, and what it may produce is capped ----
@@ -469,6 +470,93 @@ def test_interfaces_resolving_to_too_many_runs_are_rejected_without_doing_the_wo
     relaxed = CompilationLimits(max_output_runs=4_096)
     root = parse_description(payload, GATES, relaxed).root
     assert root.out_count == 2_140 and len(root.out_runs) > 256
+
+
+def scattered_repeat_payload(helpers, copies: int) -> bytes:
+    """``copies`` copies of a six-gate child declaring gates 5, 2 and 0 (three pieces), all slots declared."""
+
+    h = helpers
+    doc = h.Document()
+    child = doc.add(
+        h.body(
+            1,
+            [h.gate("add", h.rng(IN, 0, 2, 0))] + [h.gate("mul", h.rng(LOC, k, 2, 0)) for k in range(5)],
+            [h.rng(LOC, 5), h.rng(LOC, 2), h.rng(LOC, 0)],
+            role="replay",
+        )
+    )
+    target = doc.add(h.body(1, [h.repeat(copies, child, h.jrng(IN, 0))], [h.rng(LOC, 0, 3 * copies, 1)]))
+    return doc.serialize(h.wrap(doc, target, 1, 3 * copies))
+
+
+@pytest.mark.parametrize("copies", [1, 2, 3, 50])
+def test_whole_copies_of_a_scattered_interface_cost_the_child_pieces_once(helpers, copies):
+    root = parse_description(scattered_repeat_payload(helpers, copies), GATES).root
+    target = root.steps[1].child
+
+    # three pieces whatever the number of copies: one progression per declared gate of the child
+    assert len(target.resolved_outputs) == 3
+    assert target.out_count == 3 * copies
+    assert sorted(target.out_offset(r) for r in range(3 * copies)) == sorted(
+        6 * j + offset for j in range(copies) for offset in (0, 2, 5)
+    )
+    if copies > 1:
+        # gates 2 and 5 of every copy interleave at the copy's pitch and are woven into one run
+        assert target.out_runs == (Run(0, copies, 6, 8), Run(2, 2 * copies, 3, 8))
+        assert parse_description(scattered_repeat_payload(helpers, copies), GATES, CompilationLimits(max_output_runs=3))
+        with pytest.raises(CompileError, match="more than max_output_runs = 2 runs"):
+            parse_description(scattered_repeat_payload(helpers, copies), GATES, CompilationLimits(max_output_runs=2))
+
+
+def brute_force_repeated(runs: list[Run]) -> bool:
+    seen: set[int] = set()
+    for run in runs:
+        for k in range(run.count):
+            offset = run.element(k)
+            if offset in seen:
+                return True
+            seen.add(offset)
+    return False
+
+
+def test_the_distinctness_sweep_agrees_with_enumeration_and_stays_near_linear():
+    from veritor.compile.description import _repeated_output
+
+    rng = random.Random(11)
+    for _ in range(500):
+        runs = [
+            Run(rng.randrange(40), count := rng.randrange(1, 6), rng.randrange(1, 7) if count > 1 else 0, 8)
+            for _ in range(rng.randrange(1, 7))
+        ]
+        found = _repeated_output(tuple(runs))
+        assert (found is not None) == brute_force_repeated(runs), runs
+        if found is not None:
+            assert sum(run.index(found) is not None for run in runs) >= 2
+    assert _repeated_output((Run(3, 2, 0, 8),)) == 3  # the same gate twice
+
+    # runs laid out one after another, then the same with one late collision
+    disjoint = tuple(Run(7 * k, 3, 2, 8) for k in range(50_000))
+    start = time.perf_counter()
+    assert _repeated_output(disjoint) is None
+    assert _repeated_output((*disjoint, Run(7 * 49_999 + 4, 1, 0, 8))) == 7 * 49_999 + 4
+    assert time.perf_counter() - start < 2.0
+
+
+def test_interleaved_runs_that_tile_their_stride_are_woven():
+    from veritor.core.description import _weave
+
+    assert _weave((Run(0, 3, 2, 8), Run(1, 3, 2, 8))) == (Run(0, 6, 1, 8),)
+    assert _weave((Run(10, 4, 6, 8), Run(12, 4, 6, 8), Run(14, 4, 6, 8))) == (Run(10, 12, 2, 8),)
+    # too few runs for the stride, a mismatched pitch, a mismatched width: untouched
+    for runs in (
+        (Run(0, 3, 4, 8), Run(1, 3, 4, 8)),
+        (Run(0, 3, 3, 8), Run(1, 3, 3, 8), Run(3, 3, 3, 8)),
+        (Run(0, 3, 2, 8), Run(1, 3, 2, 16)),
+        (Run(0, 1, 0, 8), Run(1, 1, 0, 8)),
+    ):
+        assert _weave(runs) == runs
+    # a woven group followed by more runs
+    assert _weave((Run(0, 2, 2, 8), Run(1, 2, 2, 8), Run(9, 2, 5, 8))) == (Run(0, 4, 1, 8), Run(9, 2, 5, 8))
 
 
 def test_the_total_number_of_runs_over_a_description_is_capped(helpers):

@@ -599,10 +599,43 @@ type _Piece = tuple[PieceKind, Run]
 
 
 def _sorted_runs(runs: Iterable[Run]) -> tuple[Run, ...]:
-    """Runs of one kind ordered by start, adjacent continuations merged."""
+    """Runs of one kind ordered by start, adjacent continuations merged, interleavings woven."""
 
     ordered = sorted(runs, key=lambda run: (run.start, run.stride))
-    return tuple(run for _, run in _merge((PieceKind.GATE, run) for run in ordered))
+    merged = (run for _, run in _merge((PieceKind.GATE, run) for run in ordered))
+    woven = _weave(tuple(merged))
+    return tuple(run for _, run in _merge((PieceKind.GATE, run) for run in woven))
+
+
+def _weave(runs: tuple[Run, ...]) -> tuple[Run, ...]:
+    """Interleaved runs of one count, stride and width whose starts tile the stride become one run.
+
+    Whole copies of a child lifted through a repeat leave one run per piece
+    of the child, all of the copy's pitch; when the child's pieces are every
+    gate of the copy (at some pitch ``p``, ``stride // p`` of them), the
+    runs ``start, start + p, ...`` are the contiguous progression they
+    cover, which is how the copies read in address order.
+    """
+
+    woven: list[Run] = []
+    index = 0
+    while index < len(runs):
+        run = runs[index]
+        pitch = runs[index + 1].start - run.start if index + 1 < len(runs) else 0
+        needed = run.stride // pitch if run.count > 1 and pitch > 0 and run.stride % pitch == 0 else 0
+        if needed >= 2 and index + needed <= len(runs):
+            group = runs[index : index + needed]
+            if all(
+                other.start == run.start + t * pitch
+                and (other.count, other.stride, other.width) == (run.count, run.stride, run.width)
+                for t, other in enumerate(group)
+            ):
+                woven.append(Run(run.start, needed * run.count, pitch, run.width))
+                index += needed
+                continue
+        woven.append(run)
+        index += 1
+    return tuple(woven)
 
 
 def _source_runs(definition: Definition, source: str) -> Iterator[Run]:
@@ -769,13 +802,21 @@ def _call_pieces(
             pieces = _output_pieces(child, ordinal, count, 1)
             yield from _lift(definition, step, base, pieces, copy, 1, 0)
             return
-        head = _output_pieces(child, ordinal, outputs - ordinal, 1)
-        yield from _lift(definition, step, base, head, copy, 1, 0)
-        if last_copy - copy > 1:
+        # A partial first copy, whole copies, a partial last copy.  A copy
+        # visited from its first output (or to its last) is whole, so ``n``
+        # identical requests declared through one repeat cost the child's
+        # pieces once, not once per partial copy.
+        first_whole = copy if ordinal == 0 else copy + 1
+        last_whole = last_copy if last_ordinal == outputs - 1 else last_copy - 1
+        if ordinal:
+            head = _output_pieces(child, ordinal, outputs - ordinal, 1)
+            yield from _lift(definition, step, base, head, copy, 1, 0)
+        if last_whole >= first_whole:
             whole = child.resolved_outputs
-            yield from _lift(definition, step, base, whole, copy + 1, last_copy - copy - 1, 1)
-        tail = _output_pieces(child, 0, last_ordinal + 1, 1)
-        yield from _lift(definition, step, base, tail, last_copy, 1, 0)
+            yield from _lift(definition, step, base, whole, first_whole, last_whole - first_whole + 1, 1)
+        if last_ordinal != outputs - 1:
+            tail = _output_pieces(child, 0, last_ordinal + 1, 1)
+            yield from _lift(definition, step, base, tail, last_copy, 1, 0)
         return
     divisor = gcd(stride, outputs)
     period = outputs // divisor
