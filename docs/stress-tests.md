@@ -32,9 +32,89 @@ for it, and the table should name one per row.
 
 M3 is new relative to the current code: `Compilation.advice_bits` charges
 `8·len(a)` unconditionally. The rule becomes: charged bits = bits of `a`
-not fixed by a verifier-checked function of `(x, y, pp)`. M6 is new
-relative to the protocol: there is no declaration message and `Bound` has
-no `f_max` term.
+not fixed by a verifier-checked function of `(x, y, pp)`. M6 is
+implemented (below): the interior message carries the declarations and
+`Bound` has the `f_max` term.
+
+### M6: fault declarations
+
+*Why.* A server learns of a silent hardware fault only when it replays an
+opened RU and the recomputed values disagree with what it streamed (or when
+it re-executes and gets a different answer). Without declarations every
+incorrect VU that is sampled is a rejection, so an honest server with a
+realistic SDC rate is eventually rejected: Llama-3 405B saw 6 SDC events in
+54 days on 16,384 GPUs, about `2.8e-7` per device-hour
+(`veritor.simulation.faults.SDC_RATE_PER_DEVICE_HOUR`); a 16,384-GPU fleet
+accumulates a mean of `0.0046` faults per hour and `0.11` per day. The
+`f_max` a verifier admits is the smallest count whose Poisson tail is below
+a target (`fault_budget`): `f_max = 2` for an hour and `4` for a day of
+that fleet at tail `1e-6`. Exceeding it is one rejected session and a
+retry, not a soundness event.
+
+*Protocol.* `VerifierParameters.max_faults` (`f_max`, default 0) is bound
+into the `Header` (manifest, digest and wire omit it when 0, so every
+existing transcript is byte-identical). After the q-challenge the prover's
+`InteriorMessage` carries `declarations`: a sorted tuple of global VU
+indices, no duplicates, each inside an opened RU, each a VU with a relation
+(not source gates only), at most `f_max` of them; the verifier rejects with
+`FAULTS_EXCEEDED` or `FAULT_DECLARATION_INVALID` before deriving the
+s-challenge, whose seed binds the declarations through the interior phase.
+A sampled VU that is declared is obliged under `DECLARED_PROGRAM` -- a kind
+of zero gates and ports over the same positions -- so its openings are
+authenticated and its relation check is skipped, in the transparent path
+and in every proof backend alike; both parties derive this from the
+challenge and the declarations, never from the prover's statement. VUs
+that read the declared value are checked against it as usual. The honest
+server's detector is `self_check` (recompute every gate of an opened RU
+from the values it holds; the VUs whose own gate disagrees are the faults)
+and `honest_declare` wraps it.
+
+*Charge.* Let `D` be the declared set, `E` the error set and `E' = E \ D`
+what stays exposed. The output is a function of the correct computation
+outside `E`, the values at `E'` (which must survive the sampling as before)
+and the values at `D`. Enumerating `D` and its values,
+`|Y_eta| <= sum_{|D| <= f} 2^kappa(D) · sum_{E' admissible} 2^kappa(E')
+<= (1 + |S| 2^W_V)^f · 2^U_0`, using `kappa(D) <= sum_{v in D} kappa(v)`
+(the union of downstream cuts is a downstream cut) and
+`sum_{j <= f} C(|S|, j) 2^(j W_V) <= (1 + |S| 2^W_V)^f`. One declared fault
+therefore costs `u(1) = log2(1 + |S| 2^W_V) = W_V + log2(|S| + 2^-W_V)`,
+which is `W_V + log2 |S|` to within `2^-W_V`; `|S|` counts the VUs and
+`W_V` is the widest cut over the VU kinds that have a relation.
+`fault_allowance_bits(target, f_max) = f_max · u(1)` and `bound(...,
+max_faults=f_max)` adds it (capped by the interface). This is value-level
+advice: compile-time advice names the circuit and is charged by how many
+circuits it can name; a declaration names a VU (`log2 |S|` bits) and its
+contents (`W_V` bits).
+
+*Numbers.* Small simulation (2 pods × 16 steps, 12 requests, 30 streamed
+tokens, 26,314 gates): `|S| = 3,791`, `W_V = 128` (the `onehot` VU's eight
+16-bit outputs), `u(1) = 139.9` bits; `Bound` at `theta = (1/2, 1/8)` is
+capped at `out_bits = 480` with or without the term, and at `theta = (1,
+1)` it goes from `0` to `139.9`. One declared fault is thus 29% of that
+run's entire output -- the mechanism is priced for serving-scale runs.
+GPT-2 Small's kind table (`GPT2G`, one request of 64 prompt + 64 new
+tokens): `|S| = 161.3 M` VUs and `W_V = 32`, because the LayerNorm
+statistics and the accumulator-width cells are 32-bit VU outputs, giving
+`u(1) = 59.3` bits; under the 16-bit-word assumption `W_V = 16` and
+`|S| = 176.8 M` the figure is `43.4` bits. Either way a fault costs about
+three to four tokens' worth of capacity.
+
+*Adaptivity (for the architect).* The charge prices a `D` fixed before the
+q-challenge (or `q = 1`). The protocol lets the prover choose `D` after
+seeing `J` -- an honest server cannot know its faults before it replays
+the opened RUs -- and an adversary can use that: corrupt one VU in each of
+many RUs and pardon whichever `f` of them were opened. With `N_J`
+corrupted VUs in the opened RUs the acceptance probability is
+`(1 - s)^max(0, N_J - f)` instead of `(1 - s)^N_J`, a factor `1/(1 - s)`
+per declaration, worth about `1/q` extra corrupted VUs when `s` is small.
+Since `sigma_f(E) <= (1 - s)^-f · sigma_0(E)`, the fold at the lowered
+threshold `eta (1 - s)^f` is a rigorous upper bound on the adaptive
+capacity for `s < 1` (`veritor.analysis.faults.adaptive_fault_bound`); it
+coincides with `f · u(1)` in order of magnitude only when `q` is near one.
+`bound()` charges the specified `f · u(1)`; whether to charge the adaptive
+figure instead, or to make the declaration non-adaptive (declare before the
+q-challenge, which an honest server can do only if it self-checks every RU
+it ran), is a decision for the architect.
 
 ## 2. Scenarios
 
