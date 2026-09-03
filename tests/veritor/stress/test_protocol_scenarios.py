@@ -1,4 +1,4 @@
-"""Stress scenarios priced through the protocol: N4, N5 (M6 fault declarations), S7, C1, W1-W3.
+"""Stress scenarios priced through the protocol: N4, N5 (M6 fault declarations), S7, C5, W1-W3.
 
 Each test builds a real run, drives the real protocol and asserts a real
 verdict, then records one row of ``docs/data/stress-protocol.json`` (merged
@@ -461,8 +461,10 @@ def test_n4_silent_corruption_rejected_without_declaration_accepted_with(small: 
                 f"u(1) = log2(1 + |S| 2^W_V) = {u1:.2f} bits (|S| = {units}, W_V = {round(u1 - math.log2(units))}); "
                 f"Bound at theta = (1/2, 1/8): {at_policy.bits:.0f} -> {with_faults.bits:.0f} bits, both capped at "
                 f"out_bits = {at_policy.out_bits} (a {small.tokens}-token run); uncapped, at theta = (1, 1): "
-                f"{full_0:.0f} -> {full_f:.2f} = f_max * u(1). {arithmetic} Adaptive caveat: the prover declares "
-                f"after seeing J, so f * u(1) prices a D fixed before the q-challenge; see docs/stress-tests.md M6."
+                f"{full_0:.0f} -> {full_f:.2f} = f_max * u(1), the price at q = 1 where J reveals nothing. {arithmetic} "
+                f"At q < 1 the prover declares after seeing J and Bound charges the adaptive prover instead "
+                f"(the fold at eta (1 - s)^f_max or at eta / (1 + |S|)^f_max plus f_max u(1), whichever is smaller); "
+                f"see docs/stress-tests.md M6."
             ),
         )
     )
@@ -603,10 +605,10 @@ def test_s7_client_disconnect_length_as_advice() -> None:
     )
 
 
-# -- C1: nondeterministic sampling over published randomness -------------------------
+# -- C5: nondeterministic sampling over published randomness -------------------------
 
 
-def test_c1_sampling_over_public_randomness_biased_token_is_caught(small: Small) -> None:
+def test_c5_sampling_over_public_randomness_biased_token_is_caught(small: Small) -> None:
     shape = small.shape
     weights = small.parameters.flatten()
     requests = small.requests[:5]  # enough tokens to carry a secret, small enough to sample everything
@@ -643,7 +645,7 @@ def test_c1_sampling_over_public_randomness_biased_token_is_caught(small: Small)
     assert abs(escaped / trials - p) <= 4 * sigma
     record(
         Row(
-            id="C1",
+            id="C5",
             what=(
                 f"nondeterministic sampling: the LM head draws each token from a public {shape.random_bits}-bit "
                 f"random word in x (sample VU, {sample_size} gates over vocab {shape.vocab}, vs {argmax_size} for the "
@@ -665,7 +667,7 @@ def test_c1_sampling_over_public_randomness_biased_token_is_caught(small: Small)
                 f"word ({sampling.compiled.circuit.n} vs {argmax.compiled.circuit.n} gates for the same requests, "
                 f"{len(shape.sampler_constants)} sampler constants as weights); the randomness is {shape.random_bits} public "
                 "bits per token, advice 0. Biasing a token is a relation violation of the sample VU, priced by Bound like "
-                "any corruption: the server never chooses its randomness. (Catalogue row C5; recorded as C1 per the brief.)"
+                "any corruption: the server never chooses its randomness."
             ),
         )
     )
@@ -682,9 +684,8 @@ def test_w1_hot_swap_two_versions_under_one_root() -> None:
     x = tuple((i % 2, request) for i, request in enumerate(requests))  # the swap: odd requests on version 1
     weights = constructor.flatten_weights(versions)
     priced = price(constructor, x, b"", shape, weights)
-    expected = tuple(
-        token for model, request in x for token in reference_generate(shape, versions[model], (request,))[0]
-    )
+    references = [reference_generate(shape, versions[model], (request,))[0] for model, request in x]
+    expected = tuple(references[r][g] for r, g in constructor.output_layout(x, b""))  # circuit order
     assert priced.outputs == expected
     assert priced.run(label="w1").report.accepted
     # A server that quietly served version 1 to every request (the swap it did not announce): its
@@ -742,20 +743,20 @@ def test_w2_per_request_adapter_as_boundary_inputs() -> None:
     x = tuple((tuple(v for row in tenants[i % 3] for v in row), request) for i, request in enumerate(requests))
     weights = base.flatten()
     priced = price(constructor, x, b"", shape, weights)
-    expected = tuple(
-        token
+    references = [
+        reference_generate(shape, constructor.merged(base, tenants[i % 3]), (request,))[0]
         for i, request in enumerate(requests)
-        for token in reference_generate(shape, constructor.merged(base, tenants[i % 3]), (request,))[0]
-    )
+    ]
+    expected = tuple(references[r][g] for r, g in constructor.output_layout(x))  # circuit order
     assert priced.outputs == expected
     assert priced.run(label="w2").report.accepted
     # A server that ignored the tenants' adapters and ran the base matrix: the boundary holds the
     # published adapters, the dots that read them were computed from W_1.
     base_words = tuple(v for row in base.layers[0].w_1 for v in row)
-    ignored_inputs = tuple(
+    ignored_inputs = tuple(  # in circuit order, as AdaptedRequestsG.flatten_inputs
         value
-        for _adapter, request in x
-        for value in (*base_words, *request.prompt, *request.randomness)
+        for i in constructor.inner.order(requests)
+        for value in (*base_words, *requests[i].prompt, *requests[i].randomness)
     )
     served = served_with(priced, inputs=ignored_inputs)
     outputs = tuple(served[a] for a in priced.compiled.circuit.outputs)

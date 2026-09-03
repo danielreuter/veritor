@@ -1,4 +1,4 @@
-"""Control-flow stress tests: padding against advice (``docs/stress-tests.md`` C5, C2, C3).
+"""Control-flow stress tests: padding against advice (``docs/stress-tests.md`` C1, C2, C3).
 
 A data-dependent structural choice -- how long a request runs, which expert
 a position goes to, how many draft tokens were accepted -- can enter the
@@ -249,7 +249,7 @@ def per_token(value: float, tokens: int) -> float:
     return round(value / tokens, 1)
 
 
-# -- C5: variable-length generation ---------------------------------------------------
+# -- C1: variable-length generation ---------------------------------------------------
 
 DENSE = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=32, width=WIDTH)
 EOS = DENSE.vocab - 1
@@ -264,7 +264,7 @@ def stopped(reference: Sequence[Sequence[int]], requests: Sequence[Request]) -> 
     return tuple(lengths)
 
 
-def test_c5_variable_length_generation() -> None:
+def test_c1_variable_length_generation() -> None:
     """Different ``max_new`` and EOS stops: request RUs need no advice, step RUs take the schedule."""
 
     parameters = random_parameters(DENSE, 7)
@@ -308,7 +308,7 @@ def test_c5_variable_length_generation() -> None:
     record(
         [
             Row(
-                id="C5a",
+                id="C1a",
                 what="variable-length generation, request RUs: 6 requests, max_new 3..13, EOS stops",
                 mechanism="M5 in-shape: each request's circuit is its streamed length; no advice",
                 advice_bits=0,
@@ -326,7 +326,7 @@ def test_c5_variable_length_generation() -> None:
                 ),
             ),
             Row(
-                id="C5b",
+                id="C1b",
                 what="variable-length generation, step RUs (ClusterG, 1 pod x 2 slots): the same requests",
                 mechanism="M4 charged advice: the schedule (Schedule.encode(): a header and 7 words per join)",
                 advice_bits=by_step.advice_bits,

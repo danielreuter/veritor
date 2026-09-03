@@ -150,13 +150,17 @@ class ModelsG:
 
     def root(self, assignments: Sequence[tuple[int, Request]]) -> TracedDefinition:
         n = self.shape.weight_count
+        requests = tuple(request for _model, request in assignments)
+        order = self.inner.order(requests)  # circuit order: RequestsG groups requests by kind
 
         @self.inner.lm.tracer.definition(input_count=0)
         def root(_v: object) -> object:
             w = wires(self.weights_unit()())
             return [
-                self.inner.request(len(request.prompt), request.max_new)(w[model * n : (model + 1) * n])
-                for model, request in assignments
+                self.inner.request(len(assignments[i][1].prompt), assignments[i][1].max_new)(
+                    w[assignments[i][0] * n : (assignments[i][0] + 1) * n]
+                )
+                for i in order
             ]
 
         return root
@@ -232,12 +236,14 @@ class AdaptedRequestsG:
         return self.inner.output_layout(tuple(r for _a, r in self.requests(x)))
 
     def flatten_inputs(self, x: object) -> tuple[int, ...]:
-        """Per request: the adapter's words, then the prompt tokens, then the random words."""
+        """Per request in circuit order (:meth:`RequestsG.order`): the adapter's words,
+        then the prompt tokens, then the random words."""
 
+        pairs = self.requests(x)
         return tuple(
             value
-            for adapter, request in self.requests(x)
-            for value in (*adapter, *request.prompt, *request.randomness)
+            for i in self.inner.order(tuple(r for _a, r in pairs))
+            for value in (*pairs[i][0], *pairs[i][1].prompt, *pairs[i][1].randomness)
         )
 
     def adapter_unit(self) -> TracedDefinition:
@@ -249,11 +255,14 @@ class AdaptedRequestsG:
     def root(self, requests: Sequence[tuple[tuple[int, ...], Request]]) -> TracedDefinition:
         first, stop = self.first, self.first + self.count
 
+        order = self.inner.order(tuple(r for _a, r in requests))  # circuit order, as flatten_inputs
+
         @self.inner.lm.tracer.definition(input_count=0)
         def root(_v: object) -> object:
             w = wires(self.inner.lm.weights_unit()())
             results = []
-            for _adapter, request in requests:
+            for i in order:
+                request = requests[i][1]
                 adapter = wires(self.adapter_unit()())
                 results.append(
                     self.inner.request(len(request.prompt), request.max_new)(w[:first], adapter, w[stop:])
