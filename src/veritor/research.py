@@ -25,7 +25,13 @@ from veritor.analysis import (
     cost,
     optimize,
 )
-from veritor.compile import Compilation, CompileError, Compiler, Constructor
+from veritor.compile import (
+    Compilation,
+    CompileError,
+    Compiler,
+    Constructor,
+    declared_advice_bits,
+)
 from veritor.core import (
     CompilationLimits,
     Compiled,
@@ -65,8 +71,11 @@ def Compile(
     """``Compile(G, x, a) -> (C, I)``: run the client's constructor and compile its output.
 
     ``G`` is the client's constructor, ``x`` the request's public inputs and
-    ``a`` the client's advice, charged at ``8 * len(a)`` bits and admitted
-    only up to ``max_advice_bits``.  ``G(x, a)`` returns the description
+    ``a`` the client's advice, charged at the bits ``G`` declares for it
+    (``G.advice_bits(x, a)``, else ``8 * len(a)``; ``a`` must be the
+    canonical zero-padded encoding of that many bits, see
+    :func:`~veritor.compile.declared_advice_bits`) and admitted only up to
+    ``max_advice_bits``.  ``G(x, a)`` returns the description
     bytes and the flat circuit inputs (the ``in`` gates' values in address
     order); the description is compiled against ``gate_set`` under ``limits``
     by :class:`Compiler`.  Anything that goes wrong in ``G`` -- an exception,
@@ -89,12 +98,13 @@ def Compile(
         raise ValueError("max_advice_bits must be a nonnegative integer")
     if type(a) is not bytes:
         raise CompileError("advice must be bytes")
-    if 8 * len(a) > max_advice_bits:
-        raise CompileError("advice exceeds the public bit bound")
     try:
         constructor = validate_digest(G.digest, "constructor digest")
     except InvalidArtifact as error:
         raise CompileError(str(error)) from error
+    advice_bits = declared_advice_bits(G, x, a)
+    if advice_bits > max_advice_bits:
+        raise CompileError("advice exceeds the public bit bound")
     try:
         produced = G(x, a)
     except (Exception, SystemExit) as error:
@@ -108,7 +118,7 @@ def Compile(
     if type(inputs) is not tuple or any(type(value) is not int for value in inputs):
         raise CompileError("the constructor's inputs must be a tuple of integers")
     compiled = Compiler(gate_set, limits).compile(description, inputs)
-    return Compilation(compiled, constructor, inputs, a)
+    return Compilation(compiled, constructor, inputs, a, advice_bits)
 
 
 def _compiled(value: object) -> Compiled:

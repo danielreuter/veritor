@@ -52,8 +52,12 @@ OTHER_UNIT = 12
 SOURCE_UNIT = 0
 """An ``in`` gate's VU: nothing to declare."""
 
-BASELINE_TRANSCRIPT_SHA256 = "8b9991cd90a286a00e6d1774c647898de43c97541f190a9ec27c4e9657fcee76"
-"""SHA-256 of the fixture's honest transcript (17,219 bytes) as the code before M6 encoded it."""
+BASELINE_TRANSCRIPT_SHA256 = "94ccd72dc619427d625c203beba64e4254d5bcd75f9a9ecc9f0279c9760a7593"
+"""SHA-256 of the fixture's honest transcript under protocol v7 (header ``advice_bits``).
+
+The fault-declaration keys (M6) are absent from a run without faults, so the
+encoding of such a run is pinned here and changes only with the wire format.
+"""
 
 
 def faults(max_faults: int = 0) -> VerifierParameters:
@@ -162,7 +166,7 @@ def test_wire_round_trips_declarations_and_rejects_noncanonical_defaults(
 
 
 def test_transcripts_without_faults_are_byte_identical_to_before(compiled, honest_values, expect) -> None:
-    """The fixture's honest transcript under fixed seeds, as the pre-M6 code encoded it."""
+    """The fixture's honest transcript under fixed seeds carries no fault keys and is pinned."""
 
     run = run_protocol(compiled, expect(), honest_values)
     assert run.transcript is not None

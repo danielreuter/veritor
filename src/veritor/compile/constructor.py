@@ -14,7 +14,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from veritor.core import Compiled, Digest, JSONValue, identity_digest
+from veritor.core import (
+    Compiled,
+    Digest,
+    InvalidArtifact,
+    JSONValue,
+    identity_digest,
+    validate_advice_bits,
+)
+
+from .description import CompileError
 
 CONSTRUCTOR_DIGEST_TAG = "veritor/constructor/v1"
 
@@ -27,12 +36,40 @@ class Constructor(Protocol):
     of class name, version and parameters (:func:`constructor_digest`).
     ``G(x, a)`` returns the description bytes and the flat circuit inputs, the
     values of the ``in`` gates in address order; ``G`` knows its own layout.
+
+    A constructor may also define ``advice_bits(x, a) -> int``, the exact
+    number of bits its advice ``a`` carries on the request ``x``.  The
+    compiler charges that many (:attr:`Compilation.advice_bits`) after
+    checking that ``a`` is its canonical encoding, ``ceil(bits / 8)`` bytes
+    with zero padding (:func:`veritor.core.validate_advice_bits`); without
+    the method every byte counts, ``8 * len(a)``.
     """
 
     @property
     def digest(self) -> str: ...
 
     def __call__(self, x: object, a: bytes) -> tuple[bytes, tuple[int, ...]]: ...
+
+
+def declared_advice_bits(G: Constructor, x: object, a: bytes) -> int:
+    """The bits ``G`` declares for the advice ``a`` on ``x``, once ``a`` encodes them canonically.
+
+    ``G.advice_bits(x, a)`` when ``G`` defines it, else ``8 * len(a)``.  A
+    failing or ill-typed declaration, or an ``a`` that is not the canonical
+    ``ceil(bits / 8)``-byte zero-padded encoding, is a :class:`CompileError`.
+    """
+
+    declare = getattr(G, "advice_bits", None)
+    if declare is None:
+        return 8 * len(a)
+    try:
+        bits = declare(x, a)
+    except (Exception, SystemExit) as error:
+        raise CompileError(f"the constructor failed to declare its advice bits: {error}") from error
+    try:
+        return validate_advice_bits(a, bits)
+    except InvalidArtifact as error:
+        raise CompileError(str(error)) from error
 
 
 def constructor_digest(name: str, version: str, parameters: Mapping[str, JSONValue]) -> Digest:
@@ -50,14 +87,19 @@ class Compilation:
     ``compiled`` is ``(C, I)`` with its digest; ``constructor`` is ``G``'s
     digest; ``inputs`` is ``x`` as the circuit consumes it, the values of the
     ``in`` gates by rank as ``G`` laid them out; ``advice`` is the client's
-    ``a``, charged at :attr:`advice_bits`.
+    ``a``, charged at ``advice_bits``, the bits ``G`` declared for it
+    (:func:`declared_advice_bits`), of which ``advice`` must be the
+    canonical encoding.  The default ``0`` is right for empty advice only.
     """
 
     compiled: Compiled
     constructor: Digest
     inputs: tuple[int, ...]
     advice: bytes
+    advice_bits: int = 0
 
-    @property
-    def advice_bits(self) -> int:
-        return 8 * len(self.advice)
+    def __post_init__(self) -> None:
+        try:
+            validate_advice_bits(self.advice, self.advice_bits)
+        except InvalidArtifact as error:
+            raise CompileError(str(error)) from error
