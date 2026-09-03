@@ -523,6 +523,17 @@ def test_h4_systematic_faults_on_one_pod_for_an_hour(
         if name not in KV_PROJECTIONS
     }
     assert max(flips.values()) == 1 and min(flips.values()) == 0
+    # A constant-table cell: read once per position and once per prediction, few
+    # of the readers move, early in the position, so its outputs' cut exceeds
+    # its readers' cut.
+    constant = circuit.weights[ranks["shift"] - SHAPE.vocab + 3]
+    assert readers_in(compiled, constant, pod.units) == pod.positions + len(pod.tokens)
+    table_cell = {
+        bit: pins(dc, pod, misread={constant: dc.honest[constant] ^ (1 << bit)})
+        for bit in (0, WIDTH - 1)
+    }
+    for found in table_cell.values():
+        assert 0 < found.vu_outputs < found.boundary
 
     # (b) a stale weight version on the pod: every matrix cell differs.
     stale = tuple(random_parameters(SHAPE, 8).flatten())
@@ -673,7 +684,10 @@ def test_h4_systematic_faults_on_one_pod_for_an_hour(
         f"top bit {rows(grid, WIDTH - 1)} (the toy's word is modular, so the top bit of a weight is silent "
         f"for an even activation; W_k and W_v pin their readers under both policies because a step RU commits "
         f"its KV entries; the others pin the tokens that flipped, between {min(flips.values())} and "
-        f"{max(flips.values())} of the pod's tokens on an 8-token vocabulary); the row "
+        f"{max(flips.values())} of the pod's tokens on an 8-token vocabulary); a constant-table cell "
+        f"({pod.positions + len(pod.tokens)} readers on the pod) pins {table_cell[0].boundary}/"
+        f"{table_cell[0].vu_outputs} low bit and {table_cell[WIDTH - 1].boundary}/{table_cell[WIDTH - 1].vu_outputs} "
+        f"top bit (few readers move, early in the position, so the outputs' cut exceeds the readers' cut); the row "
         f"scales W_q low bit: {a.readers.faulty:,} readers and {a.flipped.faulty:,} flipped tokens in the pod-hour, "
         f"{a.readers.opened:,} / {a.flipped.opened:,} in opened RUs at q = {q}; M6 would charge "
         f"{a.readers.bits:,.0f} / {a.flipped.bits:,.0f} bits at u_post(1) = {u_post:.1f}; an RU-scoped source "
