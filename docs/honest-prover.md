@@ -767,8 +767,149 @@ same source's 6 events.
 
 ## 8. Round-close logistics
 
-*Crashes, stragglers, partitions, requests longer than a round; what the epoch
-layer lacks.*
+These are faults of logistics, not of computation: a pod that dies, a pod
+whose values are late at the seal, a KV transfer that never arrives, a
+request that outlives the round it started in. Each is driven through the
+datacenter simulation (`veritor.simulation.workload`) cut into rounds of
+`ClusterG` runs (`veritor.simulation.epochs`: a round is a window of fleet
+time, RU = step, the window's schedule as advice, one run per round for the
+fleet or one per pod) and through `run_epoch` with an honest prover;
+`tests/veritor/stress/test_honest_logistics.py` records the rows. Two pods of
+two slots, sixteen steps in two rounds of eight (H6e: three pods, six
+rounds), the datacenter demo's small shape. Bits are the schedule's advice
+bits against the same arrivals undisturbed, cost is the honest replay cost
+against that baseline (`Cost(...).total` over it stays between 1.04 and 1.12
+in every row), and the close delay is what the verifier waits past the
+nominal boundary.
+
+| Row | Scenario | Verdict today | Decl. | Bits | Cost | Close delay |
+|---|---|---|---|---|---|---|
+| H6a | pod 0 dies at step 4 with 2 requests in flight; both restart on pod 1 inside the round | both rounds ACCEPTED | 0 | 228 (+24: two re-joins) | +14.4% (the prefix recomputed) | 0 |
+| H6at | the same crash, the clients give up: 2 requests keep the 3 tokens they had of 6 | ACCEPTED | 0 | 204 (+0; 27 outputs for 30) | -6.8% (steps not run) | 0 |
+| H6bw | straggler, wait: pod 1's last 3 steps arrive 3 steps late; one run per round | ACCEPTED | 0 | 204 (+0; the runs are identical) | 0 | 3 steps (0.15 s) per close |
+| H6bd | straggler, defer: per-pod runs, pod 1's run admitted one round late | all 3 rounds ACCEPTED | 0 | 200 (+0 over per-pod runs on time) | 0 | 0 at the close; pod 1's tokens one round (0.40 s) late, a trailing round, `eta / 3` for `eta / 2` |
+| H6bt | straggler, truncate: pod 1 commits 3 steps early; its 2 cut requests continue next round with the prefix in `x` | ACCEPTED on time | 0 | 236 (+36: the continuation joins) | +6.2% (prefills over prompt + prefix) | 0 |
+| H6c | KV transfer lost: a request prefilled on pod 0 never reaches pod 1, which re-prefills it | ACCEPTED | 0 | 53 (+0: a fresh join costs what a resume did) | +23.4% (one prefill) | 0 |
+| H6dh | request longer than a round, HOLD: committed whole in the round it completes in | ACCEPTED | 0 | 180 (baseline) | 0 | 1 step here; 3.0 steps mean, 5 max (62% of a round) over 99 closes |
+| H6ds | the same, SPLIT: cut at the boundary, re-joined afresh in a slot of its own | ACCEPTED | 0 | 190 (+10) | +10.6%; the 4-token prefix output twice | 0 |
+| H6dc | the same, CONTINUE: the rest is a new request, prompt + prefix | ACCEPTED | 0 | 185 (+5) | +9.1% (a 7-position prefill for 3) | 0 |
+| H6e | fleet churn: 3 pods, 6 rounds, 3 failures, 3 restarts; crossings continue | all 6 rounds ACCEPTED | 0 | 1470 (+108; 36 per restart) | +4.8% | 0 |
+
+Nothing here is a declaration. A crash is not silent: the schedule says
+where the pod stopped and where the request re-joined (M4), the recomputed
+prefix is gates, and with RU = step a truncated request's length is its
+join's length field, so H6at pads nothing (S7's blank check outputs are the
+request-RU case); a round that holds the crash needs nothing from the epoch
+layer. The straggler is the one scenario the layer as built gets wrong for an
+honest prover: `EpochVerifier.close_round` records an admitted run whose
+boundary is not in hand as `INVALID_PHASE` ("the boundary never arrived
+before the round closed"), `receive_boundary` refuses the boundary when it
+does arrive ("the run was admitted in round 0, which is closed"), the run's
+table has been counted in the round's `Bound`, and re-admitting the same
+compilation under a fresh session id is accepted in the next round while the
+epoch's verdict stays the first failure (`test_h6b_verifier_today`). The
+three honest moves that avoid it cost wall-clock (wait: 3 steps per close,
+the runs unchanged), a round of commitment latency and a round of `eta`
+(defer: per-pod runs, the late pod's run admitted one round later with the
+boundary it then has, `eta / 3` per round for `eta / 2` and a trailing
+round), or 36 advice bits and a longer prefill (truncate: the late pod
+commits what it has and its cut requests continue as new requests). A
+network partition during the seal is the straggler for every pod on the far
+side and is priced by H6b; its data-plane consequence, a KV transfer that
+never arrives, is H6c: pod 1 re-prefills, the orphan prefill stays in the
+circuit with its KV read by nobody, and nothing distinguishes it from a pod
+that died after its first step. With per-pod runs the *successful* transfer
+is itself a cross-run read and is not expressible today.
+
+A request that crosses the boundary reads, in round `r + 1`, the KV cache
+its own steps declared in round `r`, under another run's boundary
+commitment, which no port of the later run can name. HOLD costs nothing in
+bits or compute and pays in latency: the earlier round's close waits for the
+request (for lengths uniform on 3-6 steps and rounds of 8 steps, 99% of the
+99 boundaries of an 800-step run have a request in flight, 2.9 of 4 slots on
+average, and the wait is 3.0 steps on average and 5 at most) or the tokens
+it streamed before the boundary are committed a round late, which in a fleet
+whose requests are longer than a round is every request. SPLIT closes on
+time and re-joins the request afresh, recomputing the prefix one step per
+position in a slot the original schedule did not have; `Schedule` has no
+field for positions streamed in another run, so the prefix is output twice
+(47 outputs for 43 tokens) and the re-join costs +10 bits and +10.6% replay.
+CONTINUE closes on time too: the remainder is a new request whose prompt is
+the original prompt plus the streamed prefix, prefilled in one step in the
+original slot, +5 bits and +9.1% replay (one prefill over 7 positions for
+3), nothing output twice; that the continuation's prompt ends in round `r`'s
+claimed outputs for the same request is checkable from the two runs' public
+claims, and no rule checks it today. The cross-run read would make all three
+zero: the resume join's bits, no recompute, no wait.
+
+What the epoch layer must add for the cross-run read (a resumed join reading
+the KV rows another run declared), four pieces, none built:
+
+- `Schedule`: a `Join` with `resume` names the request's latest attempt *in
+  this schedule*. A cross-run resume must name the earlier run (its position
+  in the commitment stream) and the request's index in that run's `x`, two
+  gamma-coded fields on the join charged as advice, and the position it
+  continues from, which `Span.start` today derives from a previous attempt
+  the schedule does not have.
+- `Claim` and `Header`: a `reads` field, per foreign run its `Header.digest`
+  and the boundary positions read, bound into the header digest (a
+  `PROTOCOL_VERSION` bump), so the run's statement names what it read. The
+  foreign run must be committed before the reading run is admitted (a closed
+  round, or earlier in the same round); the epoch's verdict, which requires
+  every run accepted, then covers the read. Opening rule: the rows enter the
+  reading run as `in` gates whose values are not in `x`; `BoundaryMessage`
+  carries `foreign_openings`, openings of the read positions against the
+  foreign run's `Commitment` (in `EpochVerifier.stream`), checked at
+  `receive_boundary` as `io_openings` are today, after which every opening
+  of the reading run is its own.
+- `Bound` accounting: `union` prices a round's runs as disjoint circuits
+  (`docs/epoch.md`, section 4). A read joins two rounds' circuits: the units
+  that declared the rows in round `r` now reach outputs of round `r + 1`,
+  which round `r`'s bound did not count. Either the reading round carries
+  those units (a row per foreign declaring kind with `copies` = the rows
+  read and `reach_bits` = the reading run's outputs reachable from them,
+  `cut_bits = min(out_bits, reach_bits, ancestor_bits)` as for any unit) or
+  the rows are charged as source values at their width in bits (the M4
+  price, one KV row per layer per position). The first is the cheap one and
+  needs the union bound over rounds re-proved for connected rounds.
+- Storage: a round's boundary data is released when its evidence is accepted
+  (`docs/epoch.md`, section 5). Rows a later run reads must be retained by
+  the prover until the reading round is accepted, and the verifier keeps the
+  foreign `Commitment`, which the stream already holds. For a live request
+  this is the KV cache the server holds anyway; the extension is the rows of
+  requests that completed in round `r + 1` while round `r` is still being
+  answered.
+
+For stragglers (a run admitted whose boundary misses the seal), one of two
+changes to `EpochVerifier`, neither built:
+
+- `close_round` lists an admitted run without a boundary under
+  `RoundReport.refused` instead of judging it: the header never entered the
+  chain (`stream_link` covers a header and its boundary together), so
+  nothing the seal commits changes; the run's table leaves the round's
+  `Bound`, and the prover re-admits it later with no rejection standing.
+- Or the run is *carried*: its boundary is accepted in round `r + 1`,
+  `_Run.round` and `_Run.index` become that round's (the seeds are HMACs of
+  round `r + 1`'s seal and the run's index there), `RoundReport` names it in
+  both rounds, its table is counted where it is sealed, and an
+  `EpochParameters.max_carry` (rounds a run may wait; 1) bounds the wait. The
+  header binds `eta / rounds` and no round index, so no re-admission is
+  needed.
+
+What the honest prover should do today. Admit a run only with its boundary
+in hand: compute the run's values, then `admit` and `receive_boundary` back
+to back; the seal binds a header only together with its boundary, so nothing
+is lost by admitting late. A pod whose values are not in hand at the close is
+deferred a round (H6bd, per-pod runs) or truncated at the last step it has
+(H6bt), never admitted early; with one run for the fleet the verifier waits
+(H6bw). A request that will cross the boundary is continued (H6dc), the
+cheapest on-time policy in bits and in compute with nothing output twice;
+held (H6dh) when the close can wait and bits matter; never split. Crashes,
+restarts, lost transfers and abandoned requests are schedule, never
+declarations (H6a, H6at, H6c, H6e). Per-pod runs isolate a straggler to its
+pod and cost 4 bits less than the fleet run here, but make every cross-pod
+resume (S6) a cross-run read; a fleet run needs every pod's values before it
+can be admitted.
 
 ## 9. Recording policies
 
@@ -795,7 +936,10 @@ before the challenge (section 7: `H5a` the catastrophic fault left to M6, no
 action or a post-J declaration; `H5b` the same fault caught before the token
 was streamed and truncated; `H5c` the same fault found by re-execution before
 the round closes and declared before `J`, priced), `H6*` round-close
-logistics (section 8).
+logistics (section 8: `H6a` a crash mid-request and `H6at` the same with the
+clients gone; `H6bw`, `H6bd`, `H6bt` a straggler waited for, deferred,
+truncated; `H6c` a lost KV transfer; `H6dh`, `H6ds`, `H6dc` a request longer
+than a round held, split, continued; `H6e` fleet churn).
 
 Each row carries `declarations`, `charge_bits` and `recompute` besides the
 catalogue's fields. The `H1` rows add `declarations_vu_outputs` (the count
@@ -808,6 +952,8 @@ the `H2` rows `pre_j`, `post_j` and `accepted`; the `H3` rows `rejections`,
 `q`-cut), `toy_boundary` and `toy_vu_outputs` (the pins measured on the
 fixture's pod) and `m6_bits_boundary`, `m6_bits_vu_outputs` (the M6 charge
 under each policy at `u_post(1)`); `charge_bits` is the cheapest mechanism's.
+The `H6` rows add `rounds`, `runs`, `outputs`, `check_outputs` and
+`honest_cost`.
 
 ## Results
 
