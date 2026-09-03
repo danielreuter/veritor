@@ -223,5 +223,13 @@ storage; `Run.values` stands in for it.
   runs, one per fleet or per pod, through `run_epoch`; the `H6` rows of
   `docs/honest-prover.md`, section 8), but a request that spans two rounds
   still cannot read the KV its earlier steps declared in the previous round's
-  run (the cross-run read, listed there); the adversary test is dedicated and
-  uses the simulation's tolerance.
+  run: the cross-run read, whose four pieces section 8 lists (a `Join` that
+  names the run and request it resumes, a `reads` field of `Claim` and
+  `Header` with `foreign_openings` in the `BoundaryMessage` against the
+  foreign `Commitment`, a `Bound` that counts the read rows' declaring units
+  as reaching the reading round, and retention of the read rows past their
+  round). Nor is there a straggler path: an admitted run whose boundary
+  misses the seal is judged, not refused or carried into the next round
+  (section 8 specifies both alternatives), so the honest prover admits a run
+  only with its boundary in hand. The adversary test is dedicated and uses
+  the simulation's tolerance.
