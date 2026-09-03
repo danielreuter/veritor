@@ -910,21 +910,37 @@ def bottlenecks(document: dict[str, Any]) -> list[str]:
     if chain:
         last, first = chain["points"][-1], chain["points"][0]
         out += ["### `output_reach`", ""]
-        out.append(
-            f"- **Super-quadratic in the steps of one definition when the steps form a chain.**  `output_reach` on a root with "
-            f"{fmt_count(last['x'])} sequential `call` steps takes {fmt_time(last['time_s'])} and {fmt_bytes(last['peak_bytes'])} "
-            f"(∝ steps^{_exp(d.exponent('reach', 'chain_vs_steps'))} in time, ∝ steps^{_exp(d.exponent('reach', 'chain_vs_steps', 'peak_bytes'))} "
-            f"in memory over the sweep, steepening as the bigint terms take over) against {fmt_time(last.get('parse_s'))} for the parse and "
-            f"{fmt_time(last.get('transient_ports_s'))} for `transient_ports`.  `Index.kinds()` inherits it ({fmt_time(last.get('kinds_s'))}).  "
-            "See *Performance bugs* below."
-        )
+        if _chain_is_super_quadratic(d):
+            out.append(
+                f"- **Super-quadratic in the steps of one definition when the steps form a chain.**  `output_reach` on a root with "
+                f"{fmt_count(last['x'])} sequential `call` steps takes {fmt_time(last['time_s'])} and {fmt_bytes(last['peak_bytes'])} "
+                f"(∝ steps^{_exp(d.exponent('reach', 'chain_vs_steps'))} in time, ∝ steps^{_exp(d.exponent('reach', 'chain_vs_steps', 'peak_bytes'))} "
+                f"in memory over the sweep, steepening as the bigint terms take over) against {fmt_time(last.get('parse_s'))} for the parse and "
+                f"{fmt_time(last.get('transient_ports_s'))} for `transient_ports`.  `Index.kinds()` inherits it ({fmt_time(last.get('kinds_s'))}).  "
+                "See *Performance bugs* below."
+            )
+        else:
+            out.append(
+                f"- **Linear up to a logarithm in the steps of one definition, whatever their dependency structure.**  `output_reach` on a "
+                f"root with {fmt_count(last['x'])} sequential `call` steps (a decode chain, the closure `Down(j)` of every step being every "
+                f"later step) takes {fmt_time(last['time_s'])} and {fmt_bytes(last['peak_bytes'])} (∝ steps^{_exp(d.exponent('reach', 'chain_vs_steps'))} "
+                f"in time, ∝ steps^{_exp(d.exponent('reach', 'chain_vs_steps', 'peak_bytes'))} in memory) against {fmt_time(last.get('parse_s'))} "
+                f"for the parse and {fmt_time(last.get('transient_ports_s'))} for `transient_ports`; `Index.kinds()` is {fmt_time(last.get('kinds_s'))}.  "
+                "The closure is swept as intervals of steps over a segment tree (`_step_reach`; the comment above `_segment_bits` in "
+                "`src/veritor/core/index.py`), `O((S + R) · log S)` for `S` steps and `R` recorded argument ranges on a chain or on "
+                "siblings reading one step, so the 10^6-step `max_steps_per_definition` limit is seconds, like the parse."
+            )
         if indep:
             i_last = indep["points"][-1]
             out.append(
                 f"- The same number of independent steps costs {fmt_time(i_last['time_s'])} (∝ steps^{_exp(d.exponent('reach', 'independent_vs_steps'))}), "
                 f"many distinct definitions {fmt_time(d.last('reach', 'definitions_vs_count'))} for {fmt_count(d.last('reach', 'definitions_vs_count', 'x'))} "
                 f"(∝ ^{_exp(d.exponent('reach', 'definitions_vs_count'))}), and `repeat` nesting is flat in n: the pass is linear in the "
-                "description everywhere except along a dependency chain inside one definition."
+                + (
+                    "description everywhere except along a dependency chain inside one definition."
+                    if _chain_is_super_quadratic(d)
+                    else "description, up to a logarithm of the longest step list, everywhere."
+                )
             )
         out.append("")
 
@@ -951,11 +967,35 @@ def _frontier_ru(d: Data, series: str) -> tuple[str, float | None]:
     return "?", None
 
 
+def _chain_is_super_quadratic(d: Data) -> bool:
+    """Whether the `chain_vs_steps` sweep still shows the bitmask closure's Θ(S³ / w): a fitted exponent past 1.5."""
+
+    exponent = d.exponent("reach", "chain_vs_steps")
+    return exponent is not None and exponent > 1.5
+
+
 def performance_bugs(d: Data) -> list[str]:
     chain = d.series("reach", "chain_vs_steps")
     out = ["## Performance bugs", ""]
     if not chain:
         return out + ["None observed in this run.", ""]
+    if not _chain_is_super_quadratic(d):
+        last = chain["points"][-1]
+        return out + [
+            "None observed in this run.",
+            "",
+            (
+                f"- **Fixed: `output_reach` was Θ(S²) Python iterations on Θ(S)-bit integers for a chain of S steps** (14.3 s at "
+                f"S = 8,192, extrapolating to ~35 days and ~116 GB of bitmasks at the 10^6-step limit).  `_step_reach` "
+                "(`src/veritor/core/index.py`) now records reads as ranges of steps and sweeps the closure `Down` as intervals over a "
+                f"segment tree: `chain_vs_steps` is ∝ steps^{_exp(d.exponent('reach', 'chain_vs_steps'))} in this run, "
+                f"{fmt_time(last['time_s'])} at S = {fmt_count(last['x'])}.  A strided argument run over more than 64 steps and a closure "
+                "of more than 64 maximal intervals are recorded as hulls, which only enlarge a closure (every reach stays a downstream "
+                "cut) and are exact on every definition of at most 64 steps; `tests/veritor/core/test_reach.py` checks the sweep against "
+                "the bitmask closure it replaced."
+            ),
+            "",
+        ]
     points = chain["points"]
     rows = ", ".join(
         f"S = {fmt_count(p['x'])}: {fmt_time(p['time_s'])}" for p in points
@@ -1004,9 +1044,9 @@ def performance_bugs(d: Data) -> list[str]:
             "in one definition does (S = 8192 is already the dominant cost of admission)."
         ),
         (
-            "- **Not fixed here** (`src/veritor` is read-only for this task).  A fix that keeps the semantics: iterate only over the "
-            "steps that hold output bits (`rest & holders`, with `holders` the OR of `1 << i` for `out[i] > 0`), or accumulate "
-            "`reach[j]` from the readers' already-final `reach` when the closure is a union (it is, up to the `min(bits, total)` cap)."
+            "- **Fix**: keep `Down` as intervals of steps and sweep them with a segment tree over the step positions (the interval "
+            "sweep of `_step_reach`, `O((S + R) · log S)` on a chain); this run still shows the bitmask closure's exponent, so the "
+            "data predates it or the sweep regressed."
         ),
         "",
     ]

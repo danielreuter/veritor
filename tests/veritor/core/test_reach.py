@@ -14,6 +14,7 @@ reaches from the first one.  A replay unit (RU) and a verification unit
 
 from __future__ import annotations
 
+import random
 from collections.abc import Iterator
 
 import pytest
@@ -36,7 +37,20 @@ from veritor.core import (
     make_isa_gate_set,
     make_word_gate_set,
 )
-from veritor.core.description import REPLAY, VERIFICATION
+from veritor.core import index as index_module
+from veritor.core.description import (
+    INPUT,
+    LOCAL,
+    REPLAY,
+    VERIFICATION,
+    CallStep,
+    Definition,
+    GateStep,
+    Range,
+    Step,
+    _split,
+)
+from veritor.core.index import _argument_grid, _Coverage, _segment_bits, _step_reach
 
 from ..analysis.conftest import build_compiled, paper_example, random_compiled
 
@@ -377,3 +391,298 @@ def test_a_repeat_read_copy_by_copy_is_charged_the_whole_reader() -> None:
     plus_row = next(row for row in by_role(rows, VERIFICATION) if row.copies == n and row.kind != times_row.kind)
     assert plus_row.reach_bits == exact[plus_row.kind] == 8  # an output, read by nothing
     assert exact[times_row.kind] == 8 and times_row.reach_bits == 8 * n  # sound, not tight: one step
+
+
+# -- the interval sweep against the bitmask closure --------------------------------------
+#
+# ``_step_reach`` keeps ``Down`` as intervals of steps and sweeps them with a
+# segment tree; the closure it replaced kept ``Down`` as a bitmask over the
+# steps, Θ(S³ / w) on a chain of ``S`` steps.  The bitmask version is the
+# oracle here: the sweep must agree with it exactly wherever it records the
+# reads exactly (every argument run spanning at most ``_EXACT_READ_STEPS``
+# steps and every closure of at most ``_MAX_DOWN_INTERVALS`` intervals, which
+# any definition of at most 64 steps satisfies) and may only *exceed* it where
+# it falls back to hulls.
+
+
+def bitmask_step_reach(definition: Definition, total: int, exact: bool) -> list[int]:
+    """The closure as bitmasks over the steps: ``Down(j)`` is ``j`` with the ``Down`` of its readers."""
+
+    steps = definition.steps
+    count = len(steps)
+    readers = [0] * count
+    for k, step in enumerate(steps):
+        copies = step.count if isinstance(step, CallStep) else 1
+        for item in step.args:
+            if item.space != LOCAL:
+                continue
+            for start, run, stride, _, _ in _argument_grid(item, copies):
+                for index, _, _ in _split(definition.step_slot, start, run, stride):
+                    readers[index] |= 1 << k
+    out = [0] * count
+    share = [0] * count
+    for item in definition.outputs:
+        if item.space != LOCAL:
+            continue
+        for index, first, taken in _split(definition.step_slot, item.start, item.count, item.stride):
+            if exact:
+                width, single = _segment_bits(definition, index, item.element(first), taken, item.stride)
+            else:
+                width = single = total
+            out[index] += width
+            share[index] += single
+    down = [0] * count
+    reach = [0] * count
+    for j in reversed(range(count)):
+        mask = 1 << j
+        rest = readers[j]
+        while rest:
+            low = rest & -rest
+            mask |= down[low.bit_length() - 1]
+            rest ^= low
+        down[j] = mask
+        bits = share[j]
+        rest = mask ^ (1 << j)
+        while rest and bits < total:
+            low = rest & -rest
+            bits += out[low.bit_length() - 1]
+            rest ^= low
+        reach[j] = min(bits, total)
+    return reach
+
+
+GATES = make_word_gate_set(8)
+ADD, MUL, IN = GATES["add"], GATES["mul"], GATES["in"]
+
+
+def _definition(key: str, input_count: int, steps: tuple[Step, ...], outputs: tuple[Range, ...]) -> Definition:
+    return Definition(f"test-reach/{key}", input_count, steps, outputs, None)
+
+
+def _port(k: int) -> Range:
+    return Range(INPUT, k, 1, 0)
+
+
+# the children a random definition calls: one gate, two gates, a port passed through beside a gate
+# (a declared output carrying nothing) and a pinned source (an output carrying nothing either)
+ONE = _definition("one", 1, (GateStep(ADD, (_port(0), _port(0))),), (Range(LOCAL, 0, 1, 0),))
+TWO = _definition(
+    "two",
+    2,
+    (GateStep(ADD, (Range(INPUT, 0, 2, 1),)), GateStep(MUL, (Range(INPUT, 0, 2, 1),))),
+    (Range(LOCAL, 0, 2, 1),),
+)
+THROUGH = _definition("through", 1, (GateStep(ADD, (_port(0), _port(0))),), (_port(0), Range(LOCAL, 0, 1, 0)))
+PINNED = _definition("pinned", 0, (GateStep(IN, ()),), (Range(LOCAL, 0, 1, 0),))
+
+
+def local_range(rng: random.Random, slots: int, count: int, copies: int = 1) -> Range:
+    """A ``LOCAL`` range of ``count`` elements over ``copies`` copies inside the ``slots`` so far."""
+
+    for _ in range(64):
+        stride = rng.choice((0, 1, 1, 1, 2, 3, 5, 7)) if count > 1 else 0
+        jstride = rng.choice((0, 1, 1, 2, 3, 5)) if copies > 1 else 0
+        span = (count - 1) * stride + (copies - 1) * jstride
+        if span < slots:
+            return Range(LOCAL, rng.randrange(slots - span), count, stride, jstride)
+    return Range(LOCAL, rng.randrange(slots), count, 0, 0)  # one slot, repeated
+
+
+def random_definition(rng: random.Random, count: int) -> Definition:
+    """A root of ``count`` steps: sources, gates over earlier slots, calls and repeats of the children.
+
+    Every argument and every declared output is a random progression over
+    the slots of the earlier steps, so reads are dense or strided, span one
+    step or many, and the copies of a ``repeat`` shift over the steps.
+    """
+
+    steps: list[Step] = []
+    slots = 0
+    for _ in range(count):
+        roll = rng.random()
+        step: Step
+        if slots == 0 or roll < 0.1:
+            step = GateStep(IN, ()) if rng.random() < 0.5 else CallStep.make(PINNED, (), rng.choice((1, 1, 3)))
+        elif roll < 0.45:
+            if rng.random() < 0.5:
+                args: tuple[Range, ...] = (local_range(rng, slots, 2),)
+            else:
+                args = (local_range(rng, slots, 1), local_range(rng, slots, 1))
+            step = GateStep(rng.choice((ADD, MUL)), args)
+        else:
+            child = rng.choice((ONE, TWO, TWO, THROUGH))
+            copies = rng.choice((1, 1, 1, 2, 3, 4))
+            pieces: list[Range] = []
+            remaining = child.input_count
+            while remaining:
+                taken = rng.randint(1, remaining)
+                pieces.append(local_range(rng, slots, taken, copies))
+                remaining -= taken
+            step = CallStep.make(child, tuple(pieces), copies)
+        steps.append(step)
+        slots += step.slots
+    outputs = tuple(local_range(rng, slots, rng.randint(1, min(4, slots))) for _ in range(rng.randint(1, 3)))
+    return _definition(f"random/{rng.random()}", 0, tuple(steps), outputs)
+
+
+def both_reaches(definition: Definition, rng: random.Random) -> Iterator[tuple[list[int], list[int]]]:
+    """``(sweep, bitmask)`` per step, as the root (exact segments) and as a child (``total`` or nothing)."""
+
+    for exact, total in ((True, definition.out_bits), (False, 1 + rng.randrange(64))):
+        yield _step_reach(definition, total, exact), bitmask_step_reach(definition, total, exact)
+
+
+@pytest.mark.parametrize("seed", range(150))
+def test_the_sweep_equals_the_bitmask_closure_on_definitions_of_at_most_64_steps(seed: int) -> None:
+    rng = random.Random(seed)
+    definition = random_definition(rng, rng.randint(1, 64))
+    for sweep, bitmask in both_reaches(definition, rng):
+        assert sweep == bitmask
+
+
+@pytest.mark.parametrize("seed", range(60))
+def test_the_sweep_never_falls_below_the_bitmask_closure_on_long_definitions(seed: int) -> None:
+    """65 to 200 steps: strided runs may span more than 64 steps and closures more than 64 intervals."""
+
+    rng = random.Random(1000 + seed)
+    definition = random_definition(rng, rng.randint(65, 200))
+    for sweep, bitmask in both_reaches(definition, rng):
+        assert all(s >= b for s, b in zip(sweep, bitmask, strict=True))
+
+
+@pytest.mark.parametrize("seed", range(60))
+@pytest.mark.parametrize(("read_steps", "intervals"), [(2, 1), (3, 2), (64, 1), (2, 64)])
+def test_hulls_only_enlarge_the_reach(
+    seed: int, read_steps: int, intervals: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the thresholds forced low, small definitions take the hull paths and stay sound."""
+
+    monkeypatch.setattr(index_module, "_EXACT_READ_STEPS", read_steps)
+    monkeypatch.setattr(index_module, "_MAX_DOWN_INTERVALS", intervals)
+    rng = random.Random(2000 + seed)
+    definition = random_definition(rng, rng.randint(2, 40))
+    for sweep, bitmask in both_reaches(definition, rng):
+        assert all(s >= b for s, b in zip(sweep, bitmask, strict=True))
+
+
+def chain_definition(n: int) -> Definition:
+    """A source, then ``n`` calls of ``ONE`` each reading the previous step; every call's output is declared."""
+
+    steps: list[Step] = [GateStep(IN, ())]
+    for k in range(n):
+        steps.append(CallStep.make(ONE, (Range(LOCAL, k, 1, 0),)))
+    return _definition(f"chain/{n}", 0, tuple(steps), (Range(LOCAL, 1, n, 1),))
+
+
+def broadcast_definition(n: int) -> Definition:
+    """A source read by ``n`` independent calls of ``ONE``; every call's output is declared."""
+
+    steps: list[Step] = [GateStep(IN, ())]
+    steps.extend(CallStep.make(ONE, (Range(LOCAL, 0, 1, 0),)) for _ in range(n))
+    return _definition(f"broadcast/{n}", 0, tuple(steps), (Range(LOCAL, 1, n, 1),))
+
+
+def kv_chain_definition(n: int) -> Definition:
+    """A source, then ``n`` calls each reading *every* earlier slot (a KV cache), into cells of growing arity."""
+
+    steps: list[Step] = [GateStep(IN, ())]
+    for slots in range(1, n + 1):
+        cell = _definition(
+            f"kv-cell/{slots}", slots, (GateStep(ADD, (Range(INPUT, 0, 2, slots - 1),)),), (Range(LOCAL, 0, 1, 0),)
+        )
+        steps.append(CallStep.make(cell, (Range(LOCAL, 0, slots, 1),)))
+    return _definition(f"kv/{n}", 0, tuple(steps), (Range(LOCAL, 1, n, 1),))
+
+
+@pytest.mark.parametrize("build", [chain_definition, broadcast_definition, kv_chain_definition])
+def test_the_flagship_shapes_are_exact_far_beyond_the_thresholds(build) -> None:
+    """A chain, a broadcast and a KV chain of 300 steps: single-interval closures, so no hull is ever taken."""
+
+    definition = build(300)
+    assert len(definition.steps) > 64
+    rng = random.Random(0)
+    for sweep, bitmask in both_reaches(definition, rng):
+        assert sweep == bitmask
+    root = _step_reach(definition, definition.out_bits, True)
+    assert root[0] == definition.out_bits == 300 * 8  # the source reaches everything in all three shapes
+    assert root[-1] == 8  # the last step reaches its own word
+
+
+def test_a_strided_read_over_many_steps_is_recorded_as_its_hull() -> None:
+    """A ``repeat`` reading every other one of 200 independent steps: the sweep charges the ones it skips too."""
+
+    n = 100
+    steps: list[Step] = [GateStep(IN, ()), GateStep(IN, ())]
+    for _ in range(n):  # ``a`` cells at even steps read source 0, ``b`` cells at odd steps read source 1
+        steps.append(CallStep.make(ONE, (Range(LOCAL, 0, 1, 0),)))
+        steps.append(CallStep.make(ONE, (Range(LOCAL, 1, 1, 0),)))
+    steps.append(CallStep.make(ONE, (Range(LOCAL, 2, 1, 0, 2),), n))  # copy ``j`` reads cell ``a_j``
+    definition = _definition("skipping", 0, tuple(steps), (Range(LOCAL, 2, 3 * n, 1),))
+    sweep = _step_reach(definition, definition.out_bits, True)
+    bitmask = bitmask_step_reach(definition, definition.out_bits, True)
+    assert all(s >= b for s, b in zip(sweep, bitmask, strict=True))
+    word, block = 8, n * 8
+    assert bitmask[2] == sweep[2] == word + block  # ``a_0``: its word and the repeat, both ways
+    assert bitmask[3] == word < sweep[3] == word + block  # ``b_0``: the repeat only through the hull
+    assert bitmask[0] == sweep[0] == 2 * block  # source 0 reaches the ``a`` cells and the repeat
+    assert bitmask[1] == block < sweep[1] == 2 * block  # source 1 is charged the repeat too
+
+
+def test_a_closure_of_many_intervals_is_kept_as_its_hull() -> None:
+    """Two interleaved chains of 100 links: the sweep charges the head of one chain the other's links too."""
+
+    n = 100
+    steps: list[Step] = [GateStep(IN, ()), GateStep(IN, ())]
+    for k in range(n):  # chain ``a`` at even steps and chain ``b`` at odd ones, each link reading the previous
+        steps.append(CallStep.make(ONE, (Range(LOCAL, 2 * k, 1, 0),)))
+        steps.append(CallStep.make(ONE, (Range(LOCAL, 2 * k + 1, 1, 0),)))
+    definition = _definition("interleaved", 0, tuple(steps), (Range(LOCAL, 2, 2 * n, 1),))
+    sweep = _step_reach(definition, definition.out_bits, True)
+    bitmask = bitmask_step_reach(definition, definition.out_bits, True)
+    assert all(s >= b for s, b in zip(sweep, bitmask, strict=True))
+    assert bitmask[0] == bitmask[2] == n * 8  # a head reaches its own chain
+    assert sweep[0] > bitmask[0] and sweep[2] > bitmask[2]  # ... and, past 64 intervals, the hull
+    assert sweep[-1] == bitmask[-1] == 8 and sweep[-2] == bitmask[-2] == 8  # the tails are exact
+    assert sweep[2 * n - 2 * 30] == bitmask[2 * n - 2 * 30] == 31 * 8  # so are the last 64 links of a chain
+
+
+def test_coverage_counts_match_a_plain_array() -> None:
+    """Range adds of ``±1``, the weight of the covered positions and the covered intervals."""
+
+    rng = random.Random(7)
+    for count in (1, 2, 3, 5, 8, 13, 64, 100):
+        out = [rng.randrange(4) for _ in range(count)]
+        cover = _Coverage(out)
+        plain = [0] * count
+        active: list[tuple[int, int]] = []
+        for _ in range(200):
+            dirty: list[int] = []
+            for _ in range(rng.choice((1, 1, 1, 2, 5))):  # several additions settle together
+                if active and rng.random() < 0.4:
+                    low, high = active.pop(rng.randrange(len(active)))
+                    delta = -1
+                else:
+                    low = rng.randrange(count)
+                    high = rng.randint(low + 1, count)
+                    active.append((low, high))
+                    delta = 1
+                cover.add(low, high, delta, dirty)
+                for p in range(low, high):
+                    plain[p] += delta
+            cover.settle(dirty)
+            assert cover.covered_out() == sum(w for w, c in zip(out, plain, strict=True) if c > 0)
+            first = min((p for p, c in enumerate(plain) if c > 0), default=count)
+            if first == 0:
+                continue  # ``intervals`` is only asked below every covered position
+            expected = [(first - 1, first)]
+            for p in range(first, count):
+                if plain[p] > 0:
+                    if expected[-1][1] == p:
+                        expected[-1] = (expected[-1][0], p + 1)
+                    else:
+                        expected.append((p, p + 1))
+            assert cover.intervals(first - 1, 1 << 30) == expected
+            hull = [(first - 1, max(p for p, c in enumerate(plain) if c > 0) + 1)] if first < count else expected
+            assert cover.intervals(first - 1, 1) in (expected, hull)
+            if len(expected) > 1:
+                assert cover.intervals(first - 1, 1) == hull
