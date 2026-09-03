@@ -40,10 +40,11 @@ from veritor.core import (
     VerificationPolicy,
     identity_digest,
     rational_manifest,
+    validate_advice_bits,
     validate_digest,
 )
 
-PROTOCOL_VERSION = "veritor/protocol/v7"
+PROTOCOL_VERSION = "veritor/protocol/v8"
 TRANSPARENT_BACKEND = "transparent"
 """The default proof backend: openings as the proof, relations recomputed by the verifier."""
 
@@ -64,6 +65,7 @@ class VerificationCode(StrEnum):
     INVALID_OPENING = "invalid_opening"
     INVALID_VALUE = "invalid_value"
     PUBLIC_IO_MISMATCH = "public_io_mismatch"
+    CHECK_MISMATCH = "check_mismatch"
     CHALLENGE_MISMATCH = "challenge_mismatch"
     COVERAGE_MISMATCH = "coverage_mismatch"
     RELATION_REJECTED = "relation_rejected"
@@ -204,11 +206,17 @@ class Header:
 
     ``compiled_digest`` names ``(C, I)``, ``constructor`` the digest of the
     ``G`` that produced it and ``advice`` the ``a`` it was run on, so a
-    transcript is bound to one ``Compile(G, x, a)``.  ``policy`` is the
+    transcript is bound to one ``Compile(G, x, a)``; ``advice_bits`` is the
+    bit length ``G`` declared for ``a``, what the advice is charged, of which
+    ``advice`` must be the canonical zero-padded encoding
+    (:func:`veritor.core.validate_advice_bits`).  ``policy`` is the
     client's ``theta = (q, s)`` and ``eta`` the verifier's acceptance
-    threshold.      ``public_inputs`` are the encoded values of the circuit's
+    threshold.  ``public_inputs`` are the encoded values of the circuit's
     ``in`` gates by rank (address order); the weight gates are under
-    ``weights``.  ``backend`` names the proof backend the reveal step runs
+    ``weights``.  ``claimed_outputs`` are the encoded circuit outputs in
+    output order, check outputs included at exactly their constants (the
+    verifier rejects a header that claims anything else there).
+    ``backend`` names the proof backend the reveal step runs
     through (:mod:`veritor.protocol.proofs`); the default, ``"transparent"``,
     is the openings-as-proof protocol and leaves the header's manifest and
     digest exactly as they were before backends were pluggable.
@@ -228,6 +236,7 @@ class Header:
     weights: Weights | None
     backend: str = TRANSPARENT_BACKEND
     max_faults: int = 0
+    advice_bits: int = 0
     digest: bytes = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -253,8 +262,13 @@ class Header:
             raise ProtocolError("backend must be a nonempty backend id")
         if type(self.max_faults) is not int or self.max_faults < 0:
             raise ProtocolError("max_faults must be a nonnegative integer")
+        try:
+            validate_advice_bits(self.advice, self.advice_bits)
+        except InvalidArtifact as error:
+            raise ProtocolError(str(error)) from error
         manifest: dict[str, JSONValue] = {
             "advice": self.advice.hex(),
+            "advice_bits": self.advice_bits,
             "claimed_outputs": [item.hex() for item in self.claimed_outputs],
             "compiled_digest": self.compiled_digest,
             "constructor": self.constructor,
@@ -269,7 +283,7 @@ class Header:
             manifest["backend"] = self.backend
         if self.max_faults:
             manifest["max_faults"] = self.max_faults
-        object.__setattr__(self, "digest", raw_digest("veritor/protocol/header/v7", manifest))
+        object.__setattr__(self, "digest", raw_digest("veritor/protocol/header/v8", manifest))
 
 
 @dataclass(frozen=True, slots=True)

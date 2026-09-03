@@ -11,7 +11,9 @@ from veritor.constructors.schedule import (
     Schedule,
     ScheduleError,
     Span,
+    gamma,
     schedule_fcfs,
+    width,
 )
 
 REQUESTS = (
@@ -148,16 +150,34 @@ def test_encoding_is_canonical_and_round_trips() -> None:
     data = schedule.encode()
 
     assert Schedule.decode(data) == schedule
-    assert len(data) == 20 + 16 + 28 * len(schedule.joins)
-    for corrupt in (data[:-1], data + b"\0", b"x" + data[1:], data[:20] + (1).to_bytes(4, "big") + data[24:]):
+    # header: gamma(2) gamma(2) gamma(5) gamma(5); a join: pod(1) step(3) slot(1) length-1(3) resume(1)
+    # gamma(1 + request) gamma(1): 10 + 2 * 3 + 2 * 5 + (10 + 1 + 3 + 3 + 5 + 3) bits
+    assert schedule.bits() == "010" + "010" + "00101" + "00101" + "".join(
+        f"{join.pod:01b}{join.step:03b}{join.slot:01b}{join.length - 1:03b}0{gamma(1 + join.request)}1"
+        for join in schedule.joins
+    )
+    assert schedule.bit_length() == len(schedule.bits()) == 68 and len(data) == -(-68 // 8) == 9
+    assert data == int(schedule.bits() + "0000", 2).to_bytes(9, "big")  # zero padding to the byte
+    for corrupt in (data[:-1], data + b"\0", data[:-1] + bytes([data[-1] | 1]), b"\xff" + data[1:]):
         with pytest.raises(ScheduleError):
             Schedule.decode(corrupt)
     shaped = Schedule(2, 1, 8, (Join(0, 0, 0, 0, 3, chunk=2), Join(1, 5, 0, 0, 2, resume=True)))
     assert Schedule.decode(shaped.encode()) == shaped
-    resume_word = shaped.encode()[36 + 28 + 20 : 36 + 28 + 24]
-    assert resume_word == (1).to_bytes(4, "big")
-    with pytest.raises(ScheduleError, match="resume flag"):
-        Schedule.decode(shaped.encode().replace(resume_word, (2).to_bytes(4, "big")))
+    assert Schedule.decode(Schedule(1, 1, 1, ()).encode()) == Schedule(1, 1, 1, ())
+    assert Schedule(1, 1, 1, ()).bits() == "1111" and Schedule(1, 1, 1, ()).encode() == b"\xf0"
+    # the v3 word format (a magic, u32 header and 7 u32 words per join) is not a v4 schedule
+    v3 = b"veritor/schedule/v3\0" + b"".join(
+        value.to_bytes(4, "big") for value in (2, 2, 5, 1, 0, 0, 0, 0, 3, 0, 0)
+    )
+    with pytest.raises(ScheduleError):
+        Schedule.decode(v3)
+
+
+def test_gamma_and_width() -> None:
+    assert [gamma(n) for n in range(1, 9)] == ["1", "010", "011", "00100", "00101", "00110", "00111", "0001000"]
+    assert [width(n) for n in range(1, 10)] == [0, 1, 2, 2, 3, 3, 3, 3, 4]
+    with pytest.raises(ScheduleError):
+        gamma(0)
 
 
 @pytest.mark.parametrize(

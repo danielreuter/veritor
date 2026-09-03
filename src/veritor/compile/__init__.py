@@ -11,6 +11,7 @@ from .constructor import (
     Compilation,
     Constructor,
     constructor_digest,
+    declared_advice_bits,
 )
 from .description import (
     FORMAT_VERSION,
@@ -32,6 +33,7 @@ __all__ = [
     "Description",
     "canonical_description",
     "constructor_digest",
+    "declared_advice_bits",
     "definition_digest",
     "description_digest",
     "parse_description",

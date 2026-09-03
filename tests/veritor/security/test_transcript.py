@@ -62,8 +62,13 @@ MUTATIONS = {
         VerificationCode.EXPECTATION_MISMATCH,
     ),
     "header.advice": (
-        lambda d, m: d["header"].__setitem__("advice", "00"),
+        lambda d, m: d["header"].__setitem__("advice_bits", 8)
+        or d["header"].__setitem__("advice", "00"),
         VerificationCode.EXPECTATION_MISMATCH,
+    ),
+    "header.advice_bits": (
+        lambda d, m: d["header"].__setitem__("advice_bits", 8),
+        VerificationCode.MALFORMED_TRANSCRIPT,
     ),
     "header.policy": (
         lambda d, m: d["header"]["policy"].__setitem__("q", [1, 3]),

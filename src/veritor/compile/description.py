@@ -2,17 +2,19 @@
 
 The wire format is canonical JSON (sorted keys, no whitespace, no floats)::
 
-    {"version": 2,
+    {"version": 3,
      "definitions": [{"digest": "<hex>", "body": {...}}, ...],   # dependency order
      "root": "<hex>"}
 
     body  = {"input_count": n, "role": null | "replay" | "verification",
-             "steps": [step, ...], "outputs": [range, ...]}
+             "steps": [step, ...], "outputs": [range, ...]
+             (, "checks": [check, ...])}                # present iff nonempty
     step  = {"kind": "gate", "gate": name, "args": [range, ...]}
           | {"kind": "call", "digest": "<hex>", "args": [range, ...]}
           | {"kind": "repeat", "count": n, "digest": "<hex>", "args": [jrange, ...]}
     range = [space, start, count, stride]           space = "input" | "local"
     jrange = [space, start, count, stride, jstride]
+    check = [start, count, stride, value]           over declared output ordinals
 
 Besides the shape rules (arity, in-range relative references, dependency
 order, limits), a definition's declared outputs, resolved to the gates a copy
@@ -22,6 +24,13 @@ This makes ``|Out|`` and its width sums over runs and rank/unrank inside
 ``Out`` prefix sums.  The root has no ports: ``input_count`` of the root must
 be ``0``, the circuit's inputs being ``in`` gates (the compiler enforces this
 when it builds the index).
+
+``checks`` mark declared outputs the verifier requires to equal a constant
+(:class:`~veritor.core.description.Check`).  Only the root may declare them;
+the ordinals must lie within the declared outputs and be pairwise distinct,
+each must resolve to a computed gate the copy owns (not a source gate, not a
+port), and ``value`` must fit the width of every gate it resolves to.  The
+key is omitted when there are no checks, so a body has one canonical form.
 
 Every check here is per definition, so validation is ``O(|G|)`` regardless of
 how many gates the description unrolls to; the distinctness check is
@@ -51,6 +60,7 @@ from veritor.core.description import (
     LOCAL,
     ROLES,
     CallStep,
+    Check,
     Definition,
     GateStep,
     PieceKind,
@@ -61,9 +71,9 @@ from veritor.core.description import (
     ranges_total,
 )
 
-FORMAT_VERSION = 2
-DEFINITION_DIGEST_TAG = "veritor/definition/v2"
-DESCRIPTION_DIGEST_TAG = "veritor/description/v2"
+FORMAT_VERSION = 3
+DEFINITION_DIGEST_TAG = "veritor/definition/v3"
+DESCRIPTION_DIGEST_TAG = "veritor/description/v3"
 
 
 class CompileError(InvalidArtifact):
@@ -257,7 +267,14 @@ def _definition(
     available: dict[str, Definition],
 ) -> Definition:
     where = f"definition {digest[:12]}"
-    raw = _object(body, {"input_count", "role", "steps", "outputs"}, where)
+    if type(body) is dict and "checks" in body:
+        raw = _object(body, {"input_count", "role", "steps", "outputs", "checks"}, where)
+        raw_checks = _list(raw["checks"], f"{where} checks")
+        if not raw_checks:
+            raise CompileError(f"{where} declares an empty checks list; the key must be omitted")
+    else:
+        raw = _object(body, {"input_count", "role", "steps", "outputs"}, where)
+        raw_checks = []
     input_count = _int(raw["input_count"], f"{where} input_count")
     role = raw["role"]
     if role is not None and role not in ROLES:
@@ -283,7 +300,8 @@ def _definition(
     )
     if not outputs:
         raise CompileError(f"{where} declares no outputs")
-    definition = Definition(digest, input_count, tuple(steps), outputs, role)
+    checks = _checks(raw_checks, f"{where} checks", ranges_total(outputs))
+    definition = Definition(digest, input_count, tuple(steps), outputs, role, checks)
     for label, value, limit in (
         ("gates", definition.size, limits.max_addresses),
         ("slots", definition.slot_count, limits.max_addresses),
@@ -320,7 +338,55 @@ def _definition(
             f"{where} declares the gate at offset {repeated} as an output more than once; "
             "declared outputs must be distinct"
         )
+    _validate_checks(definition, where)
     return definition
+
+
+# -- check outputs -----------------------------------------------------------
+
+
+def _checks(value: list[object], where: str, output_count: int) -> tuple[Check, ...]:
+    """Parse ``[start, count, stride, value]`` checks over the declared output ordinals."""
+
+    checks: list[Check] = []
+    for index, item in enumerate(value):
+        here = f"{where}[{index}]"
+        items = _list(item, here)
+        if len(items) != 4:
+            raise CompileError(f"{here} must have 4 elements")
+        check = Check(
+            _int(items[0], f"{here} start"),
+            _int(items[1], f"{here} count", minimum=1),
+            _int(items[2], f"{here} stride"),
+            _int(items[3], f"{here} value"),
+        )
+        if check.last >= output_count:
+            raise CompileError(
+                f"{here} names output ordinal {check.last}; only {output_count} are declared"
+            )
+        checks.append(check)
+    repeated = _repeated_output(
+        tuple(Run(check.start, check.count, check.stride, 0) for check in checks)
+    )
+    if repeated is not None:
+        raise CompileError(f"{where} mark output ordinal {repeated} as a check more than once")
+    return tuple(checks)
+
+
+def _validate_checks(definition: Definition, where: str) -> None:
+    """Every check output is a computed gate of the copy and its value fits the gate."""
+
+    for index, check in enumerate(definition.checks):
+        here = f"{where} checks[{index}]"
+        for kind, run in definition.check_pieces(check):
+            if kind is not PieceKind.GATE:
+                raise CompileError(
+                    f"{here} marks a {kind.value} output; a check output must be a computed gate"
+                )
+            if check.value >= 1 << run.width:
+                raise CompileError(
+                    f"{here} requires the value {check.value} of a {run.width}-bit gate"
+                )
 
 
 # -- distinct declared outputs -----------------------------------------------
@@ -420,4 +486,9 @@ def parse_description(
         raise CompileError("root names a definition that is not defined")
     if root.input_count != 0:
         raise CompileError("the root has no ports; inputs are `in` gates")
+    for definition in available.values():
+        if definition.checks and definition is not root:
+            raise CompileError(
+                f"definition {definition.digest[:12]} declares checks; only the root may"
+            )
     return Description(description_digest(payload), tuple(available.values()), root)

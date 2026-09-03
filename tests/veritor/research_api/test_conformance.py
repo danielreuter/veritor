@@ -136,7 +136,11 @@ def test_the_header_binds_the_constructor_and_the_advice() -> None:
             **SEEDS,
         )
 
-    for other in (expecting(advice=b"b"), expecting(advice=b""), expecting(constructor=MatmulG(8).digest)):
+    for other in (
+        expecting(advice=b"b"),
+        expecting(advice=b"", advice_bits=0),
+        expecting(constructor=MatmulG(8).digest),
+    ):
         report = Verify(honest.transcript_bytes, other, compilation.compiled)
         assert report.code is VerificationCode.EXPECTATION_MISMATCH
         assert "header" in report.detail

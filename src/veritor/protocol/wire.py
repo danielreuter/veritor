@@ -51,6 +51,7 @@ def encode_transcript(transcript: Transcript) -> bytes:
     header = transcript.header
     header_document: dict[str, JSONValue] = {
         "advice": header.advice.hex(),
+        "advice_bits": header.advice_bits,
         "claimed_outputs": [item.hex() for item in header.claimed_outputs],
         "compiled_digest": header.compiled_digest,
         "constructor": header.constructor,
@@ -238,6 +239,7 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
         top["header"],
         {
             "advice",
+            "advice_bits",
             "claimed_outputs",
             "compiled_digest",
             "constructor",
@@ -285,6 +287,7 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
             _weights(header_fields["weights"], "header.weights"),
             backend,
             max_faults,
+            _int(header_fields["advice_bits"], "header.advice_bits"),
         )
         boundary_fields = _object(top["boundary"], {"commitment", "io_openings"}, "boundary")
         transcript = Transcript(

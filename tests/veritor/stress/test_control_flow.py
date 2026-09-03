@@ -48,6 +48,7 @@ from veritor.constructors import (
 )
 from veritor.constructors.moe import advice_bits as route_advice_bits
 from veritor.constructors.moe import decode_routes, encode_routes, reference_routes
+from veritor.constructors.schedule import gamma as gamma_code
 from veritor.constructors.speculative import (
     SpeculativeG,
     acceptance_bits,
@@ -160,7 +161,7 @@ class Measured:
 
     @property
     def advice_bits(self) -> int:
-        """``|a|`` as charged: ``8 * len(a)``."""
+        """``|a|`` as charged: the bits the constructor declares (``8 * len(a)`` if it declares none)."""
 
         return self.compilation.advice_bits
 
@@ -303,7 +304,13 @@ def test_c1_variable_length_generation() -> None:
     for value, (r, g) in zip(by_step.outputs, layout, strict=True):
         got[r][g] = value
     assert tuple(tuple(g) for g in got) == streamed
-    assert by_step.advice_bits == 8 * len(a) == 8 * (20 + 16 + 28 * len(joins))  # Schedule v3: 7 words per join
+    # Schedule v4 is bit-packed and charged exactly: here 1 pod, 2 slots, so a join is step, length-1
+    # (ceil(log2 steps) bits each), slot (1), resume (1), gamma(1 + request), gamma(1) = 1 bit for chunk 0.
+    assert by_step.advice_bits == schedule.bit_length() < 8 * len(a) + 8
+    step_bits = (steps - 1).bit_length()
+    assert by_step.advice_bits == sum(
+        2 * step_bits + 1 + 1 + len(gamma_code(1 + join.request)) + 1 for join in joins
+    ) + sum(len(gamma_code(v)) for v in (1, 2, steps, 1 + len(joins)))
 
     record(
         [
@@ -321,27 +328,32 @@ def test_c1_variable_length_generation() -> None:
                     f"{tokens} tokens streamed of {sum(r.max_new for r in requests)} asked; lengths {lengths} "
                     f"({eos_stops} EOS stops); "
                     f"U = {by_request.bound_bits:.0f} bits{' (interface-capped)' if by_request.capped else ''}; "
-                    f"{per_token(by_request.gates, tokens)} gates/token; the length would be output-determined "
-                    "advice (charged 0) if it had to be advice at all."
+                    f"{per_token(by_request.gates, tokens)} gates/token. The lengths are in x, so the circuit "
+                    "has no absent slots to blank (S7 is the case where the length is the server's and is "
+                    "advice); a presence mask would carry the same choice uncharged."
                 ),
             ),
             Row(
                 id="C1b",
                 what="variable-length generation, step RUs (ClusterG, 1 pod x 2 slots): the same requests",
-                mechanism="M4 charged advice: the schedule (Schedule.encode(): a header and 7 words per join)",
+                mechanism="M4 charged advice: the schedule (Schedule.encode() v4, bit-packed, exact bits)",
                 advice_bits=by_step.advice_bits,
                 capacity_bits=math.ceil(by_step.capacity),
                 overhead=by_step.overhead,
                 description_bytes=by_step.description_bytes,
                 gates=by_step.gates,
-                verdict="advice = the schedule; each request's length rides in its join (28 bytes)",
+                verdict=(
+                    f"advice = the schedule; each request's length rides in its join ({by_step.advice_bits} bits "
+                    f"for {len(joins)} joins, charged exactly; {8 * len(a)} bits on the wire)"
+                ),
                 notes=(
                     f"U = {by_step.bound_bits:.0f} bits{' (interface-capped)' if by_step.capped else ''} + "
-                    f"{by_step.advice_bits} advice bits for {len(joins)} joins over {steps} steps; "
+                    f"{by_step.advice_bits} advice bits for {len(joins)} joins over {steps} steps (a join is "
+                    f"step and length in {step_bits} bits each, slot and resume in 1, the request gamma-coded); "
                     f"{per_token(by_step.gates, tokens)} gates/token (same work, cut into steps); overhead "
                     f"{by_step.overhead:.2f} vs {by_request.overhead:.2f} with request RUs: the KV cache crosses "
-                    "every step boundary. The per-request lengths are output-determined; only the placement "
-                    "(pod, slot, step) is genuine advice."
+                    "every step boundary. Every output is a streamed token (a join's length is its request's "
+                    "output count), so there are no absent slots to blank; the lengths are charged in the joins."
                 ),
             ),
         ]
@@ -351,9 +363,9 @@ def test_c1_variable_length_generation() -> None:
 # -- C2: mixture-of-experts routing ------------------------------------------------------
 
 
-def moe_shape(experts: int, top_k: int, layers: int = 1) -> LMShape:
+def moe_shape(experts: int, top_k: int, layers: int = 1, vocab: int = 8) -> LMShape:
     return LMShape(
-        vocab=8, d_model=4, heads=1, layers=layers, context=32, width=WIDTH, experts=experts, top_k=top_k
+        vocab=vocab, d_model=4, heads=1, layers=layers, context=32, width=WIDTH, experts=experts, top_k=top_k
     )
 
 
@@ -418,11 +430,18 @@ def test_c2_moe_routing_padded_and_advised() -> None:
     assert advised.gates < padded.gates
     fed = sum(len(r.prompt) + r.max_new - 1 for r in MOE_REQUESTS)  # the last token is never fed back
     assert pair.exact_advice_bits == fed * pair.shape.route_bits == 10 * 2
-    assert advised.advice_bits == 8 * math.ceil(pair.exact_advice_bits / 8)
-    # the check word is one more output per request, 16 bits each, and it lifts every kind's reach
-    assert advised.out_bits == padded.out_bits + WIDTH * len(MOE_REQUESTS)
+    assert advised.advice_bits == pair.exact_advice_bits, "the routes are charged at their exact bit length"
+    assert len(advised.compilation.advice) == 3  # ...though they occupy three bytes
+    # the ok word is one more output per request but a check output: the verifier fixes it at 1,
+    # so it carries no bits and lifts no kind's reach
+    layout = RequestsG(pair.shape, ADVICE).output_layout(MOE_REQUESTS)
+    assert list(advised.compiled.check_values()) == [(i, 1) for i, (_r, g) in enumerate(layout) if g < 0]
+    assert advised.out_bits == padded.out_bits == WIDTH * tokens
     assert padded.capped and advised.capped, "at this scale Bound is the interface"
-    assert padded.bound_bits == padded.out_bits == WIDTH * tokens
+    assert padded.bound_bits == advised.bound_bits == WIDTH * tokens
+    # the step bodies are one definition per (context, positions) whatever the route: the advised
+    # description is now the smaller one (only the chosen experts' work is described)
+    assert advised.description_bytes < padded.description_bytes
     ratio = padded.gates / advised.gates
     record(
         [
@@ -444,7 +463,10 @@ def test_c2_moe_routing_padded_and_advised() -> None:
             Row(
                 id="C2b",
                 what="MoE routing, advised: the same shape and requests; the route is advice, only chosen experts run",
-                mechanism="M4 charged advice: ceil(log2 E) bits per chosen expert per position per layer; route_check VU folds into ok",
+                mechanism=(
+                    "M4 charged advice: ceil(log2 E) bits per chosen expert per position per layer, charged exactly; "
+                    "route_check VU folds into ok, a check output (0 bits)"
+                ),
                 advice_bits=advised.advice_bits,
                 capacity_bits=math.ceil(advised.capacity),
                 overhead=advised.overhead,
@@ -455,11 +477,13 @@ def test_c2_moe_routing_padded_and_advised() -> None:
                     "for k*log2(E) bits per position, spent on a stronger theta"
                 ),
                 notes=(
-                    f"exact route description {pair.exact_advice_bits} bits, charged {advised.advice_bits} (byte granularity); "
-                    f"ok word: +{WIDTH} output bits per request and reach inflation (U {advised.bound_bits:.0f} vs {padded.bound_bits:.0f}); "
-                    f"description {advised.description_bytes} vs {padded.description_bytes} bytes at {tokens} tokens: each "
-                    "distinct route pattern is its own definition, so the advised description grows with the routed "
-                    "positions (see C2c at 128 tokens)."
+                    f"route description {pair.exact_advice_bits} bits, charged exactly ({len(advised.compilation.advice)} "
+                    f"bytes on the wire, the padding checked zero); the ok word is a check output the verifier requires "
+                    f"to be 1, so U = {advised.bound_bits:.0f} bits, the interface, as padded; description "
+                    f"{advised.description_bytes} vs {padded.description_bytes} bytes at {tokens} tokens: the step bodies "
+                    "are one definition per (context, positions) whatever the route -- the route enters at the call site as "
+                    "the ranges passed for the router's columns and the chosen experts' weights -- so only the request "
+                    "bodies (their call sites) are per request (see C2c at 128 tokens)."
                 ),
             ),
         ]
@@ -507,16 +531,19 @@ def test_c2_crossover_in_experts_and_top_k() -> None:
     gate_set = make_isa_gate_set(WIDTH)
     tokens = sum(r.max_new for r in CROSSOVER_REQUESTS)
     for experts, top_k in ((2, 1), (4, 1), (8, 1), (8, 2), (16, 1)):
-        shape = moe_shape(experts, top_k)
+        # vocab 16 throughout: advised routing names experts by the constant table, so E <= vocab
+        shape = moe_shape(experts, top_k, vocab=16)
         parameters = random_parameters(shape, 3)
         padded_g, advised_g = RequestsG(shape, PADDED), RequestsG(shape, ADVICE)
         padded = Compile(padded_g, CROSSOVER_REQUESTS, b"", gate_set).compiled
         a = advised_g.advice(CROSSOVER_REQUESTS, parameters)
-        advised = Compile(advised_g, CROSSOVER_REQUESTS, a, gate_set, max_advice_bits=8 * len(a)).compiled
+        compilation = Compile(advised_g, CROSSOVER_REQUESTS, a, gate_set, max_advice_bits=8 * len(a))
+        advised, advice_bits = compilation.compiled, compilation.advice_bits
+        assert advice_bits == route_advice_bits(shape, CROSSOVER_REQUESTS) <= 8 * len(a)
         descriptions = (len(padded_g(CROSSOVER_REQUESTS, b"")[0]), len(advised_g(CROSSOVER_REQUESTS, a)[0]))
         grid_p = {policy: price(padded, 0, policy) for policy in GRID}
-        grid_a = {policy: price(advised, 8 * len(a), policy) for policy in GRID}
-        # (i) equal policy (hence equal relative overhead): padding wins by the advice and the ok words
+        grid_a = {policy: price(advised, advice_bits, policy) for policy in GRID}
+        # (i) equal policy (hence equal relative overhead): padding wins by the advice (the ok words are free)
         assert all(grid_p[p].capacity < grid_a[p].capacity for p in GRID)
         assert all(abs(grid_p[p].overhead - grid_a[p].overhead) < 0.02 for p in GRID), (
             "relative overhead is theta's"
@@ -534,7 +561,7 @@ def test_c2_crossover_in_experts_and_top_k() -> None:
         findings.append(
             f"E={experts},k={top_k}: gates padded/advised {padded.circuit.n / advised.circuit.n:.2f}x "
             f"({padded.circuit.n} vs {advised.circuit.n}), description {descriptions[0]} vs {descriptions[1]} bytes, "
-            f"|a| {8 * len(a)} b over {tokens} tokens; "
+            f"|a| {advice_bits} b over {tokens} tokens; "
             f"at theta=(1/2,1/8) capacity {grid_p[POLICY].capacity:.0f} vs {grid_a[POLICY].capacity:.0f} "
             f"(overhead {grid_p[POLICY].overhead:.3f} vs {grid_a[POLICY].overhead:.3f}); "
             f"at equal absolute cost {budget:.0f}: padding {best_padded:.0f} vs advice {best_advised:.0f} -> {winner}"
@@ -545,7 +572,7 @@ def test_c2_crossover_in_experts_and_top_k() -> None:
         [
             Row(
                 id="C2c",
-                what="MoE crossover sweep: (E, k) in {(2,1), (4,1), (8,1), (8,2), (16,1)}, 32 requests x 4 tokens, theta grid q in {1/2, 1}, s in {1/8..7/8}",
+                what="MoE crossover sweep: (E, k) in {(2,1), (4,1), (8,1), (8,2), (16,1)}, vocab 16, 32 requests x 4 tokens, theta grid q in {1/2, 1}, s in {1/8..7/8}",
                 mechanism="M5 vs M4 compared at equal theta (equal relative overhead) and at equal absolute prover cost",
                 advice_bits=0,
                 capacity_bits=0,
@@ -553,8 +580,8 @@ def test_c2_crossover_in_experts_and_top_k() -> None:
                 description_bytes=0,
                 gates=0,
                 verdict=(
-                    "at equal theta padding beats advice in U at every (E, k), by |a| plus the ok words; at equal absolute "
-                    f"prover cost advice wins from E={crossover[0]}, k={crossover[1]} on ("
+                    "at equal theta padding beats advice in U at every (E, k), by exactly |a| (the ok words are check "
+                    f"outputs, 0 bits); at equal absolute prover cost advice wins from E={crossover[0]}, k={crossover[1]} on ("
                     + ", ".join(f"E={e},k={k}:{w}" for (e, k), w in sorted(winners.items()))
                     + ")"
                 ),
@@ -631,9 +658,13 @@ def test_c3_speculative_decoding_padded_and_advised() -> None:
     for pair in (poor, perfect):
         assert pair.padded.gates > pair.advised.gates
         assert pair.padded.out_bits == WIDTH * sum(1 + (r.max_new - 1) * 3 for r in SPEC_REQUESTS)
-        assert pair.advised.out_bits == WIDTH * (tokens + len(SPEC_REQUESTS))
+        # the ok words are check outputs: one more output per request, 0 bits
+        assert pair.advised.out_bits == WIDTH * tokens
+        assert len(list(pair.advised.compiled.check_values())) == len(SPEC_REQUESTS)
+        assert pair.advised.advice_bits == sum(len(s) for s in pair.acceptances) * acceptance_bits(2)
     wide = spec_pair(4, SPEC_REQUESTS)
     exact_bits = {p.gamma: sum(len(s) for s in p.acceptances) * acceptance_bits(p.gamma) for p in (poor, wide)}
+    assert wide.advised.advice_bits == exact_bits[4]
     record(
         [
             Row(
@@ -655,7 +686,10 @@ def test_c3_speculative_decoding_padded_and_advised() -> None:
             Row(
                 id="C3b",
                 what="speculative decoding, advised: the same models and requests; m per step is advice",
-                mechanism="M4 charged advice: ceil(log2(gamma+2)) bits per step; acceptance_check VU folds 'exactly m agree' into ok",
+                mechanism=(
+                    "M4 charged advice: ceil(log2(gamma+2)) bits per step, charged exactly; acceptance_check VU folds "
+                    "'exactly m agree' into ok, a check output (0 bits)"
+                ),
                 advice_bits=poor.advised.advice_bits,
                 capacity_bits=math.ceil(poor.advised.capacity),
                 overhead=poor.advised.overhead,
@@ -663,10 +697,12 @@ def test_c3_speculative_decoding_padded_and_advised() -> None:
                 gates=poor.advised.gates,
                 verdict="the honest server's pick: the target does exactly plain decoding's positions plus the draft's",
                 notes=(
-                    f"acceptances {poor.acceptances} ({exact_bits[2]} exact bits, charged {poor.advised.advice_bits}); "
+                    f"acceptances {poor.acceptances}: {poor.advised.advice_bits} bits, charged exactly "
+                    f"({len(poor.advised.compilation.advice)} bytes on the wire); "
                     f"perfect draft (= target): acceptances {perfect.acceptances}, {perfect.advised.advice_bits} advice bits, {perfect.advised.gates} gates; "
-                    f"gamma=4 random draft: {wide.advised.advice_bits} advice bits ({exact_bits[4]} exact), {wide.advised.gates} gates; "
-                    f"ok word +{WIDTH} bits per request. The token count is output-determined; each m is not."
+                    f"gamma=4 random draft: {wide.advised.advice_bits} advice bits, {wide.advised.gates} gates; "
+                    f"the ok word is a check output the verifier requires to be 1: 0 bits, U = {poor.advised.bound_bits:.0f} = "
+                    f"the {tokens} tokens' interface. The token count is output-determined; each m is not."
                 ),
             ),
         ]
@@ -708,7 +744,10 @@ def test_protocol_moe_honest_and_dishonest() -> None:
         v for v, (_r, g) in zip(lied.outputs, advised_g.output_layout(MOE_REQUESTS), strict=True) if g < 0
     )
     assert checks == (0, 1), "the lied-about request's ok word must be 0"
-    # ...and a server that also claims ok = 1 breaks route_check's relation, which FULL catches
+    # ok is a check output: a run that reports it as computed is rejected before anything is opened...
+    report = protocol(lied, weights, POLICY)
+    assert not report.accepted and report.code is VerificationCode.CHECK_MISMATCH
+    # ...and a server that claims ok = 1 instead breaks route_check's relation, which FULL catches
     ok_address = check_address(lied, advised_g.output_layout(MOE_REQUESTS), 0)
     forced = adversary.evaluate_with_overrides(lied.compiled, lied.inputs, weights, {ok_address: 1})
     outputs = tuple(forced[address] for address in lied.compiled.circuit.outputs)
@@ -739,6 +778,8 @@ def test_protocol_speculative_honest_and_dishonest() -> None:
     a = encode_acceptances(2, lying)
     lied = measure(advised_g, SPEC_REQUESTS, a, weights)
     assert advised_g.checks(lied.outputs, SPEC_REQUESTS)[0] == 0
+    report = protocol(lied, weights, POLICY)  # reported as computed: the check output is not 1
+    assert not report.accepted and report.code is VerificationCode.CHECK_MISMATCH
     ok_address = check_address(lied, advised_g.output_layout(SPEC_REQUESTS), 0)
     forced = adversary.evaluate_with_overrides(lied.compiled, lied.inputs, weights, {ok_address: 1})
     outputs = tuple(forced[address] for address in lied.compiled.circuit.outputs)

@@ -64,7 +64,7 @@ from veritor.core import Digest, JSONValue, make_isa_gate_set
 from veritor.core.description import REPLAY
 from veritor.core.gates import union_gate_set
 
-from .lm import LMShape, ToyLM, wires
+from .lm import LMShape, ToyLM
 from .schedule import Join, Occupant, Request, Schedule, ScheduleError
 from .tracer import TracedDefinition, Tracer, TracerError, Wire, Wires
 
@@ -129,10 +129,11 @@ class ClusterG:
     fleet); ``G(x, a)`` returns the description bytes and the public inputs
     -- the prompt tokens and, for a sampling shape, the random words -- as
     the ``in`` gates consume them.  ``gate_set`` is the Σ its descriptions
-    are written over.
+    are written over.  :meth:`advice_bits` declares the schedule's bit
+    length (:meth:`Schedule.bit_length`), which the compiler charges exactly.
     """
 
-    VERSION = "3"
+    VERSION = "4"
 
     def __init__(
         self,
@@ -223,6 +224,15 @@ class ClusterG:
         except ScheduleError as error:
             raise TracerError(f"malformed advice: {error}") from error
 
+    def advice_bits(self, x: object, a: bytes) -> int:
+        """The schedule's bit length: what the compiler charges for ``a``.
+
+        ``a`` is the schedule's bits zero-padded to whole bytes
+        (:meth:`Schedule.encode`); a malformed ``a`` is a :class:`TracerError`.
+        """
+
+        return self._decode_advice(a).bit_length()
+
     # -- layouts ---------------------------------------------------------------------
 
     def output_layout(self, x: object, schedule: Schedule) -> tuple[tuple[int, int], ...]:
@@ -311,7 +321,7 @@ class ClusterG:
 
         @self.lm.tracer.definition(input_count=0)
         def root(_v: Wires) -> object:
-            w = wires(self.lm.weights_unit()())
+            w = self.lm.weights_unit()()
             slots: dict[tuple[int, int], _Slot] = {}
             parked: dict[int, _Slot] = {}  # request -> the cache its latest attempt left
             tokens: dict[tuple[int, int], Wire] = {}
@@ -337,7 +347,7 @@ class ClusterG:
                         args.extend(slot.keys[layer])
                         args.extend(slot.values[layer])
                 arch = None if self.arches is None else self.arches[pod]
-                outputs = wires(self.step(tuple(shapes), arch)(*args))
+                outputs = self.step(tuple(shapes), arch)(*args)
                 cursor = 0
                 for occupant, occupant_shape in zip(occupants, shapes, strict=True):
                     kind, positions, _ = occupant_shape

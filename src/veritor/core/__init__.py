@@ -1,5 +1,6 @@
 """The objects of the paper: gate sets, circuits, the index, ``Compiled``, policies."""
 
+from .advice import advice_byte_length, validate_advice_bits
 from .circuit import (
     Circuit,
     CostKind,
@@ -99,6 +100,7 @@ __all__ = [
     "Units",
     "VerificationLimits",
     "VerificationPolicy",
+    "advice_byte_length",
     "as_kind_table",
     "canonical_json",
     "canonical_json_bytes",
@@ -120,6 +122,7 @@ __all__ = [
     "rational_manifest",
     "rational_pair",
     "tagged_sha256",
+    "validate_advice_bits",
     "validate_digest",
     "validate_marks",
     "value_byte_length",

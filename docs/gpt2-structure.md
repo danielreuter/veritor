@@ -38,12 +38,14 @@ Closed forms. `gate_budget(shape, prompt, max_new)` gives the computed gates of 
 
 ## Compile at scale
 
+Description bytes are as of format 3 (count-one ranges carry stride 0, which took 64 bytes off GPT-2 Small); the timings are from the format-2 measurement.
+
 | run | requests | description bytes | trace | compile | kind table | n (gates) | weights | kinds | RUs | VUs |
 |---|---|---|---|---|---|---|---|---|---|---|
-| tiny (2L, d 32, 2 heads, d_ff 64, vocab 11, ctx 8) | (3+3), (2+2) | 45,107 | 5 ms | 8 ms | 2 ms | 48,748 | 17,774 | 59 | 3 | 27,675 |
-| reduced (4L, d 128, 4 heads, d_ff 512, vocab 1024, ctx 128) | 2 x (16+16) | 211,424 | 19 ms | 25 ms | 9 ms | 6,498,675 | 941,827 | 160 | 3 | 1,772,067 |
-| GPT-2 Small | 3 x (32+32) | 1,090,248 | 113 ms | 144 ms | 60 ms | 1,924,349,881 | 124,490,068 | 291 | 4 | 177,855,025 |
-| GPT-2 Small | 1000 x (32+32) | 1,090,254 | 420 ms | 173 ms | 54 ms | 600,077,761,068 | 124,490,068 | 291 | 1001 | 17,912,809,068 |
+| tiny (2L, d 32, 2 heads, d_ff 64, vocab 11, ctx 8) | (3+3), (2+2) | 45,103 | 5 ms | 8 ms | 2 ms | 48,748 | 17,774 | 59 | 3 | 27,675 |
+| reduced (4L, d 128, 4 heads, d_ff 512, vocab 1024, ctx 128) | 2 x (16+16) | 211,392 | 19 ms | 25 ms | 9 ms | 6,498,675 | 941,827 | 160 | 3 | 1,772,067 |
+| GPT-2 Small | 3 x (32+32) | 1,090,184 | 113 ms | 144 ms | 60 ms | 1,924,349,881 | 124,490,068 | 291 | 4 | 177,855,025 |
+| GPT-2 Small | 1000 x (32+32) | 1,090,190 | 420 ms | 173 ms | 54 ms | 600,077,761,068 | 124,490,068 | 291 | 1001 | 17,912,809,068 |
 | GPT-2 Small (the GPU run) | 1 x (27+8) | | | 131 ms | | 423,850,313 | 124,490,068 | | 2 | 133,318,577 |
 
 "Trace" is `GPT2G.__call__` (Python tracing plus canonical JSON), "compile" is `Compiler.compile` (parse, validate, `Index`), "kind table" is `Compiled.kind_table()`; wall time on one core (Apple M-series), `CompilationLimits()` defaults. Nothing dominates: the compile is `O(|description|)` and the description is 291 definitions at GPT-2 Small, whatever the number of gates. Against the structural version, `tc_dot16` cuts the gate count 28x (54.6 G -> 1.92 G for the three-request run: a 768-long dot product is 48 steps instead of 1,537 gates) while the VU count is unchanged up to the finer LayerNorm cells (177.9 M). Per request at GPT-2 Small, 63 processed positions and 32 predictions: 599,953,239 computed gates, of which embedding 155,285,487 (25.9%: the one-hot, 2.46 M per position, of which 50,257 equalities and 2,412,336 tensor-core steps), attention 120,734,496 (20.1%, softmax included), MLP 230,501,376 (38.4%), LayerNorm 11,859,464 (2.0%), residual 1,161,216 (0.2%), LM head 77,194,752 (12.9%), argmax 3,216,384 (0.5%), constants 64.

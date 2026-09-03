@@ -41,12 +41,17 @@ Mixture of experts.  For a shape with ``experts > 0`` the ``routing`` picks
 how the data-dependent route enters the circuit.  ``"padded"`` (the
 default) keeps ``a`` empty: every position runs every expert and the route
 is computed and applied in-circuit.  ``"advice"`` takes the routes as ``a``
-(:mod:`veritor.constructors.moe`), runs only the chosen experts, and makes
-each request output one more word first: ``ok``, the product of every
-position's ``route_check``, which the verifier requires to be ``1``.  A
-request's kind then depends on its routes, so the description grows with
-the advice, and the requests of a group are separate calls (in the group's
-order still, which depends on ``x`` alone).
+(:mod:`veritor.constructors.moe`; :meth:`RequestsG.advice_bits` declares
+their exact description length, which is what the protocol charges), runs
+only the chosen experts, and makes each request output one more word
+first: ``ok``, the product of every position's ``route_check``.  ``ok`` is
+a *check output* (the root's ``checks``): the verifier requires it to be
+``1`` and it carries no capacity.  A request's kind then depends on its
+routes: the step bodies are the same definitions whatever the route (the
+route enters at the call sites, see :meth:`~veritor.constructors.lm.ToyLM.moe_block`),
+but the request body that calls them is its own, and the requests of a
+group are separate calls (in the group's order still, which depends on
+``x`` alone).
 """
 
 from __future__ import annotations
@@ -57,8 +62,9 @@ from veritor.compile import constructor_digest
 from veritor.core import Digest, JSONValue
 from veritor.core.description import REPLAY
 
-from .lm import ADVICE, PADDED, LMShape, Parameters, Routes, ToyLM, wires
+from .lm import ADVICE, PADDED, LMShape, Parameters, ToyLM
 from .moe import RequestRoutes, decode_routes, encode_routes, reference_routes
+from .moe import advice_bits as route_advice_bits
 from .schedule import Request
 from .tracer import TracedDefinition, TracerError, Wire, Wires
 
@@ -138,7 +144,8 @@ class RequestsG:
         """``(request, generated position)`` of every circuit output, in output order.
 
         With advised routes a request's first output is its ``ok`` word, laid
-        out at position ``-1``.
+        out at position ``-1``: a check output, so the outputs a client claims
+        carry ``1`` there.
         """
 
         requests = self.requests(x)
@@ -165,17 +172,38 @@ class RequestsG:
             return b""
         return encode_routes(self.shape, reference_routes(self.shape, parameters, requests))
 
+    def advice_bits(self, x: object, a: bytes | None = None) -> int:
+        """The bits the advice carries: the routes' description length (``0`` unless advised).
+
+        The compiler charges exactly this; ``a`` must be these bits zero-padded
+        to whole bytes (:func:`~veritor.constructors.moe.encode_routes`).
+        """
+
+        requests = self.requests(x)
+        return route_advice_bits(self.shape, requests) if self.advised else 0
+
     # -- kinds -----------------------------------------------------------------------
 
     def request(
-        self, prompt: int, max_new: int, banned: int = 0, routes: RequestRoutes | None = None
+        self,
+        prompt: int,
+        max_new: int,
+        banned: int = 0,
+        routes: RequestRoutes | None = None,
+        *,
+        blanks: int = 0,
     ) -> TracedDefinition:
         """One request: its prefill, then a decode step per further token, over its own cache.
 
         Ports: the weights.  Outputs: the ``max_new`` generated tokens; with
         ``routes`` (the request's routes, step by step) the ``ok`` word comes
         first.  With ``banned > 0`` the request's allowed flags are computed
-        first and every step decides with the masked head.
+        first and every step decides with the masked head.  With ``blanks >
+        0`` the tokens are followed by ``blanks`` *blank slots*, ``add`` cells
+        over the constant table equal to ``vocab`` (never a token): the
+        outputs a request that stopped early does not have, for a caller
+        that lays every request out to a fixed width and marks the blanks as
+        check outputs (:class:`~veritor.constructors.truncation.TruncatedRequestsG`).
         """
 
         shape, layers, d = self.shape, self.shape.layers, self.shape.d_model
@@ -183,12 +211,18 @@ class RequestsG:
             raise TracerError("advised routing needs the request's routes; padded routing takes none")
         if routes is not None and len(routes) != max_new:
             raise TracerError(f"a request of {max_new} tokens has {max_new} steps of routes")
+        if type(blanks) is not int or blanks < 0:
+            raise TracerError("blank slots must be a nonnegative integer")
+        if blanks and shape.vocab >= 1 << shape.width:
+            raise TracerError("blank slots need vocab < 2**width: the blank is the word vocab")
         key: tuple[Hashable, ...] = ("request", prompt, max_new)
         if banned:
             key = (*key, banned)
         if routes is not None:
             key = (*key, routes)
-        masked = bool(banned)
+        if blanks:
+            key = (*key, "blanks", blanks)
+        masked, advised = bool(banned), routes is not None
 
         @self.lm.tracer.definition(input_count=shape.weight_count, key=key, role=REPLAY)
         def request(w: Wires) -> object:
@@ -208,16 +242,20 @@ class RequestsG:
                 ok = block[-1]
                 return block[-2]
 
-            def step_routes(step: int) -> Routes | None:
-                return None if routes is None else routes[step]
+            def route_args(step: int) -> list[Wire | Wires]:
+                """The advised step's ``ok`` and the ports that carry its routes; nothing when padded."""
+
+                if routes is None:
+                    return []
+                assert ok is not None
+                return [ok, *self.lm.route_ports(ports, routes[step])]
 
             mask: tuple[Wires, ...] = ()
             if banned:
                 ids = self.lm.tracer.inputs(banned)
-                mask = (wires(self.lm.allowed(banned)(ports.constants, ids, ports.constants[1])),)
-            check: list[Wire] = [ok] if ok is not None else []
-            prefill = self.lm.prefill(prompt, step_routes(0), masked=masked)
-            token = remember(wires(prefill(w, *mask, *check)), prompt)
+                mask = (self.lm.allowed(banned)(ports.constants, ids, ports.constants[1]),)
+            prefill = self.lm.prefill(prompt, advised=advised, masked=masked)
+            token = remember(prefill(w, *mask, *route_args(0)), prompt)
             tokens = [token]
             for step in range(1, max_new):
                 args: list[Wire | Wires] = [w, token]
@@ -225,12 +263,15 @@ class RequestsG:
                     args.extend(keys[layer])
                     args.extend(values[layer])
                 args.extend(mask)
-                if ok is not None:
-                    args.append(ok)
-                decode = self.lm.decode(prompt + step, step_routes(step), masked=masked)
-                token = remember(wires(decode(*args)), 1)
+                args.extend(route_args(step))
+                decode = self.lm.decode(prompt + step, advised=advised, masked=masked)
+                token = remember(decode(*args), 1)
                 tokens.append(token)
-            return [ok, *tokens] if ok is not None else tokens
+            outputs: list[Wire | Wires] = [ok, *tokens] if ok is not None else [*tokens]
+            if blanks:  # (vocab - 1) + 1: one add cell per slot, so each slot is its own output gate
+                one, top = ports.constants[1], ports.constants[shape.vocab - 1]
+                outputs.append(self.lm.tracer.repeat(blanks, self.lm.add_cell, top, one))
+            return outputs
 
         return request
 
@@ -240,11 +281,14 @@ class RequestsG:
 
         @self.lm.tracer.definition(input_count=0)
         def root(_v: Wires) -> object:
-            w = wires(self.lm.weights_unit()())
+            w = self.lm.weights_unit()()
             outputs: list[Wire | Wires] = []
             for kind, members in self.groups(requests):
                 if routes is not None:  # a kind per request: its routes are its own
-                    outputs.extend(self.request(*kind, routes[index])(w) for index in members)
+                    for index in members:
+                        request = self.request(*kind, routes[index])(w)
+                        self.lm.tracer.check(request[0], 1)  # ok: the verifier requires 1
+                        outputs.append(request)
                 elif len(members) == 1:
                     outputs.append(self.request(*kind)(w))
                 else:

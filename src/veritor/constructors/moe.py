@@ -4,7 +4,9 @@ With :attr:`~veritor.constructors.lm.LMShape.experts` ``= E`` every position
 of every layer is routed to ``top_k`` experts (:func:`~veritor.constructors.lm.top_k_route`).
 :class:`~veritor.constructors.requests.RequestsG` with ``routing="advice"``
 takes those routes from the client as ``a`` and builds a circuit that runs
-only the chosen experts; the compiler charges ``8 * len(a)`` bits for it.
+only the chosen experts; the compiler charges exactly :func:`advice_bits`
+bits for it (the constructor declares them; the byte padding is checked to
+be zero, so it is not a channel).
 
 The codec is the description length and nothing more: request by request,
 position by position (the prompt, then every generated position that is fed

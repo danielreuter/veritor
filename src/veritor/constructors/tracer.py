@@ -10,7 +10,17 @@ Values are ranges.  A definition's ports are a :class:`Wires` vector; slicing
 it (with a step) yields another range, indexing yields a :class:`Wire`, and
 ``by(j)`` marks a range that shifts by ``j`` per copy of a
 :meth:`Tracer.repeat`.  A call passing a whole vector or a strided column is
-therefore one range in the description regardless of its length.
+therefore one range in the description regardless of its length.  A range of
+one value *is* a :class:`Wire`: ``Wires(...)`` with ``count == 1`` constructs
+a ``Wire`` (stride ``0``), so a gate, a one-output call, a one-element slice
+and a one-gate ``repeat`` all yield the same kind of object and constructors
+never special-case the count.
+
+Check outputs.  Inside the root's trace, :meth:`Tracer.check` marks wires
+that the definition will return as outputs the verifier requires to equal a
+constant (``ok`` words, blank slots after an advised stop).  The marks are
+resolved against the returned outputs when the definition is traced and
+emitted as the body's ``checks``; only a root may carry them.
 
 The circuit's inputs and weights are source gates: :meth:`Tracer.inputs` and
 :meth:`Tracer.weights` emit ``n`` of them inside the current body as one
@@ -42,22 +52,13 @@ class TracerError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class Wire:
-    """One symbolic value of the trace being recorded."""
-
-    trace: object
-    space: str
-    index: int
-
-    def by(self, jstride: int) -> Wires:
-        """This value shifted by ``jstride`` per copy of a ``repeat``."""
-
-        return Wires(self.trace, self.space, self.index, 1, 0, jstride)
-
-
-@dataclass(frozen=True, slots=True)
 class Wires:
-    """``count`` symbolic values at ``start + k * stride`` (``+ j * jstride`` per copy)."""
+    """``count`` symbolic values at ``start + k * stride`` (``+ j * jstride`` per copy).
+
+    A range of one value is a :class:`Wire`: constructing ``Wires`` with
+    ``count == 1`` yields a ``Wire`` with stride ``0``, whatever stride was
+    given, so equal ranges are equal objects.
+    """
 
     trace: object
     space: str
@@ -66,12 +67,24 @@ class Wires:
     stride: int
     jstride: int = 0
 
+    def __new__(  # type: ignore[no-untyped-def]
+        cls, trace: object, space: str, start: int, count: int = 1, stride: int = 0, jstride: int = 0
+    ):
+        made = Wire if cls is Wires and count == 1 else cls
+        return object.__new__(made)
+
+    def __post_init__(self) -> None:
+        if type(self.count) is not int or self.count < 0:
+            raise TracerError("a wire range has a nonnegative count")
+        if self.count == 1 and self.stride:
+            object.__setattr__(self, "stride", 0)
+
     def __len__(self) -> int:
         return self.count
 
     def __iter__(self) -> Iterator[Wire]:
         for k in range(self.count):
-            yield Wire(self.trace, self.space, self.start + k * self.stride)
+            yield Wire(self.trace, self.space, self.start + k * self.stride, jstride=self.jstride)
 
     @overload
     def __getitem__(self, item: int) -> Wire: ...
@@ -79,7 +92,7 @@ class Wires:
     @overload
     def __getitem__(self, item: slice) -> Wires: ...
 
-    def __getitem__(self, item: int | slice) -> Wire | Wires:
+    def __getitem__(self, item: int | slice) -> Wires:
         if isinstance(item, slice):
             start, stop, step = item.indices(self.count)
             if step <= 0:
@@ -101,7 +114,7 @@ class Wires:
             item += self.count
         if not 0 <= item < self.count:
             raise IndexError(item)
-        return Wire(self.trace, self.space, self.start + item * self.stride)
+        return Wire(self.trace, self.space, self.start + item * self.stride, jstride=self.jstride)
 
     def by(self, jstride: int) -> Wires:
         """This range shifted by ``jstride`` per copy of a ``repeat``."""
@@ -109,7 +122,45 @@ class Wires:
         return replace(self, jstride=jstride)
 
 
-type Argument = Wire | Wires
+@dataclass(frozen=True, slots=True, init=False)
+class Wire(Wires):
+    """One symbolic value of the trace being recorded: a :class:`Wires` of count one.
+
+    ``Wire(trace, space, index)`` names the value at ``index``; ``count`` and
+    ``stride`` are accepted (as ``1`` and ``0``) so that ``Wires(...)`` of
+    count one and :func:`dataclasses.replace` construct a ``Wire`` too.
+    """
+
+    def __init__(
+        self,
+        trace: object,
+        space: str,
+        start: int,
+        count: int = 1,
+        stride: int = 0,
+        jstride: int = 0,
+    ) -> None:
+        if count != 1:
+            raise TracerError("a Wire is one value")
+        set_ = object.__setattr__
+        set_(self, "trace", trace)
+        set_(self, "space", space)
+        set_(self, "start", start)
+        set_(self, "count", 1)
+        set_(self, "stride", 0)
+        set_(self, "jstride", jstride)
+
+    @property
+    def index(self) -> int:
+        return self.start
+
+    def by(self, jstride: int) -> Wire:
+        """This value shifted by ``jstride`` per copy of a ``repeat``."""
+
+        return Wire(self.trace, self.space, self.start, jstride=jstride)
+
+
+type Argument = Wires
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,7 +173,7 @@ class TracedDefinition:
     output_count: int
     role: str | None
 
-    def __call__(self, *args: Argument) -> Wire | Wires:
+    def __call__(self, *args: Argument) -> Wires:
         return self.tracer._active().emit_call(self, args)
 
 
@@ -168,12 +219,9 @@ def _ranges(trace: _Trace, args: Sequence[Argument], *, copies: bool) -> list[_R
 
     runs: list[_Run] = []
     for arg in args:
-        if isinstance(arg, Wire):
-            run = _Run(arg.space, arg.index, 1, 0, 0)
-        elif isinstance(arg, Wires):
-            run = _Run(arg.space, arg.start, arg.count, arg.stride, arg.jstride)
-        else:
+        if not isinstance(arg, Wires):
             raise TracerError("arguments must be wires")
+        run = _Run(arg.space, arg.start, arg.count, arg.stride, arg.jstride)
         if arg.trace is not trace.identity:
             raise TracerError("all arguments must be wires of the current trace")
         if run.jstride and not copies:
@@ -190,6 +238,41 @@ def _encode(runs: list[_Run], expected: int, what: str, *, copies: bool) -> list
     return [run.encode(copies) for run in runs]
 
 
+def _ordinal(outputs: list[_Run], space: str, index: int) -> int:
+    """The declared-output ordinal of the coordinate ``(space, index)`` among ``outputs``."""
+
+    base = 0
+    for run in outputs:
+        if run.space == space:
+            offset = index - run.start
+            if run.count == 1 or run.stride == 0:
+                if offset == 0:
+                    return base
+            elif offset >= 0 and offset % run.stride == 0 and offset // run.stride < run.count:
+                return base + offset // run.stride
+        base += run.count
+    raise TracerError("a checked wire must be one of the definition's declared outputs")
+
+
+def _encode_checks(outputs: list[_Run], checks: list[tuple[Wires, int]]) -> list[object]:
+    """``[start, count, stride, value]`` over output ordinals for the checked wires, runs merged."""
+
+    encoded: list[list[object]] = []
+    for wires, value in checks:
+        ordinals = [_ordinal(outputs, wires.space, wires.start + k * wires.stride) for k in range(wires.count)]
+        held: _Run | None = None
+        for ordinal in ordinals:
+            single = _Run("", ordinal, 1, 0, 0)
+            if held is not None and held.extend(single):
+                continue
+            if held is not None:
+                encoded.append([held.start, held.count, held.stride, value])
+            held = single
+        if held is not None:
+            encoded.append([held.start, held.count, held.stride, value])
+    return list(encoded)
+
+
 class _Trace:
     """The steps of one definition while its function runs."""
 
@@ -199,12 +282,11 @@ class _Trace:
         self.inputs = Wires(self.identity, INPUT, 0, input_count, 1)
         self.steps: list[dict[str, object]] = []
         self.slots = 0
+        self.checks: list[tuple[Wires, int]] = []
 
-    def _outputs(self, count: int) -> Wire | Wires:
+    def _outputs(self, count: int) -> Wires:
         start = self.slots
         self.slots += count
-        if count == 1:
-            return Wire(self.identity, LOCAL, start)
         return Wires(self.identity, LOCAL, start, count, 1)
 
     def emit_gate(self, gate: Gate, args: Sequence[Argument]) -> Wire:
@@ -214,9 +296,7 @@ class _Trace:
         assert isinstance(result, Wire)
         return result
 
-    def emit_call(
-        self, definition: TracedDefinition, args: Sequence[Argument]
-    ) -> Wire | Wires:
+    def emit_call(self, definition: TracedDefinition, args: Sequence[Argument]) -> Wires:
         if definition.tracer is not self.tracer:
             raise TracerError("the definition belongs to another tracer")
         ranges = _encode(
@@ -244,9 +324,7 @@ class _Trace:
         self.steps.append(
             {"kind": "repeat", "count": count, "digest": definition.digest, "args": ranges}
         )
-        start = self.slots
-        self.slots += count * definition.output_count
-        return Wires(self.identity, LOCAL, start, count * definition.output_count, 1)
+        return self._outputs(count * definition.output_count)
 
 
 _ACTIVE: contextvars.ContextVar[_Trace | None] = contextvars.ContextVar(
@@ -310,7 +388,7 @@ class Tracer:
                 result = fn(trace.inputs)
             finally:
                 _ACTIVE.reset(token)
-            if isinstance(result, (Wire, Wires)):
+            if isinstance(result, Wires):
                 returned: Sequence[Argument] = (result,)
             elif isinstance(result, Sequence) and result and not isinstance(result, str):
                 returned = tuple(result)
@@ -324,6 +402,8 @@ class Tracer:
                 "steps": trace.steps,
                 "outputs": [run.encode(False) for run in runs],
             }
+            if trace.checks:
+                body["checks"] = _encode_checks(runs, trace.checks)
             digest = definition_digest(body)  # type: ignore[arg-type]
             self._bodies.setdefault(digest, body)
             definition = TracedDefinition(self, digest, input_count, output_count, role)
@@ -337,6 +417,26 @@ class Tracer:
         """``count`` copies of ``definition``; ``by(j)`` arguments shift per copy."""
 
         return self._active().emit_repeat(count, definition, args)
+
+    def check(self, wires: Wires, value: int) -> Wires:
+        """Mark ``wires`` as check outputs: the verifier requires each to equal ``value``.
+
+        The wires must be among the outputs the definition being traced
+        returns (resolved when the trace ends), and only a root may declare
+        checks; the compiler validates both and that ``value`` fits the
+        gates.  Returns ``wires`` so a mark can wrap an output expression.
+        """
+
+        trace = self._active()
+        if not isinstance(wires, Wires) or wires.trace is not trace.identity:
+            raise TracerError("checks mark wires of the current trace")
+        if wires.jstride:
+            raise TracerError("a checked range does not shift per copy")
+        if type(value) is not int or value < 0:
+            raise TracerError("a check value is a nonnegative integer")
+        if wires.count:
+            trace.checks.append((wires, value))
+        return wires
 
     def source_cell(self, source: str) -> TracedDefinition:
         """The canonical verification unit holding one ``source`` gate (``"input"``/``"weight"``)."""
@@ -359,9 +459,7 @@ class Tracer:
         cell = self.source_cell(source)
         trace = self._active()
         if count == 1:
-            wire = trace.emit_call(cell, ())
-            assert isinstance(wire, Wire)
-            return Wires(trace.identity, LOCAL, wire.index, 1, 0)
+            return trace.emit_call(cell, ())
         return trace.emit_repeat(count, cell, ())
 
     def inputs(self, count: int) -> Wires:

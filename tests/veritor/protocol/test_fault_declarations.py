@@ -52,11 +52,13 @@ OTHER_UNIT = 12
 SOURCE_UNIT = 0
 """An ``in`` gate's VU: nothing to declare."""
 
-BASELINE_TRANSCRIPT_SHA256 = "7eb5a9da19f296b56e9a077c73653dc5cd77eda0daf4dbb471ed639b0ab08997"
-"""SHA-256 of the fixture's honest transcript as the code before M6 encoded it.
+BASELINE_TRANSCRIPT_SHA256 = "724bcd775fbe67a25078785ab8a1294a419d99d24f1a57d8883c6b66b0057a02"
+"""SHA-256 of the fixture's honest transcript under protocol v8 (VU-output interior,
+header ``advice_bits``).
 
-Re-pinned when the interior moved to VU-output granularity (protocol v7: evidence
-opens a unit's inputs and outputs only, interior domain tag v2)."""
+The fault-declaration keys (M6) are absent from a run without faults, so the
+encoding of such a run is pinned here and changes only with the wire format.
+"""
 
 
 def faults(max_faults: int = 0) -> VerifierParameters:
@@ -165,7 +167,7 @@ def test_wire_round_trips_declarations_and_rejects_noncanonical_defaults(
 
 
 def test_transcripts_without_faults_are_byte_identical_to_before(compiled, honest_values, expect) -> None:
-    """The fixture's honest transcript under fixed seeds, as the pre-M6 code encoded it."""
+    """The fixture's honest transcript under fixed seeds carries no fault keys and is pinned."""
 
     run = run_protocol(compiled, expect(), honest_values)
     assert run.transcript is not None
@@ -315,21 +317,30 @@ def test_invalid_declarations_are_rejected(compiled, honest_values, expect, decl
 def test_a_declaration_outside_the_opened_rus_is_rejected(compiled, honest_values, expect) -> None:
     """Some RUs are opened; a VU of an unopened one is not the prover's to declare."""
 
-    verifier = VerifierSession(
-        expect(VerificationPolicy(Fraction(1, 2), 1), parameters=faults(4)), compiled
-    )
-    prover = ProverSession(
-        compiled, verifier.header, honest_values, weight_tree=_weight_tree(compiled, honest_values)
-    )
-    replay_challenge = verifier.receive_boundary(prover.boundary())
-    opened = set(replay_challenge.selected)
     index = compiled.index
     compute = [
         unit
         for unit in range(index.replay_units.count)
         if not compiled.circuit[index.replay_units.unit(unit).interval.start].is_source
     ]
-    assert opened & set(compute) and set(compute) - opened, "the seeds open some compute RUs, not all"
+    for attempt in range(64):  # the first q seed that opens some compute RUs, not all
+        verifier = VerifierSession(
+            expect(
+                VerificationPolicy(Fraction(1, 2), 1),
+                parameters=faults(4),
+                q_seed=bytes([attempt]) * 32,
+            ),
+            compiled,
+        )
+        prover = ProverSession(
+            compiled, verifier.header, honest_values, weight_tree=_weight_tree(compiled, honest_values)
+        )
+        replay_challenge = verifier.receive_boundary(prover.boundary())
+        opened = set(replay_challenge.selected)
+        if opened & set(compute) and set(compute) - opened:
+            break
+    else:
+        pytest.fail("no seed opened some compute RUs but not all")
     outside = index.verification_units(next(u for u in compute if u not in opened)).first
     interiors = prover.interiors(replay_challenge)
     with pytest.raises(Reject) as caught:

@@ -61,6 +61,7 @@ from .description import (
     REPLAY,
     VERIFICATION,
     CallStep,
+    Check,
     Definition,
     Frame,
     GateStep,
@@ -247,7 +248,9 @@ class KindSummary:
     interfaces of one copy: its ports as declared (a superset of what its
     gates read, so pricing by it is conservative) and ``Out``, its declared
     outputs resolved to the unpinned gates it owns; ``out_bits`` is the width
-    of ``Out`` in bits.  ``interior_count`` is the number of interior
+    of ``Out`` in bits less the root's check outputs (members of ``Out`` the
+    verifier requires to equal a constant of the description, so worth ``0``
+    bits here and in the reach).  ``interior_count`` is the number of interior
     positions inside one copy: for a replay unit the outputs of its
     verification units that are not its own outputs (what the prover
     commits when the unit is opened), for a kind above the cut the sum over
@@ -400,6 +403,19 @@ class Index:
     @property
     def n(self) -> int:
         return self._frame.definition.size
+
+    @property
+    def checks(self) -> tuple[Check, ...]:
+        """The root's check outputs: progressions of output ordinals with their constants."""
+
+        return self._frame.definition.checks
+
+    def check_values(self) -> Iterator[tuple[int, int]]:
+        """``(output ordinal, constant)`` for every check output, check by check."""
+
+        for check in self.checks:
+            for ordinal in check.ordinals():
+                yield ordinal, check.value
 
     def inputs(self) -> IndexedDomain[int]:
         """``In``: the addresses of the input gates, ranked in address order."""
@@ -1428,6 +1444,26 @@ def _step_reach(definition: Definition, total: int, exact: bool) -> list[int]:
                 width = single = total
             out[index] += width
             share[index] += single
+    if exact:
+        # A check output is fixed by the verifier: no bits of it are reachable,
+        # so its gates come off the steps that hold them.  A share comes down
+        # by the checked gates every copy of a ``repeat`` holds (a run with
+        # one element per copy, the pitch of the copies) and is at most what
+        # is left.
+        for checked in definition.checked_runs:
+            for index, _, taken in _split(
+                definition.step_address, checked.start, checked.count, checked.stride
+            ):
+                out[index] -= taken * checked.width
+                step = steps[index]
+                if (
+                    isinstance(step, CallStep)
+                    and step.count > 1
+                    and taken == step.count
+                    and checked.stride % step.child.size == 0
+                ):
+                    share[index] -= checked.width
+                share[index] = min(share[index], out[index])
     cover = _Coverage(out)
     add = cover.add
     down: list[_Intervals | None] = [None] * count

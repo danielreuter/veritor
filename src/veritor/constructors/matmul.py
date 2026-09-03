@@ -10,17 +10,9 @@ from veritor.compile import Compilation, constructor_digest
 from veritor.core import CompilationLimits, JSONValue, make_word_gate_set
 from veritor.research import Compile
 
-from .tracer import TracedDefinition, Tracer, TracerError, Wire, Wires
+from .tracer import TracedDefinition, Tracer, TracerError, Wires
 
 WordMatrix: TypeAlias = tuple[tuple[int, ...], ...]  # noqa: UP040
-
-
-def _wires(value: Wire | Wires) -> Wires:
-    """A call's result as a range (a one-output call returns a single wire)."""
-
-    if isinstance(value, Wire):
-        return Wires(value.trace, value.space, value.index, 1, 0)
-    return value
 
 
 def _canonical_matrix(
@@ -252,7 +244,7 @@ class MatmulG:
 
         @self.tracer.definition(input_count=0, key=("batch", activation_shapes, weight_shape))
         def batch(_v: Wires) -> object:
-            x_all = _wires(activations())
+            x_all = activations()
             w = weights()
             outputs = []
             offset = 0

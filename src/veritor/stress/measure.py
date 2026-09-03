@@ -19,7 +19,7 @@ from fractions import Fraction
 from veritor.analysis.bound import BoundOptions, BoundResult, bound
 from veritor.analysis.cost import ExpectedCost, cost
 from veritor.compile.compiler import Compiler
-from veritor.compile.constructor import Compilation, Constructor
+from veritor.compile.constructor import Compilation, Constructor, declared_advice_bits
 from veritor.core.compiled import Compiled
 from veritor.core.gates import GateSet
 from veritor.core.identity import validate_digest
@@ -83,7 +83,11 @@ def compile_scenario(
     compiled = Compiler(gate_set, limits).compile(description, inputs)
     finished = time.perf_counter()
     compilation = Compilation(
-        compiled, validate_digest(constructor.digest, "constructor digest"), inputs, a
+        compiled,
+        validate_digest(constructor.digest, "constructor digest"),
+        inputs,
+        a,
+        declared_advice_bits(constructor, x, a),
     )
     return Measurement(compilation, description, traced - started, finished - traced)
 

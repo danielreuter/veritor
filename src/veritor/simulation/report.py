@@ -59,8 +59,9 @@ def render(summary: Summary) -> str:
     for pod, row in enumerate(w.occupancy):
         out(f"    pod {pod}: " + "".join("x" if n < 0 else str(n) if n else "." for n in row))
     out(
-        f"  advice: Schedule.encode() = {w.advice_bytes} bytes = {w.advice_bits} bits "
-        "(magic, 4 header words, 5 words per join); timing enters the circuit only here"
+        f"  advice: Schedule.encode() = {w.advice_bytes} bytes, {w.advice_bits} bits charged "
+        "(the bit-packed header and joins; the padding to bytes is checked zero); timing enters the "
+        "circuit only here"
     )
 
     out("")

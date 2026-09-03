@@ -123,7 +123,7 @@ def test_s1_continual_batching_under_three_schedules(
     # three schedules, three circuits; the request circuit is one whatever the admission order
     assert len({run.digest for run in served.values()}) == 3
     assert all(
-        run.advice_bits == 8 * len(schedule.encode())
+        run.advice_bits == schedule.bit_length() <= 8 * len(schedule.encode())
         for run, schedule in zip(served.values(), schedules.values(), strict=True)
     )
     assert requests.advice_bits == 0

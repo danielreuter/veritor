@@ -188,8 +188,10 @@ class TestTamperedEvidence:
 
     @pytest.fixture
     def honest_pair(self, compiled, expect, honest_values, model_weights, recording):
+        # every VU sampled: the tampering below needs at least two proofs, whatever
+        # the challenge the header digest derives
         verifier = VerifierSession(
-            expect(SAMPLE_SOME, backend=RECORDING_BACKEND), compiled, backend=recording
+            expect(VerificationPolicy(1, 1), backend=RECORDING_BACKEND), compiled, backend=recording
         )
         prover = ProverSession(
             compiled,
@@ -274,9 +276,10 @@ class TestTamperedEvidence:
         self, compiled, expect, honest_values, model_weights, recording
     ) -> None:
         # single Merkle openings (value + path) pass; a whole batch proof does not
+        # (every VU sampled, so the batch is large whatever the derived challenge)
         limits = VerificationLimits(max_proof_bytes=256)
         verifier = VerifierSession(
-            expect(SAMPLE_SOME, backend=RECORDING_BACKEND),
+            expect(VerificationPolicy(1, 1), backend=RECORDING_BACKEND),
             compiled,
             backend=recording,
             limits=limits,

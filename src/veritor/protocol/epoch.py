@@ -439,6 +439,7 @@ class EpochVerifier:
             tuple(claimed_outputs),
             weights,
             backend,
+            compilation.advice_bits,
         )
         try:
             session = VerifierSession(

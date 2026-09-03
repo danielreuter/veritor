@@ -29,11 +29,13 @@ from veritor.core import (
     Compiled,
     Digest,
     IndexedDomain,
+    InvalidArtifact,
     ResourceLimit,
     VerificationLimits,
     VerificationPolicy,
     encode_value,
     iter_members,
+    validate_advice_bits,
 )
 
 from .challenge import derive_replay_selection, derive_sample_selection
@@ -95,11 +97,14 @@ class Claim:
     """What a run is about: everything the header binds, and no randomness.
 
     ``compiled_digest``, ``constructor`` and ``advice`` name the
-    ``Compile(G, x, a)`` the run is about; ``policy`` is the run's ``theta =
+    ``Compile(G, x, a)`` the run is about, ``advice_bits`` the bits ``G``
+    declared for ``a`` (charged against ``A``; ``advice`` must be their
+    canonical zero-padded encoding); ``policy`` is the run's ``theta =
     (q, s)``; ``parameters`` hold the verifier's own ``eta``, ``U_max``,
     ``A``, ``W_max`` and ``f_max``.  ``public_inputs`` are the values of the
     circuit's ``in`` gates by rank (address order) and ``claimed_outputs``
-    the outputs; the verifier encodes them with the circuit's canonical
+    the outputs in output order, the check outputs among them at their
+    constants; the verifier encodes them with the circuit's canonical
     codec.  ``weights`` is the model's ``kappa_W``, required exactly when the
     circuit has weight gates.  ``backend`` names the proof backend the reveal
     step runs through (default: transparent openings).
@@ -115,6 +120,7 @@ class Claim:
     claimed_outputs: tuple[object, ...]
     weights: Weights | None = None
     backend: str = TRANSPARENT_BACKEND
+    advice_bits: int = 0
 
     def __post_init__(self) -> None:
         _check_claim(self)
@@ -123,6 +129,10 @@ class Claim:
 def _check_claim(claim: Claim | Expectation) -> None:
     if type(claim.advice) is not bytes:
         raise ProtocolError("advice must be bytes")
+    try:
+        validate_advice_bits(claim.advice, claim.advice_bits)
+    except InvalidArtifact as error:
+        raise ProtocolError(str(error)) from error
     if not isinstance(claim.parameters, VerifierParameters):
         raise ProtocolError("parameters must be VerifierParameters")
     if not isinstance(claim.policy, VerificationPolicy):
@@ -161,6 +171,7 @@ class Expectation:
     s_seed: bytes
     weights: Weights | None = None
     backend: str = TRANSPARENT_BACKEND
+    advice_bits: int = 0
 
     def __post_init__(self) -> None:
         check_seed("q seed", self.q_seed)
@@ -182,6 +193,7 @@ class Expectation:
             self.claimed_outputs,
             self.weights,
             self.backend,
+            self.advice_bits,
         )
 
 
@@ -200,8 +212,8 @@ def make_expectation(
     """The verifier's expectation for one ``Compile(G, x, a)`` and the claimed ``y*``.
 
     ``compilation`` supplies ``(C, I)``, ``G``'s digest, the public inputs as
-    the circuit consumes them and the advice; the client's proposed ``theta``
-    is admitted under the verifier's ``parameters``, which are never
+    the circuit consumes them and the advice with the bits it is charged; the
+    client's proposed ``theta`` is admitted under the verifier's ``parameters``, which are never
     defaulted: the verifier states ``eta``, ``U_max``, ``A`` and ``W_max``.
     Fresh seeds are drawn unless given.  ``backend`` is the proof backend id
     bound into the header.
@@ -225,6 +237,7 @@ def make_expectation(
         s_seed=token_bytes(32) if s_seed is None else s_seed,
         weights=weights,
         backend=backend,
+        advice_bits=compilation.advice_bits,
     )
 
 
@@ -695,6 +708,14 @@ class VerifierSession:
             )
         except Exception as error:
             raise ProtocolError("expectation values do not encode canonically") from error
+        for ordinal, constant in compiled.check_values():
+            address = circuit.outputs[ordinal]
+            if outputs[ordinal] != circuit.encode(address, constant):
+                raise self._reject(
+                    VerificationCode.CHECK_MISMATCH,
+                    f"claimed output {ordinal} (address {address}) is a check output fixed "
+                    f"at {constant}",
+                )
         self.header = Header(
             claim.session_id,
             compiled.digest,
@@ -707,6 +728,7 @@ class VerifierSession:
             weights,
             claim.backend,
             claim.parameters.max_faults,
+            claim.advice_bits,
         )
         self._commitments: dict[int, tuple[CommitmentDomain, Commitment]] = {}
         if weights is not None:
@@ -758,7 +780,8 @@ class VerifierSession:
         """Price the run before any commitment; folds over the kinds, nothing per copy.
 
         The limits and ``W_max`` are checked from counts alone in
-        ``O(#kinds)`` and the advice against ``A`` by its length; when the
+        ``O(#kinds)`` and the advice against ``A`` by its declared bit
+        length (the claim has checked the encoding is canonical); when the
         verifier fixes ``U_max``, ``Bound(C, I, theta)`` at its ``eta`` is
         folded over the same kinds (milliseconds, independent of the number
         of copies) and must not exceed it.  Together the two caps bound the
@@ -768,7 +791,7 @@ class VerifierSession:
         index = self._layout.index
         policy = self._claim.policy
         parameters = self._claim.parameters
-        advice_bits = 8 * len(self._claim.advice)
+        advice_bits = self._claim.advice_bits
         if advice_bits > parameters.max_advice_bits:
             raise self._reject(
                 VerificationCode.POLICY_REJECTED,
@@ -889,6 +912,16 @@ class VerifierSession:
                 item.position: self._open(BOUNDARY_OWNER, item, item.position)
                 for item in message.io_openings
             }
+            # The check outputs first: a run that moves one is rejected as such,
+            # whatever the client claimed there (the header holds the constants).
+            circuit = self._layout.circuit
+            for ordinal, constant in compiled.check_values():
+                address = circuit.outputs[ordinal]
+                if opened[address] != circuit.encode(address, constant):
+                    raise self._reject(
+                        VerificationCode.CHECK_MISMATCH,
+                        f"check output {ordinal} at address {address} is not {constant}",
+                    )
             for addresses, values, label in (
                 (self._layout.public_inputs, self.header.public_inputs, "input"),
                 (self._layout.circuit.outputs, self.header.claimed_outputs, "output"),
