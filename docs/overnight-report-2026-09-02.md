@@ -377,7 +377,7 @@ Decisions the implementation surfaced that belong in the paper.
 
 ## 5. Outstanding
 
-- **Epoch layer, not built**: boundary storage and deterministic replay from a KV state, a wire
+- **Epoch layer, parts not built**: boundary storage and deterministic replay from a KV state, a wire
   format for `RoundChallenge`/`EpochReport`, a beacon binding for the `q` side, and rewiring the
   datacenter simulation onto the layer (the adversary test is dedicated).
 - **Proof layer**: guest SHA over a precompile, vk caching, the OpenVM host binary (§3.2).
@@ -393,3 +393,6 @@ Decisions the implementation surfaced that belong in the paper.
   advice bits, `f_max`, the epoch layer). The tests over three seconds (the rate-versus-fold
   comparison at 13 s, the datacenter fixture at 12 s, the epoch adversary at 10 s) were left in
   the default run: they are the correctness checks of the bound, not perf tests.
+- **Not pushed**: `main` is 177 commits ahead of `origin/main`; nothing was pushed tonight.
+  Every merge was committed by path; `docs/compute-accounting/` (another session's edits) is
+  left modified in the working tree, uncommitted.
