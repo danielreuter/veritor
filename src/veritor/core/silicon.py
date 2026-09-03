@@ -29,8 +29,10 @@ the bottom of the module are the ones validated against hardware; see
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+
+import numpy as np
 
 from .errors import InvalidArtifact
 from .gates import INPUT_SOURCE, WEIGHT_SOURCE, Gate, GateSet
@@ -43,16 +45,29 @@ __all__ = [
     "HOPPER_BF16_M16N8K16",
     "HOPPER_E4M3_K32",
     "PIPELINES",
+    "F32Array",
     "Pipeline",
     "Term",
     "bf16_product",
+    "bf16_to_f32",
     "e4m3_product",
+    "f32_exp",
+    "f32_max",
+    "f32_tanh",
+    "f32_to_bf16",
     "fp32_term",
+    "gelu_tanh",
     "group_sum",
+    "is_nan_word",
+    "ln_rstd",
+    "make_pinned_gate_set",
     "make_tensor_core_gate_set",
     "pack_fp32",
+    "pipeline_for",
     "tc_dot",
     "tc_dot_chain",
+    "tensor_core_evaluators",
+    "tensor_core_gates",
 ]
 
 FP32_SIGNIFICAND_WIDTH = 24
@@ -367,55 +382,383 @@ PIPELINES: dict[str, Pipeline] = {
 }
 
 
-def make_tensor_core_gate_set(arch: str, dtype: str) -> GateSet:
-    """The gate set of one tensor-core pipeline: ``tc_dot`` plus the two sources.
-
-    The gate has arity ``1 + 2k``: the FP32 accumulator word followed by the
-    ``k`` A words and the ``k`` B words.  ``Gate`` currently validates every
-    argument against the gate's single ``width`` (32 bits here), so operand
-    words are additionally range-checked by the evaluator; a per-argument
-    width on ``Gate`` would make that check structural.
-    """
+def pipeline_for(arch: str, dtype: str) -> Pipeline:
+    """The unique validated pipeline of ``arch``/``dtype``."""
 
     matches = [p for p in PIPELINES.values() if p.arch == arch and p.dtype == dtype]
     if len(matches) != 1:
         raise InvalidArtifact(f"no unique pipeline for arch={arch!r} dtype={dtype!r}")
-    pipeline = matches[0]
-    k = pipeline.k
-    operand_limit = 1 << pipeline.operand_bits
+    return matches[0]
 
-    def split(args: tuple[int, ...]) -> tuple[int, tuple[int, ...], tuple[int, ...]]:
-        acc, a, b = args[0], args[1 : 1 + k], args[1 + k :]
-        for word in (*a, *b):
-            if word >= operand_limit:
-                raise InvalidArtifact(
-                    f"operand word exceeds {pipeline.operand_bits} bits"
-                )
-        return acc, a, b
+
+def tensor_core_evaluators(
+    pipeline: Pipeline,
+) -> tuple[Callable[[tuple[int, ...]], int], Callable[[tuple[int, ...]], int]]:
+    """The evaluators of ``tc_dot{k}`` (accumulator, A words, B words) and ``tc_dot{k}_0`` (A words, B words)."""
+
+    k = pipeline.k
 
     def evaluate(args: tuple[int, ...]) -> int:
-        return tc_dot(pipeline, *split(args))
+        return tc_dot(pipeline, args[0], args[1 : 1 + k], args[1 + k :])
 
-    def check(args: tuple[int, ...], out: int) -> bool:
-        try:
-            return evaluate(args) == out
-        except InvalidArtifact:
-            return False
+    def evaluate_zero(args: tuple[int, ...]) -> int:
+        return tc_dot(pipeline, 0, args[:k], args[k:])
 
+    return evaluate, evaluate_zero
+
+
+def tensor_core_gates(pipeline: Pipeline) -> tuple[Gate, Gate]:
+    """``tc_dot{k}`` and ``tc_dot{k}_0``: one ``mma`` step with, and without, an incoming accumulator.
+
+    ``tc_dot{k}`` has arity ``1 + 2k``: the FP32 accumulator word, then the
+    ``k`` A words and the ``k`` B words (``operand_bits`` wide each, declared
+    through ``arg_widths``).  ``tc_dot{k}_0`` is the same step with the
+    accumulator pinned to ``+0``: the first step of a reduction without a
+    bias (attention scores, the value mix, a tied LM head).
+    """
+
+    k = pipeline.k
+    ob = pipeline.operand_bits
+    evaluate, evaluate_zero = tensor_core_evaluators(pipeline)
+    return (
+        Gate(
+            f"tc_dot{k}",
+            1 + 2 * k,
+            32,
+            replay_cost=k,
+            proof_cost=k,
+            evaluate=evaluate,
+            arg_widths=(32, *([ob] * (2 * k))),
+        ),
+        Gate(
+            f"tc_dot{k}_0",
+            2 * k,
+            32,
+            replay_cost=k,
+            proof_cost=k,
+            evaluate=evaluate_zero,
+            arg_widths=(ob,) * (2 * k),
+        ),
+    )
+
+
+def make_tensor_core_gate_set(arch: str, dtype: str) -> GateSet:
+    """The gate set of one tensor-core pipeline: the two ``tc_dot`` steps plus the two sources.
+
+    See :func:`tensor_core_gates`; the operand words are ``operand_bits``
+    wide and validated structurally through ``Gate.arg_widths``.
+    """
+
+    pipeline = pipeline_for(arch, dtype)
     return GateSet(
         (
-            Gate(
-                f"tc_dot{k}",
-                1 + 2 * k,
-                32,
-                replay_cost=k,
-                proof_cost=k,
-                evaluate=evaluate,
-                check=check,
-            ),
+            *tensor_core_gates(pipeline),
             Gate("in", 0, 32, replay_cost=0, proof_cost=1, source=INPUT_SOURCE),
             Gate("weight", 0, 32, replay_cost=0, proof_cost=1, source=WEIGHT_SOURCE),
         ),
         name=f"veritor.tensor-core.{pipeline.name}",
+        version="2",
+    )
+
+
+# --- CUDA-core fp32 semantics ----------------------------------------------------
+#
+# The elementwise operations of a transformer run on the CUDA cores, and their
+# result is fixed by IEEE-754 binary32 once fused multiply-add contraction and
+# fast-math approximations are off (``nvcc -fmad=false -prec-div=true
+# -prec-sqrt=true -ftz=false``): ``+ - * /`` and ``sqrt`` are then correctly
+# rounded to nearest-even on the GPU exactly as on any IEEE CPU.  Every gate
+# below is an explicit sequence of such operations (plus exact bit
+# manipulation), written once over numpy ``float32`` values -- which are
+# IEEE-exact for these operations -- so that the same code evaluates one gate
+# (a 0-d array) and a whole tensor of them.  The transcendental functions are
+# *not* library calls: ``f32_exp`` is a Cody-Waite range reduction with a
+# degree-5 polynomial (Cephes ``expf`` coefficients) evaluated by explicit
+# multiplies and adds, ``f32_tanh`` is ``1 - 2 / (exp(2|x|) + 1)`` with the
+# sign restored, and the reciprocal standard deviation is ``1 / sqrt(v + eps)``
+# with the two IEEE operations.  The GPU kernels in ``gpu/gpt2/`` are the
+# same sequences written in CUDA C; ``tests/veritor/core/golden/`` holds their
+# outputs on the RTX 4090.
+
+F32Array = np.ndarray[tuple[int, ...], np.dtype[np.float32]]
+
+_F32 = np.float32
+
+
+def _f32_from_bits(bits: int) -> np.float32:
+    return np.uint32(bits).view(np.float32)
+
+
+F32_ZERO = _F32(0.0)
+F32_ONE = _F32(1.0)
+F32_TWO = _F32(2.0)
+F32_HALF = _F32(0.5)
+F32_INF = _F32(np.inf)
+F32_NAN_BITS = 0x7FC00000
+F32_LOG2E = _f32_from_bits(0x3FB8AA3B)  # 1.44269502
+F32_RINT_MAGIC = _f32_from_bits(
+    0x4B400000
+)  # 1.5 * 2**23: (t + M) - M rounds t to an integer
+F32_LN2_HI = _f32_from_bits(
+    0x3F317200
+)  # 0.693145751953125 (12 significant bits: k * LN2_HI is exact)
+F32_LN2_LO = _f32_from_bits(0x35BFBE8E)  # 1.42860677e-06
+F32_EXP_POLY = tuple(
+    _f32_from_bits(bits)
+    for bits in (0x39506967, 0x3AB743CE, 0x3C088908, 0x3D2AA9C1, 0x3E2AAAAA, 0x3F000000)
+)  # Cephes expf: 1.9875691500E-4 .. 5.0000001201E-1, highest degree first
+F32_EXP_LO = _F32(-86.5)  # below: exp is 0 (the result would be subnormal)
+F32_EXP_HI = _F32(88.0)  # above: exp is +inf
+F32_TANH_SAT = _F32(9.0)  # |x| >= 9: tanh is +-1
+F32_GELU_C0 = _f32_from_bits(0x3F4C422A)  # sqrt(2 / pi) = 0.79788456
+F32_GELU_C1 = _f32_from_bits(0x3D372713)  # 0.044715
+F32_LN_EPS = _f32_from_bits(0x3727C5AC)  # 1e-5
+BF16_ONE = 0x3F80
+
+
+def f32_exp(x: F32Array) -> F32Array:
+    """``exp(x)`` as the pinned fp32 sequence (see the module comment).
+
+    ``t = x * log2e``; ``k = rint(t)`` by the magic-number add/subtract;
+    ``r = x - k * ln2_hi - k * ln2_lo`` (four operations, the first product
+    exact); ``p`` is the degree-5 Horner polynomial in ``r`` (five ``mul``,
+    five ``add``); ``y = ((p * r) * r + r) + 1``; the result is ``y * 2**k``
+    with ``2**k`` built from its bit pattern.  ``x < -86.5`` gives ``+0``,
+    ``x > 88`` gives ``+inf`` and NaN propagates.
+    """
+
+    with np.errstate(all="ignore"):
+        t = x * F32_LOG2E
+        kf = (t + F32_RINT_MAGIC) - F32_RINT_MAGIC
+        r = x - kf * F32_LN2_HI
+        r = r - kf * F32_LN2_LO
+        p = np.full_like(r, F32_EXP_POLY[0])
+        for coefficient in F32_EXP_POLY[1:]:
+            p = p * r + coefficient
+        y = p * r
+        y = y * r
+        y = y + r
+        y = y + F32_ONE
+        ki = np.clip(kf, -126, 127).astype(np.int32)
+        scale = ((ki + 127) << 23).astype(np.uint32).view(np.float32)
+        y = y * scale
+        y = np.where(x < F32_EXP_LO, F32_ZERO, y)
+        y = np.where(x > F32_EXP_HI, F32_INF, y)
+        y = np.where(np.isnan(x), x, y)
+        return y.astype(np.float32, copy=False)
+
+
+def f32_tanh(x: F32Array) -> F32Array:
+    """``tanh(x) = sign(x) * (1 - 2 / (exp(2|x|) + 1))`` over :func:`f32_exp`; ``|x| >= 9`` saturates to ``+-1``."""
+
+    with np.errstate(all="ignore"):
+        a = np.abs(x)
+        e = f32_exp(a + a)
+        r = F32_ONE - F32_TWO / (e + F32_ONE)
+        r = np.where(a >= F32_TANH_SAT, F32_ONE, r)
+        r = np.copysign(r, x)
+        r = np.where(np.isnan(x), x, r)
+        return r.astype(np.float32, copy=False)
+
+
+def gelu_tanh(x: F32Array) -> F32Array:
+    """``0.5 x (1 + tanh(c0 (x + c1 x^3)))``: ``x3 = (x x) x``, ``inner = x + c1 x3``, ``z = c0 inner``, ``(0.5 x) (1 + tanh z)``."""
+
+    with np.errstate(all="ignore"):
+        x2 = x * x
+        x3 = x2 * x
+        inner = x + F32_GELU_C1 * x3
+        t = f32_tanh(F32_GELU_C0 * inner)
+        y = (F32_HALF * x) * (F32_ONE + t)
+        return y.astype(np.float32, copy=False)
+
+
+def ln_rstd(variance: F32Array) -> F32Array:
+    """``1 / sqrt(v + 1e-5)``: two correctly rounded IEEE operations after the add."""
+
+    with np.errstate(all="ignore"):
+        r = F32_ONE / np.sqrt(variance + F32_LN_EPS)
+        return r.astype(np.float32, copy=False)
+
+
+def f32_max(a: F32Array, b: F32Array) -> F32Array:
+    """``b if b > a else a``: ties (and NaN comparisons) keep ``a``."""
+
+    return np.where(b > a, b, a).astype(np.float32, copy=False)
+
+
+def f32_to_bf16(
+    bits: np.ndarray[tuple[int, ...], np.dtype[np.uint32]],
+) -> np.ndarray[tuple[int, ...], np.dtype[np.uint16]]:
+    """Round fp32 words to BF16 words to nearest, ties to even; NaN becomes ``0x7FC0``."""
+
+    bits = bits.astype(np.uint32, copy=False)
+    with np.errstate(over="ignore"):
+        rounded = (bits + np.uint32(0x7FFF) + ((bits >> 16) & np.uint32(1))) >> 16
+    exponent_all_ones = (bits & np.uint32(0x7F800000)) == np.uint32(0x7F800000)
+    is_nan = exponent_all_ones & ((bits & np.uint32(0x007FFFFF)) != 0)
+    return np.where(is_nan, np.uint32(0x7FC0), rounded).astype(np.uint16)
+
+
+def bf16_to_f32(
+    words: np.ndarray[tuple[int, ...], np.dtype[np.uint16]],
+) -> np.ndarray[tuple[int, ...], np.dtype[np.uint32]]:
+    """Widen BF16 words to fp32 words: the 16 low bits are zero."""
+
+    return (words.astype(np.uint32) << np.uint32(16)).astype(np.uint32)
+
+
+def is_nan_word(width: int, value: int) -> bool:
+    """Whether a 32-bit (binary32) or 16-bit (BF16) word is a NaN pattern."""
+
+    if width == 32:
+        return (value & 0x7F800000) == 0x7F800000 and (value & 0x007FFFFF) != 0
+    return (value & 0x7F80) == 0x7F80 and (value & 0x007F) != 0
+
+
+def _bits(value: int) -> F32Array:
+    return np.array(value, dtype=np.uint32).view(np.float32)
+
+
+def _word(value: F32Array) -> int:
+    result = int(np.asarray(value, dtype=np.float32).view(np.uint32))
+    return F32_NAN_BITS if is_nan_word(32, result) else result
+
+
+def _unary(fn: Callable[[F32Array], F32Array]) -> Callable[[tuple[int, ...]], int]:
+    return lambda args: _word(fn(_bits(args[0])))
+
+
+def _binary(
+    fn: Callable[[F32Array, F32Array], F32Array],
+) -> Callable[[tuple[int, ...]], int]:
+    return lambda args: _word(fn(_bits(args[0]), _bits(args[1])))
+
+
+def _ieee(
+    op: Callable[[F32Array, F32Array], F32Array],
+) -> Callable[[F32Array, F32Array], F32Array]:
+    def apply(a: F32Array, b: F32Array) -> F32Array:
+        with np.errstate(all="ignore"):
+            return op(a, b).astype(np.float32, copy=False)
+
+    return apply
+
+
+def _pinned(
+    name: str,
+    width: int,
+    cost: int,
+    evaluate: Callable[[tuple[int, ...]], int],
+    arg_widths: tuple[int, ...],
+    *,
+    floats: tuple[bool, ...] | None = None,
+    float_out: bool = True,
+) -> Gate:
+    """A gate whose ``check`` is the relation and the absence of NaN among its floating-point words.
+
+    ``floats`` says which arguments are floating-point words (all by default);
+    ``float_out`` whether the output is one.  Token words are never NaN-checked.
+    """
+
+    is_float = (True,) * len(arg_widths) if floats is None else floats
+
+    def check(args: tuple[int, ...], out: int) -> bool:
+        for flag, arg_width, value in zip(is_float, arg_widths, args, strict=True):
+            if flag and is_nan_word(arg_width, value):
+                return False
+        if float_out and is_nan_word(width, out):
+            return False
+        return evaluate(args) == out
+
+    return Gate(
+        name,
+        len(arg_widths),
+        width,
+        replay_cost=cost,
+        proof_cost=cost,
+        evaluate=evaluate,
+        check=check,
+        arg_widths=arg_widths,
+    )
+
+
+def make_pinned_gate_set(arch: str = "sm_89", dtype: str = "bf16") -> GateSet:
+    """The pinned gate set of a transformer forward pass on ``arch``: tensor-core steps and CUDA-core fp32 ops.
+
+    Values are words: 32-bit words hold IEEE binary32 bit patterns, 16-bit
+    words hold BF16 bit patterns or token ids (which of the two a word is
+    follows from the gate that consumes it).  The gates:
+
+    * ``tc_dot16``, ``tc_dot16_0``: one tensor-core step (:func:`tensor_core_gates`);
+    * ``bf16_to_f32`` (16 -> 32) and ``f32_to_bf16`` (32 -> 16, round to
+      nearest even, NaN to ``0x7FC0``);
+    * ``f32_add``, ``f32_sub``, ``f32_mul``, ``f32_div``: correctly rounded
+      IEEE binary32 operations; ``f32_max``: ``b if b > a else a``;
+    * ``f32_exp``, ``f32_tanh``, ``gelu_tanh``, ``ln_rstd``: the fp32
+      sequences of the functions of the same names in this module;
+    * ``argmax_select(la, lb, ia, ib)`` (32, 32, 16, 16 -> 16): ``ib if lb >
+      la else ia`` (with ``f32_max`` on the logits this is one tournament node
+      whose ties keep the earlier index);
+    * ``token_eq(t, j)`` (16, 16 -> 16): BF16 ``1.0`` (``0x3F80``) if ``t ==
+      j`` else ``0``, the one-hot of a token against the token table;
+    * the sources ``in`` and ``weight``, 16-bit words (token ids; BF16
+      weights and constants).
+
+    ``check`` of a floating-point gate is ``False`` whenever an fp32 or BF16
+    argument or the output is a NaN: an honest run has none, and NaN payloads
+    are the one thing IEEE leaves to the implementation.  The costs count
+    the fp32 operations of a gate's sequence.
+    """
+
+    pipeline = pipeline_for(arch, dtype)
+    if pipeline.operand_bits != 16:
+        raise InvalidArtifact("the pinned gate set is defined over BF16 operands")
+    k = pipeline.k
+    step, step_zero = tensor_core_evaluators(pipeline)
+    f32 = (32,)
+    return GateSet(
+        (
+            _pinned(f"tc_dot{k}", 32, k, step, (32, *([16] * (2 * k)))),
+            _pinned(f"tc_dot{k}_0", 32, k, step_zero, (16,) * (2 * k)),
+            _pinned("bf16_to_f32", 32, 1, lambda args: args[0] << 16, (16,)),
+            _pinned(
+                "f32_to_bf16",
+                16,
+                1,
+                lambda args: int(f32_to_bf16(np.array(args[0], dtype=np.uint32))),
+                f32,
+            ),
+            _pinned("f32_add", 32, 1, _binary(_ieee(np.add)), f32 * 2),
+            _pinned("f32_sub", 32, 1, _binary(_ieee(np.subtract)), f32 * 2),
+            _pinned("f32_mul", 32, 1, _binary(_ieee(np.multiply)), f32 * 2),
+            _pinned("f32_div", 32, 1, _binary(_ieee(np.divide)), f32 * 2),
+            _pinned("f32_max", 32, 1, _binary(f32_max), f32 * 2),
+            _pinned("f32_exp", 32, 24, _unary(f32_exp), f32),
+            _pinned("f32_tanh", 32, 30, _unary(f32_tanh), f32),
+            _pinned("gelu_tanh", 32, 38, _unary(gelu_tanh), f32),
+            _pinned("ln_rstd", 32, 3, _unary(ln_rstd), f32),
+            _pinned(
+                "argmax_select",
+                16,
+                1,
+                lambda args: args[3] if _bits(args[1]) > _bits(args[0]) else args[2],
+                (32, 32, 16, 16),
+                floats=(True, True, False, False),
+                float_out=False,
+            ),
+            _pinned(
+                "token_eq",
+                16,
+                1,
+                lambda args: BF16_ONE if args[0] == args[1] else 0,
+                (16, 16),
+                floats=(False, False),
+                float_out=False,
+            ),
+            Gate("in", 0, 16, replay_cost=0, proof_cost=1, source=INPUT_SOURCE),
+            Gate("weight", 0, 16, replay_cost=0, proof_cost=1, source=WEIGHT_SOURCE),
+        ),
+        name=f"veritor.pinned.{pipeline.name}",
         version="1",
     )

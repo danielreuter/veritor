@@ -51,7 +51,6 @@ from .indexed import (
     position_domain,
 )
 from .limits import CompilationLimits, VerificationLimits
-from .ml_gates import make_ml_gate_set
 from .policy import (
     ProbabilityInput,
     VerificationPolicy,
@@ -69,7 +68,6 @@ __all__ = [
     "Circuit",
     "CompilationLimits",
     "Compiled",
-    "as_kind_table",
     "CoreContractError",
     "CostKind",
     "DescriptionCircuit",
@@ -100,6 +98,7 @@ __all__ = [
     "Units",
     "VerificationLimits",
     "VerificationPolicy",
+    "as_kind_table",
     "canonical_json",
     "canonical_json_bytes",
     "canonical_json_text",
@@ -112,7 +111,6 @@ __all__ = [
     "identity_digest",
     "iter_domain",
     "make_isa_gate_set",
-    "make_ml_gate_set",
     "make_word_gate_set",
     "parse_probability",
     "position",
@@ -135,9 +133,29 @@ from .silicon import (
     Pipeline,
     Term,
     group_sum,
+    make_pinned_gate_set,
     make_tensor_core_gate_set,
+    pipeline_for,
     tc_dot,
     tc_dot_chain,
+    tensor_core_gates,
 )
 
-__all__ += ["ADA_BF16_M16N8K16", "ADA_E4M3_M16N8K32", "AMPERE_BF16_M16N8K16", "HAWKEYE_AMPERE_GROUPSUM_E4M3_V0", "HOPPER_BF16_M16N8K16", "HOPPER_E4M3_K32", "PIPELINES", "Pipeline", "Term", "group_sum", "make_tensor_core_gate_set", "tc_dot", "tc_dot_chain"]
+__all__ += [
+    "ADA_BF16_M16N8K16",
+    "ADA_E4M3_M16N8K32",
+    "AMPERE_BF16_M16N8K16",
+    "HAWKEYE_AMPERE_GROUPSUM_E4M3_V0",
+    "HOPPER_BF16_M16N8K16",
+    "HOPPER_E4M3_K32",
+    "PIPELINES",
+    "Pipeline",
+    "Term",
+    "group_sum",
+    "make_pinned_gate_set",
+    "make_tensor_core_gate_set",
+    "pipeline_for",
+    "tc_dot",
+    "tc_dot_chain",
+    "tensor_core_gates",
+]
