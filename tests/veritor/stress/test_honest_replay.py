@@ -1,13 +1,14 @@
-"""H2, H3: the honest prover's declarations by fault class and at fleet scale.
+"""H1, H2, H3: the honest prover's declarations by fault class, by strategy, at fleet scale.
 
 The prover of these rows records only what :class:`RecordingPolicy` says,
 reconstructs every opened RU with :func:`replay_pinned` and declares the VUs
-the replay pins (``docs/honest-prover.md``, sections 3 and 5).  ``H2*`` runs
+the replay pins (``docs/honest-prover.md``, sections 3 and 5).  ``H1*`` runs
 one fault of each class through the protocol with RU = request
-(``RequestsG``) and RU = step (``ClusterG``), under tokens-only (``BOUNDARY``)
-and every-VU-output (``VU_OUTPUTS``) recording; ``H3*`` draws random faults
-over a small fleet of runs through the epoch layer and prices realistic
-densities analytically.
+(``RequestsG``) and RU = step (``ClusterG``) and counts the declarations
+under tokens-only (``BOUNDARY``) and every-VU-output (``VU_OUTPUTS``)
+recording; ``H2*`` prices the strategies P0-P3 on one run holding four
+faults; ``H3*`` drives a small fleet of faulty runs through the epoch layer.
+The phase diagram of section 5 is analytic and asserted here, not recorded.
 """
 
 from __future__ import annotations
@@ -21,8 +22,10 @@ from fractions import Fraction
 
 import pytest
 
+from veritor.analysis import union
 from veritor.analysis.bound import bound
 from veritor.analysis.faults import unit_fault_bits
+from veritor.analysis.rate import rate
 from veritor.constructors import ClusterG, Request, RequestsG, schedule_fcfs
 from veritor.core import Compiled, VerificationPolicy
 from veritor.core.indexed import iter_members
@@ -46,27 +49,25 @@ from veritor.simulation.faults import (
     FaultInjector,
     dot_units,
     fault_budget,
+    poisson_tail,
 )
 from veritor.simulation.honest import (
-    Capacity,
     Production,
     RecordingPolicy,
     Strategy,
     account,
     boundary_at_rest,
     catastrophic,
-    fold_capacity,
+    combine,
     honest_replay,
     input_read,
     interior_flip,
-    phase_boundary,
     phase_diagram,
     pin_everything,
-    post_j_charge_bits,
-    rate_capacity,
     record,
     recorded_addresses,
     replay_pinned,
+    significant_bits,
     token_flip,
     vu_output_read,
     weight_read,
@@ -76,10 +77,13 @@ from veritor.stress.models import SHAPE, Model
 from veritor.stress.rows import Recorder
 
 REQUESTS = (Request((1, 2, 3), 3), Request((5,), 4))
-"""Two requests, ten positions: small enough that every row runs the protocol."""
+"""Two requests, seven streamed tokens: small enough that every row runs the protocol."""
+FOUR_REQUESTS = REQUESTS + (Request((2, 7), 3), Request((4, 1, 6), 2))
+"""H2: four request RUs, one fault each, so that a q = 1/2 challenge opens some and not others."""
 PODS, SLOTS, STEPS = 1, 2, 4
 OPEN_ALL = VerificationPolicy(Fraction(1), Fraction(1, 8))
 """Every RU opened -- the declarations are the run's whole count -- at the catalogue's ``s``."""
+THETA = "theta = (1/2, 1/8)"
 
 
 # -- workloads ------------------------------------------------------------------------
@@ -95,7 +99,7 @@ class Workload:
     model: Model
     injector: FaultInjector
     unit: int
-    """The RU the H2 faults land in."""
+    """The RU the H1 faults land in."""
     producer: int | None = None
     """For ``ClusterG``: the step whose KV the boundary-at-rest fault corrupts on its way to ``unit``."""
 
@@ -103,30 +107,38 @@ class Workload:
     def compiled(self) -> Compiled:
         return self.measurement.compiled
 
+    @property
+    def u1(self) -> float:
+        """``u(1)``: one pre-J declaration."""
+
+        return unit_fault_bits(self.compiled)
+
+    @property
+    def u_post(self) -> float:
+        """``u_post(1) = rho log2 (1 / (1 - s))`` at the catalogue's policy: one post-J declaration."""
+
+        rho = bound(self.compiled, POLICY, ETA).rho
+        return rho * math.log2(1 / (1 - float(POLICY.s)))
+
     def run(
         self,
-        production: Production | None,
+        values: dict[int, object],
+        outputs: Sequence[int],
         *,
         policy: VerificationPolicy,
         max_faults: int,
         replay: Replay | None,
         declare: Declare | None,
-        values: dict[int, object] | None = None,
         label: str,
     ) -> ProtocolRun:
-        """Run the protocol on ``production`` (the honest run when ``None``) from the prover's ``values``."""
+        """Run the protocol from the prover's ``values`` (its recording) on the claimed ``outputs``."""
 
-        honest = self.injector.honest
-        outputs = tuple(
-            (honest if production is None else production.values)[a]
-            for a in self.compiled.circuit.outputs
-        )
         seed = hashlib.sha256(f"veritor/stress/honest/{label}".encode()).digest()
         kappa, tree = commit_weights(self.model.gate_set, self.model.weights)
         expectation = make_expectation(
             self.measurement.compilation,
             policy,
-            outputs,
+            tuple(outputs),
             parameters=VerifierParameters(
                 ETA,
                 max_capacity=1 << 20,
@@ -141,9 +153,7 @@ class Workload:
         return run_protocol(
             self.compiled,
             expectation,
-            (honest if production is None else production.values)
-            if values is None
-            else values,
+            values,
             replay=replay,
             weight_tree=tree,
             declare=declare,
@@ -155,11 +165,12 @@ def _workload(
     unit_name: str,
     model: Model,
     constructor: object,
+    requests: tuple[Request, ...],
     advice: bytes,
     unit: int,
     producer: int | None,
 ) -> Workload:
-    measurement = compile_scenario(constructor, REQUESTS, advice, model.gate_set)  # type: ignore[arg-type]
+    measurement = compile_scenario(constructor, requests, advice, model.gate_set)  # type: ignore[arg-type]
     injector = FaultInjector(
         measurement.compiled, measurement.compilation.inputs, model.weights
     )
@@ -170,7 +181,9 @@ def _workload(
 def per_request(model: Model) -> Workload:
     """RU = request: RU 0 holds the weights, RU 1 the first request (six positions)."""
 
-    return _workload("RequestsG", "request", model, RequestsG(SHAPE), b"", 1, None)
+    return _workload(
+        "RequestsG", "request", model, RequestsG(SHAPE), REQUESTS, b"", 1, None
+    )
 
 
 @pytest.fixture(scope="module")
@@ -183,10 +196,28 @@ def per_step(model: Model) -> Workload:
         "step",
         model,
         ClusterG(SHAPE, PODS, SLOTS, STEPS),
+        REQUESTS,
         schedule.encode(),
         2,
         1,
     )
+
+
+@pytest.fixture(scope="module")
+def four_requests(model: Model) -> Workload:
+    """RU = request over four requests (RUs 1-4), for the strategy rows."""
+
+    return _workload(
+        "RequestsG", "request", model, RequestsG(SHAPE), FOUR_REQUESTS, b"", 1, None
+    )
+
+
+def _outputs(workload: Workload, values: dict[int, int]) -> tuple[int, ...]:
+    return tuple(values[a] for a in workload.compiled.circuit.outputs)
+
+
+def _count(pins: dict[int, tuple[int, ...]]) -> int:
+    return sum(len(p) for p in pins.values())
 
 
 # -- the recording and the pinned replay ------------------------------------------------
@@ -254,12 +285,12 @@ def test_honest_replay_runs_the_protocol_from_the_recording_alone(
     assert len(recorded) < compiled.circuit.n // 10
     server = honest_replay(compiled, recorded)
     run = per_request.run(
-        None,
+        recorded,
+        _outputs(per_request, per_request.injector.honest),
         policy=OPEN_ALL,
         max_faults=0,
         replay=server.replay,
         declare=server.declare,
-        values=recorded,
         label="recording-only",
     )
     assert run.report.accepted, run.report
@@ -268,7 +299,7 @@ def test_honest_replay_runs_the_protocol_from_the_recording_alone(
     }
 
 
-# -- H2: one fault of each class ---------------------------------------------------------
+# -- H1: one fault of each class ---------------------------------------------------------
 
 CLASSES: tuple[tuple[str, str, Callable[[Workload], Production]], ...] = (
     ("a", "interior low bit", lambda w: interior_flip(w.injector, w.unit, bit=0)),
@@ -321,7 +352,42 @@ def test_declarations_are_what_self_check_finds_over_the_committed_interior(
                     )
 
 
-def _tokens(workload: Workload, production: Production) -> str:
+def test_boundary_at_rest_flips_a_significant_bit(per_step: Workload) -> None:
+    """The toy attention annihilates the top bits of a key at rest; the class flips one that is not."""
+
+    production = boundary_at_rest(per_step.injector, 1, 2)
+    width = per_step.compiled.circuit[production.address].width
+    significant = significant_bits(
+        per_step.injector, production.address, production.misreaders
+    )
+    inert = tuple(b for b in range(width) if b not in significant)
+    flipped = (production.correct ^ production.corrupted).bit_length() - 1
+    assert flipped == significant[-1] and width - 1 in inert
+    # an inert bit changes nothing any policy records, so no replay pins anything
+    for bit in inert:
+        misread = production.correct ^ (1 << bit)
+        values = per_step.injector.propagate(
+            {}, {r: {production.address: misread} for r in production.misreaders}
+        )
+        for policy in RecordingPolicy:
+            pins = pin_everything(
+                per_step.compiled, record(per_step.compiled, values, policy)
+            )
+            assert _count(pins) == 0
+
+
+def _site(workload: Workload, production: Production) -> str:
+    circuit = workload.compiled.circuit
+    return (
+        f"word {production.address} of RU {production.replay_unit} "
+        f"({circuit[production.address].op}, correct {production.correct:#x}, "
+        f"{'read as' if production.misreaders else 'stored as'} {production.corrupted:#x}"
+        + (f" by {len(production.misreaders)} gates" if production.misreaders else "")
+        + ")"
+    )
+
+
+def _tokens(production: Production) -> str:
     changed = [
         i
         for i, (a, b) in enumerate(
@@ -329,101 +395,23 @@ def _tokens(workload: Workload, production: Production) -> str:
         )
         if a != b
     ]
-    return f"{production.changed_outputs} of {len(production.outputs)} streamed tokens changed (positions {changed})"
-
-
-def _row_for_class(
-    honest: Recorder,
-    workload: Workload,
-    letter: str,
-    label: str,
-    production: Production,
-    policy: RecordingPolicy,
-    pins: dict[int, tuple[int, ...]],
-    contrast: dict[int, tuple[int, ...]] | None,
-    priced: object,
-) -> None:
-    compiled = workload.compiled
-    recorded = record(compiled, production.values, policy)
-    server = honest_replay(compiled, recorded)
-    count = sum(len(p) for p in pins.values())
-    accepted = workload.run(
-        production,
-        policy=OPEN_ALL,
-        max_faults=count,
-        replay=server.replay,
-        declare=server.declare,
-        values=recorded,
-        label=f"h2{letter}/{workload.name}/{policy.name}",
-    )
-    assert accepted.report.accepted, (label, workload.name, policy, accepted.report)
-    assert accepted.transcript is not None
-    declared = accepted.transcript.interiors.declarations
-    assert declared == tuple(sorted(v for p in pins.values() for v in p))
-    verdict = f"ACCEPTED at theta = (1, 1/8) with {count} declaration{'s' if count != 1 else ''}"
-    if count:
-        short = workload.run(
-            production,
-            policy=OPEN_ALL,
-            max_faults=count - 1,
-            replay=server.replay,
-            declare=server.declare,
-            values=recorded,
-            label=f"h2{letter}/{workload.name}/{policy.name}/short",
-        )
-        assert short.report.code is VerificationCode.FAULTS_EXCEEDED, short.report
-        verdict += f"; FAULTS_EXCEEDED with f_max = {count - 1}"
-    every = set(range(compiled.index.replay_units.count))
-    p1 = account(Strategy.P1, compiled, POLICY, ETA, pins, every)
-    p3 = account(Strategy.P3, compiled, POLICY, ETA, pins, every)
-    where = {unit: len(p) for unit, p in pins.items() if p}
-    site = (
-        f"{production.fault.value}: word {production.address} of RU {production.replay_unit} "
-        f"({compiled.circuit[production.address].op}, correct {production.correct:#x}, "
-        f"{'read as' if production.misreaders else 'stored as'} {production.corrupted:#x}"
-        + (f" by {len(production.misreaders)} gates" if production.misreaders else "")
-        + ")"
-    )
-    notes = (
-        f"{site}; {_tokens(workload, production)}; pinned VUs by RU {where or 'none'}. "
-        f"Post-J price at theta = (1/2, 1/8): {p1.charge_bits:.1f} bits for {count} declarations "
-        f"(u(1) = {unit_fault_bits(compiled):.1f}); P3 (100% replay, pre-J) would pay {p3.charge_bits:.1f} bits."
-    )
-    if contrast is not None:
-        other = sum(len(p) for p in contrast.values())
-        notes += f" Under {'BOUNDARY' if policy is RecordingPolicy.VU_OUTPUTS else 'VU_OUTPUTS'} recording: {other}."
-    suffix = "r" if workload.unit_name == "request" else "s"
-    honest.record(
-        id=f"H2{letter}{suffix}{'v' if policy is RecordingPolicy.VU_OUTPUTS else ''}",
-        what=(
-            f"{label}, RU = {workload.unit_name} ({workload.name}), recording {policy.name}, P1: "
-            f"{production.fault.value}"
-        ),
-        mechanism="M6",
-        advice_bits=workload.measurement.advice_bits,
-        capacity_bits=math.ceil(bound(compiled, POLICY, ETA, max_faults=count).bits)
-        + workload.measurement.advice_bits,
-        overhead=priced.overhead,  # type: ignore[attr-defined]
-        description_bytes=workload.measurement.description_bytes,
-        verdict=verdict,
-        notes=notes,
-        declarations=count,
-        charge_bits=round(p1.charge_bits),
-        recompute=float(p1.recompute),
-        fault_class=production.fault.name,
-        recording=policy.name,
-        replay_unit=workload.unit_name,
-        changed_tokens=production.changed_outputs,
+    return (
+        f"{production.changed_outputs} of {len(production.outputs)} streamed tokens changed"
+        + (f" (positions {changed})" if changed else "")
     )
 
 
 @pytest.mark.parametrize("which", ["per_request", "per_step"])
-def test_h2_fault_classes(
+def test_h1_fault_classes(
     which: str, request: pytest.FixtureRequest, honest: Recorder
 ) -> None:
+    """One fault of each class: the tokens-only prover's declarations, and the VU-output prover's."""
+
     workload: Workload = request.getfixturevalue(which)
     compiled = workload.compiled
     priced = price(compiled, POLICY)
+    u1, u_post = workload.u1, workload.u_post
+    suffix = "r" if workload.unit_name == "request" else "s"
     counts: dict[str, dict[RecordingPolicy, int]] = {}
     for letter, label, production in _productions(workload):
         pins = {
@@ -432,71 +420,291 @@ def test_h2_fault_classes(
             )
             for policy in RecordingPolicy
         }
-        counts[letter] = {
-            policy: sum(len(p) for p in pins[policy].values())
+        counts[letter] = {policy: _count(pins[policy]) for policy in RecordingPolicy}
+        boundary, outputs = (
+            counts[letter][RecordingPolicy.BOUNDARY],
+            counts[letter][RecordingPolicy.VU_OUTPUTS],
+        )
+        # The tokens-only prover through the protocol, every RU opened, with exactly its pins.
+        recorded = record(compiled, production.values, RecordingPolicy.BOUNDARY)
+        server = honest_replay(compiled, recorded)
+        accepted = workload.run(
+            recorded,
+            production.outputs,
+            policy=OPEN_ALL,
+            max_faults=boundary,
+            replay=server.replay,
+            declare=server.declare,
+            label=f"h1{letter}/{workload.name}",
+        )
+        assert accepted.report.accepted, (label, workload.name, accepted.report)
+        assert accepted.transcript is not None
+        assert accepted.transcript.interiors.declarations == tuple(
+            sorted(v for p in pins[RecordingPolicy.BOUNDARY].values() for v in p)
+        )
+        verdict = (
+            f"BOUNDARY {boundary} / VU_OUTPUTS {outputs} declarations; the tokens-only prover "
+            f"ACCEPTED at theta = (1, 1/8) with its {boundary} declared"
+        )
+        if letter == "c":  # once per workload: the budget is binding
+            short = workload.run(
+                recorded,
+                production.outputs,
+                policy=OPEN_ALL,
+                max_faults=boundary - 1,
+                replay=server.replay,
+                declare=server.declare,
+                label=f"h1{letter}/{workload.name}/short",
+            )
+            assert short.report.code is VerificationCode.FAULTS_EXCEEDED, short.report
+            verdict += f", FAULTS_EXCEEDED at f_max = {boundary - 1}"
+        where = {
+            policy.name: {unit: len(p) for unit, p in pins[policy].items() if p}
             for policy in RecordingPolicy
         }
-        _row_for_class(
-            honest,
-            workload,
-            letter,
-            label,
-            production,
-            RecordingPolicy.BOUNDARY,
-            pins[RecordingPolicy.BOUNDARY],
-            pins[RecordingPolicy.VU_OUTPUTS],
-            priced,
+        notes = (
+            f"{_site(workload, production)}; {_tokens(production)}; pinned VUs by RU: "
+            f"BOUNDARY {where['BOUNDARY'] or 'none'}, VU_OUTPUTS {where['VU_OUTPUTS'] or 'none'}."
         )
-        if (
-            counts[letter][RecordingPolicy.BOUNDARY]
-            != counts[letter][RecordingPolicy.VU_OUTPUTS]
-        ):
-            _row_for_class(
-                honest,
-                workload,
-                letter,
-                label,
-                production,
-                RecordingPolicy.VU_OUTPUTS,
-                pins[RecordingPolicy.VU_OUTPUTS],
-                pins[RecordingPolicy.BOUNDARY],
-                priced,
+        if letter == "h":
+            significant = significant_bits(
+                workload.injector, production.address, production.misreaders
             )
-    boundary = {letter: c[RecordingPolicy.BOUNDARY] for letter, c in counts.items()}
-    outputs = {letter: c[RecordingPolicy.VU_OUTPUTS] for letter, c in counts.items()}
-    # Section 4 hypotheses.  Tokens-only recording: a flip that changed no recorded value costs nothing.
-    assert boundary["a"] == 0
+            width = compiled.circuit[production.address].width
+            inert = [b for b in range(width) if b not in significant]
+            notes += (
+                f" Bits {inert} of this key word are inert for its reader (the polynomial softmax's "
+                f"square annihilates them): a flip there changes nothing any policy records; "
+                f"the class flips bit {significant[-1]}, the most significant live one."
+            )
+        honest.record(
+            id=f"H1{letter}{suffix}",
+            what=(
+                f"{label}, RU = {workload.unit_name} ({workload.name}): {production.fault.value}"
+            ),
+            mechanism="M6",
+            advice_bits=workload.measurement.advice_bits,
+            capacity_bits=math.ceil(
+                bound(compiled, POLICY, ETA, max_faults=boundary).bits
+            )
+            + workload.measurement.advice_bits,
+            overhead=priced.overhead,
+            description_bytes=workload.measurement.description_bytes,
+            verdict=verdict,
+            notes=notes,
+            declarations=boundary,
+            charge_bits=round(boundary * u_post),
+            recompute=1.0,
+            fault_class=production.fault.name,
+            declarations_vu_outputs=outputs,
+            changed_tokens=production.changed_outputs,
+            u1=round(u1, 1),
+            u_post=round(u_post, 1),
+        )
+    boundary_counts = {k: c[RecordingPolicy.BOUNDARY] for k, c in counts.items()}
+    output_counts = {k: c[RecordingPolicy.VU_OUTPUTS] for k, c in counts.items()}
+    # Tokens-only recording: a flip that changed no token costs nothing.
+    assert boundary_counts["a"] == 0
     # Every-VU-output recording pins exactly the faulty VU for a stored corruption ...
-    assert outputs["a"] == outputs["b"] == outputs["c"] == outputs["d"] == 1
-    # ... and the consumers, never the producer, for a read fault.
-    assert outputs["f"] == 1 and outputs["g"] >= 1
+    assert output_counts["a"] == output_counts["b"] == output_counts["c"] == 1
+    assert output_counts["d"] == 1
+    # ... and the consumers, never the producer, for a read fault: more than the tokens-only prover.
+    assert output_counts["e"] > boundary_counts["e"] > 0
+    assert output_counts["g"] > boundary_counts["g"]
+    # A stored corruption that reached the boundary pins its cascade under tokens-only recording.
+    assert boundary_counts["c"] > 1 and boundary_counts["d"] > 1
     if which == "per_request":
-        assert boundary["b"] == 0
-        assert boundary["g"] == 0  # a misread whose consequences never reached a token
+        assert boundary_counts["b"] == 0 and boundary_counts["g"] == 0
     else:
-        assert boundary["h"] == 0 and outputs["h"] == 0  # the toy attention absorbed it
+        assert boundary_counts["h"] >= 1 and output_counts["h"] >= 1
 
 
-# -- H3: random silent data corruption at fleet scale --------------------------------------
+# -- H2: the four strategies on one run ---------------------------------------------------
+
+
+def test_h2_strategies(four_requests: Workload, honest: Recorder) -> None:
+    """P0-P3 on one run holding four faults: charge, recompute, verdict at ``theta = (1/2, 1/8)``."""
+
+    workload = four_requests
+    compiled, injector = workload.compiled, workload.injector
+    index = compiled.index
+    fourth = next(
+        rank
+        for rank, address in enumerate(compiled.circuit.inputs)
+        if index.replay_units.owner(address) == 4
+    )
+    faults = (
+        ("RU 1", token_flip(injector, 1)),
+        ("RU 2", catastrophic(injector, 2)),
+        ("RU 3", interior_flip(injector, 3, bit=0)),
+        ("RU 4", input_read(injector, fourth)),
+    )
+    assert {p.replay_unit for _, p in faults} == {1, 2, 3, 4}
+    values = combine(injector, [p for _, p in faults])
+    outputs = _outputs(workload, values)
+    recorded = record(compiled, values, RecordingPolicy.BOUNDARY)
+    pins = pin_everything(compiled, recorded)
+    every = pin_everything(
+        compiled, record(compiled, values, RecordingPolicy.VU_OUTPUTS)
+    )
+    assert pins[3] == () and _count(every) == 4
+    # The signal of P2: a range check before streaming catches a garbage word, not a bit flip.
+    flagged = {p.replay_unit for _, p in faults if p.fault.name == "CATASTROPHIC"}
+    assert flagged == {2}
+
+    # The header's budget covers every challenge -- every pin of the run -- and is the same
+    # for P0 and P1: the header enters the q-challenge's derivation, so one header is one J.
+    total = _count(pins)
+    # The first seed under which P0 is rejected: a pinned VU opened and sampled.
+    for attempt in range(64):
+        label = f"h2/{attempt}"
+        server = honest_replay(compiled, recorded)
+        silent = workload.run(
+            recorded,
+            outputs,
+            policy=POLICY,
+            max_faults=total,
+            replay=server.replay,
+            declare=None,
+            label=label,
+        )
+        opened = set(silent.report.sampled_replay_units)
+        if silent.report.code is VerificationCode.RELATION_REJECTED and (
+            opened & {1, 2, 4}
+        ) != {1, 2, 4}:
+            break
+    else:
+        pytest.fail("no seed sampled a pinned VU while leaving some faulty RU unopened")
+    declaring = honest_replay(compiled, recorded)
+    p1 = workload.run(
+        recorded,
+        outputs,
+        policy=POLICY,
+        max_faults=total,
+        replay=declaring.replay,
+        declare=declaring.declare,
+        label=label,
+    )
+    assert p1.report.accepted, p1.report
+    assert p1.transcript is not None
+    assert set(p1.report.sampled_replay_units) == opened
+    assert p1.transcript.interiors.declarations == tuple(
+        sorted(v for u in opened for v in pins[u])
+    )
+
+    priced = price(compiled, POLICY)
+    u1, u_post = workload.u1, workload.u_post
+    assert u_post > u1  # at q = 1/2 the adaptive price exceeds the fixed-in-advance one
+    describe = {
+        Strategy.P0: "declares nothing",
+        Strategy.P1: "replays the opened RUs pinned and declares their pins after J",
+        Strategy.P2: (
+            "a value check before streaming flags RU 2 (its garbage word); its pins are declared before "
+            "J at u(1), the other opened pins after J"
+        ),
+        Strategy.P3: "replays every RU before the boundary commitment and declares every pin at u(1)",
+    }
+    for strategy in Strategy:
+        acct = account(
+            strategy,
+            compiled,
+            pins,
+            opened,
+            u1=u1,
+            u_post=u_post,
+            flagged=flagged if strategy is Strategy.P2 else (),
+        )
+        requests_opened = sorted(
+            opened - {0}
+        )  # RU 0 holds the weights and pins nothing
+        if strategy is Strategy.P0:
+            verdict = (
+                f"RELATION_REJECTED: {silent.report.detail}; opened request RUs {requests_opened} of 1-4 "
+                f"(the same header as P1, f_max = {total}, so the same J; nothing declared)"
+            )
+        elif strategy is Strategy.P1:
+            verdict = (
+                f"ACCEPTED with {acct.post_j} post-J declarations for the opened request RUs "
+                f"{requests_opened} under a header budget f_max = {total} (every pin of the run, so that "
+                f"any J is covered); the {total - acct.post_j} pins of the unopened RUs are never declared"
+            )
+        else:
+            verdict = (
+                f"ACCEPTED under P1's declarations (the protocol has no pre-J message); counterfactual charge "
+                f"{acct.pre_j} pre-J at u(1) = {u1:.1f} + {acct.post_j} post-J at u_post(1) = {u_post:.1f}"
+            )
+        # The budget a verifier serving this strategy carries in its header: the pins the
+        # strategy leaves to post-J declarations, whichever RUs J opens; a pre-J pardon
+        # adds u(1) to the fold's bound, under the same cap at the run's outputs.
+        certified = bound(
+            compiled,
+            POLICY,
+            ETA,
+            max_faults=0 if strategy is Strategy.P0 else total - acct.pre_j,
+        )
+        honest.record(
+            id=f"H2{'abcd'[list(Strategy).index(strategy)]}",
+            what=(
+                f"{strategy.value}, {describe[strategy]}; one run of four requests (RequestsG, RU = request) "
+                f"holding a token flip (RU 1), a catastrophic word (RU 2), a low-bit interior flip (RU 3) "
+                f"and a misread prompt token (RU 4); tokens-only recording; {THETA}"
+            ),
+            mechanism="M6"
+            if strategy is Strategy.P1
+            else "none"
+            if strategy is Strategy.P0
+            else "M6 + pre-J pardons (counterfactual)",
+            advice_bits=workload.measurement.advice_bits,
+            capacity_bits=math.ceil(
+                min(certified.bits + acct.pre_j * u1, certified.out_bits)
+            )
+            + workload.measurement.advice_bits,
+            overhead=priced.overhead,
+            description_bytes=workload.measurement.description_bytes,
+            verdict=verdict,
+            notes=(
+                f"Pinned VUs by RU under tokens-only recording: { ({u: len(p) for u, p in pins.items() if p}) } "
+                f"({total} in all; the low-bit flip of RU 3 changed no token and pins nothing; every-VU-output "
+                f"recording would pin {_count(every)}, one per fault). u(1) = {u1:.1f} bits, u_post(1) = "
+                f"rho log2(1/(1-s)) = {u_post:.1f} bits (rho = {u_post / math.log2(8 / 7):.0f}); charge is the "
+                f"price of the declarations made, recompute the share of the run's replay cost the strategy "
+                f"re-executes (the weights RU costs 0). U is the fold with the strategy's header budget "
+                f"(the pins it leaves to post-J declarations) plus its pre-J pardons at u(1), capped at the "
+                f"run's |Out| = {certified.out_bits} bits, plus advice; the toy's fold is saturated, so every "
+                f"strategy certifies the cap and the charge column carries what U would lose."
+            )
+            if strategy is Strategy.P0
+            else "",
+            declarations=acct.declarations,
+            charge_bits=round(acct.charge_bits),
+            recompute=float(acct.recompute),
+            pre_j=acct.pre_j,
+            post_j=acct.post_j,
+            accepted=strategy is not Strategy.P0,
+        )
+
+
+# -- H3: random silent data corruption through the epoch layer -------------------------------
 
 FLEET_ROUNDS = 3
 RUNS_PER_ROUND = 3
 FAULTS_PER_RUN = 1.0
-"""Poisson mean of faults per run: about a billion times the Llama-3 rate for a run this size."""
+"""Poisson mean of flips per run: about a billion times the Llama-3 rate for a run this size."""
+FLEET_SEED = 3
 
 
 @dataclass(frozen=True, slots=True)
 class FleetRun:
-    """One run of the fleet: how many flips it took, what the server recorded and what that pins."""
+    """One run of the fleet: how many flips it took and what the server recorded under each policy."""
 
     faults: int
     changed_tokens: int
-    recorded: dict[int, object]
-    pins: dict[int, tuple[int, ...]]
+    values: dict[int, int]
 
-    @property
-    def declarations(self) -> int:
-        return sum(len(p) for p in self.pins.values())
+    def recorded(
+        self, compiled: Compiled, policy: RecordingPolicy
+    ) -> dict[int, object]:
+        return record(compiled, self.values, policy)
 
 
 def poisson(rng: random.Random, mean: float) -> int:
@@ -525,38 +733,41 @@ def _fleet(workload: Workload, seed: int) -> list[FleetRun]:
             rng.choice(sites): 1 << rng.randrange(SHAPE.width)
             for _ in range(poisson(rng, FAULTS_PER_RUN))
         }
-        values = injector.propagate(flips) if flips else injector.honest
-        recorded = record(compiled, values, RecordingPolicy.BOUNDARY)
+        values = injector.propagate(flips) if flips else dict(injector.honest)
         runs.append(
             FleetRun(
                 len(flips),
                 sum(values[a] != injector.honest[a] for a in outputs),
-                recorded,
-                pin_everything(compiled, recorded),
+                values,
             )
         )
     return runs
 
 
 def _epoch(
-    workload: Workload, fleet: Sequence[FleetRun], strategy: Strategy, max_faults: int
+    workload: Workload,
+    fleet: Sequence[FleetRun],
+    policy: RecordingPolicy,
+    declare: bool,
+    max_faults: int,
 ) -> EpochReport:
     compiled = workload.compiled
     kappa, tree = commit_weights(workload.model.gate_set, workload.model.weights)
     runs = []
     for index, member in enumerate(fleet):
-        server = honest_replay(compiled, member.recorded)
+        recorded = member.recorded(compiled, policy)
+        server = honest_replay(compiled, recorded)
         runs.append(
             Run(
                 workload.measurement.compilation,
-                member.recorded,
-                tuple(member.recorded[a] for a in compiled.circuit.outputs),
+                recorded,
+                tuple(recorded[a] for a in compiled.circuit.outputs),
                 weights=kappa,
                 weight_tree=tree,
                 replay=server.replay,
-                declare=server.declare if strategy is Strategy.P1 else None,
+                declare=server.declare if declare else None,
                 session_id=hashlib.sha256(
-                    f"veritor/stress/honest/fleet/{strategy.name}/{index}".encode()
+                    f"veritor/stress/honest/fleet/{index}".encode()
                 ).digest()[:16],
             )
         )
@@ -594,198 +805,266 @@ def _opened_share(compiled: Compiled, report: EpochReport) -> float:
     return opened / (sum(costs) * report.run_count)
 
 
+def _rounds(report: EpochReport) -> str:
+    parts = []
+    for round_report in report.rounds:
+        rejected = sorted(
+            {
+                run.report.code.name
+                for run in round_report.runs
+                if run.report is not None and not run.report.accepted
+            }
+        )
+        parts.append(
+            f"round {round_report.index}: {round_report.declarations} declared, "
+            f"{sum(1 for run in round_report.runs if not run.accepted)} of {len(round_report.runs)} rejected"
+            + (f" ({', '.join(rejected)})" if rejected else "")
+        )
+    return "; ".join(parts)
+
+
 def test_h3_fleet_in_protocol(per_request: Workload, honest: Recorder) -> None:
     workload = per_request
     compiled = workload.compiled
-    fleet = _fleet(workload, seed=3)
+    # The first fleet seed under which the silent prover loses a round: a pinned VU opened and sampled.
+    for seed in range(FLEET_SEED, FLEET_SEED + 16):
+        fleet = _fleet(workload, seed)
+        pins = {
+            policy: [
+                pin_everything(compiled, member.recorded(compiled, policy))
+                for member in fleet
+            ]
+            for policy in RecordingPolicy
+        }
+        if not any(_count(p) for p in pins[RecordingPolicy.BOUNDARY]):
+            continue
+        p0 = _epoch(workload, fleet, RecordingPolicy.BOUNDARY, False, 0)
+        if not p0.accepted:
+            break
+    else:
+        pytest.fail("no fleet seed produced a pinned VU that was opened and sampled")
     faulted = sum(1 for member in fleet if member.faults)
-    pinning = sum(1 for member in fleet if member.declarations)
-    total_pins = sum(member.declarations for member in fleet)
-    assert faulted and pinning, "the seed must produce faults that reach a token"
-    # The round budget: each pin lands in an opened RU with probability q.
-    mean = float(POLICY.q) * total_pins / FLEET_ROUNDS
-    f_max = fault_budget(mean, tail=1e-3)
-    reports = {
-        Strategy.P0: _epoch(workload, fleet, Strategy.P0, 0),
-        Strategy.P1: _epoch(workload, fleet, Strategy.P1, f_max),
+    flips = sum(member.faults for member in fleet)
+    totals = {
+        policy: sum(_count(p) for p in pins[policy]) for policy in RecordingPolicy
     }
+    pinning = sum(1 for p in pins[RecordingPolicy.BOUNDARY] if _count(p))
+    assert (
+        totals[RecordingPolicy.VU_OUTPUTS] == flips
+    )  # one pin per flip, silent or not
+    assert 0 < pinning <= faulted
     priced = price(compiled, POLICY)
-    charge_per_round = post_j_charge_bits(compiled, POLICY, ETA / FLEET_ROUNDS, f_max)
-    for strategy, report in reports.items():
-        per_round = []
-        for round_report in report.rounds:
-            rejected = sorted(
-                {
-                    run.report.code.name
-                    for run in round_report.runs
-                    if run.report is not None and not run.report.accepted
-                }
-            )
-            per_round.append(
-                f"round {round_report.index}: {len(round_report.runs)} runs, "
-                f"{round_report.declarations} declared, "
-                f"{sum(1 for run in round_report.runs if not run.accepted)} rejected"
-                + (f" ({', '.join(rejected)})" if rejected else "")
-            )
-        rejections = sum(1 for r in report.rounds for run in r.runs if not run.accepted)
-        declared = sum(r.declarations for r in report.rounds)
-        if strategy is Strategy.P1:
-            assert report.accepted, report.detail
-            assert declared <= total_pins
-        else:
-            assert declared == 0
+    table = union([compiled.kind_table()] * RUNS_PER_ROUND)
+    rho = bound(table, POLICY, ETA / FLEET_ROUNDS).rho
+    u_post = rho * math.log2(1 / (1 - float(POLICY.s)))
+    u1 = unit_fault_bits(table)
+    rejections = sum(1 for r in p0.rounds for run in r.runs if not run.accepted)
+    assert rejections
+    fleet_what = (
+        f"random SDC over a fleet of {len(fleet)} runs of {workload.name} (RU = request) in "
+        f"{FLEET_ROUNDS} rounds of {RUNS_PER_ROUND} through run_epoch at {THETA}: Poisson({FAULTS_PER_RUN:g}) "
+        f"bit flips per run at random dot words and bits ({flips} flips in {faulted} runs, "
+        f"{pinning} runs changed a streamed token)"
+    )
+    honest.record(
+        id="H3a",
+        what=f"{fleet_what}; P0 declares nothing",
+        mechanism="none",
+        advice_bits=workload.measurement.advice_bits,
+        capacity_bits=math.ceil(p0.capacity_bits)
+        + len(fleet) * workload.measurement.advice_bits,
+        overhead=priced.overhead,
+        description_bytes=workload.measurement.description_bytes,
+        verdict=f"epoch {p0.code.name}: {rejections} of {p0.run_count} runs rejected; {_rounds(p0)}",
+        notes=(
+            f"The rate is about a billion times the Llama-3 SDC rate ({SDC_RATE_PER_DEVICE_HOUR:.1e} per "
+            f"device-hour) for a run of this size, so that faults occur at all in a fleet we can afford to "
+            f"simulate; the mechanism, not the rate, is what these rows check. Tokens-only recording pins "
+            f"{totals[RecordingPolicy.BOUNDARY]} VUs over the fleet (the flips that reached a token, with their "
+            f"cascades), every-VU-output recording {totals[RecordingPolicy.VU_OUTPUTS]} (one per flip, silent or "
+            f"not). A pinned VU the silent prover neither declares nor recomputes away is a rejection when "
+            f"sampled: {rejections} run(s) lost, and with them the epoch."
+        ),
+        declarations=0,
+        charge_bits=0,
+        recompute=_opened_share(compiled, p0),
+        rejections=rejections,
+        accepted=False,
+    )
+    for letter, policy in (
+        ("b", RecordingPolicy.BOUNDARY),
+        ("c", RecordingPolicy.VU_OUTPUTS),
+    ):
+        mean = float(POLICY.q) * totals[policy] / FLEET_ROUNDS
+        f_max = fault_budget(mean, tail=1e-3)
+        p1 = _epoch(workload, fleet, policy, True, f_max)
+        assert p1.accepted, p1.detail
+        declared = sum(r.declarations for r in p1.rounds)
+        assert 0 < declared <= totals[policy]
+        assert max(r.declarations for r in p1.rounds) <= f_max
         honest.record(
-            id="H3a" if strategy is Strategy.P0 else "H3b",
+            id=f"H3{letter}",
             what=(
-                f"random SDC over a fleet of {len(fleet)} runs of {workload.name} in {FLEET_ROUNDS} rounds "
-                f"through run_epoch at theta = (1/2, 1/8): Poisson({FAULTS_PER_RUN:g}) bit flips per run at "
-                f"random dot words and bits ({faulted} runs faulted, {pinning} changed a streamed token, "
-                f"{total_pins} pinned VUs in all); {strategy.value} "
-                + (
-                    "declares nothing"
-                    if strategy is Strategy.P0
-                    else f"declares the pins of the opened RUs after J under a round budget f_max = {f_max}"
-                )
+                f"{fleet_what}; P1 with {policy.name} recording declares the pins of the opened RUs "
+                f"after J under a round budget f_max = {f_max}"
             ),
             mechanism="M6",
             advice_bits=workload.measurement.advice_bits,
-            capacity_bits=math.ceil(report.capacity_bits)
-            + FLEET_ROUNDS * RUNS_PER_ROUND * workload.measurement.advice_bits,
+            capacity_bits=math.ceil(p1.capacity_bits)
+            + len(fleet) * workload.measurement.advice_bits,
             overhead=priced.overhead,
             description_bytes=workload.measurement.description_bytes,
-            verdict=f"epoch {report.code.name}: {rejections} of {report.run_count} runs rejected; "
-            + "; ".join(per_round),
+            verdict=(
+                f"epoch ACCEPTED: 0 of {p1.run_count} runs rejected, {declared} of the fleet's "
+                f"{totals[policy]} pinned VUs declared (those in opened RUs); {_rounds(p1)}"
+            ),
             notes=(
-                f"The rate is about a billion times the Llama-3 SDC rate ({SDC_RATE_PER_DEVICE_HOUR:.1e} per "
-                f"device-hour) for a run of this size, so that faults occur at all in a fleet we can afford to "
-                f"simulate; the mechanism, not the rate, is what this row checks. Flips land at a uniformly random "
-                f"dot word and bit; with tokens-only recording only those that change a streamed token pin anything. "
-                f"Round budget f_max = fault_budget(q * pins / rounds = {mean:.2f}, tail 1e-3) = {f_max}; "
-                f"u(1) = {unit_fault_bits(compiled):.1f} bits. The capacity is the epoch's Bound at eta summed over "
-                f"the rounds, plus the advice of every run"
-                + (
-                    f"; the budget costs {charge_per_round:.1f} bits per round uncapped (at eta / rounds), "
-                    f"{FLEET_ROUNDS * charge_per_round:.1f} for the epoch."
-                    if strategy is Strategy.P1
-                    else "."
-                )
+                f"Round budget f_max = fault_budget(q x pins / rounds = {mean:.2f}, tail 1e-3) = {f_max}, "
+                f"carried by every header of the round and charged once per round: {f_max} x u_post(1) = "
+                f"{f_max * u_post:.0f} bits per round at u_post(1) = rho log2(1/(1-s)) = {u_post:.1f} bits "
+                f"(rho = {rho:.0f} for the round's union of {RUNS_PER_ROUND} tables at eta / {FLEET_ROUNDS}), "
+                f"{FLEET_ROUNDS * f_max * u_post:.0f} for the epoch; the same pins before J would cost "
+                f"u(1) = {u1:.1f} bits each. U is the epoch's Bound at eta with the budget, summed over the "
+                f"rounds and capped at the outputs, plus the advice of every run. The two recording policies "
+                f"need different budgets, so their headers and with them their J differ; recompute is the "
+                f"opened share of the fleet's replay cost either way."
             ),
             declarations=declared,
-            charge_bits=round(FLEET_ROUNDS * charge_per_round)
-            if strategy is Strategy.P1
-            else 0,
-            recompute=_opened_share(compiled, report),
-            rejections=rejections,
+            charge_bits=round(FLEET_ROUNDS * f_max * u_post),
+            recompute=_opened_share(compiled, p1),
+            rejections=0,
+            f_max=f_max,
+            accepted=True,
         )
 
 
-def test_h3_phase_diagram(per_request: Workload, honest: Recorder) -> None:
-    compiled = per_request.compiled
-    table = compiled.kind_table()
-    priced = price(compiled, POLICY)
+# -- the phase diagram (section 5): analytic on the headline table ----------------------------
+
+DENSITIES = (
+    ("a 16,384-GPU fleet for an hour", SDC_RATE_PER_DEVICE_HOUR * 16_384),
+    ("a 16,384-GPU fleet for a day", SDC_RATE_PER_DEVICE_HOUR * 16_384 * 24),
+    ("a million GPUs for a day", SDC_RATE_PER_DEVICE_HOUR * 1e6 * 24),
+    ("a million GPUs for a year", SDC_RATE_PER_DEVICE_HOUR * 1e6 * 8760),
+    ("a thousand times that", SDC_RATE_PER_DEVICE_HOUR * 1e9 * 8760),
+)
+"""Faults per round at the Llama-3 rate, each taken to pin one VU."""
+
+
+def _headline_policies() -> list[tuple[str, VerificationPolicy, float]]:
+    """``(name, policy, rho)`` for the headline operating point and two alternates on its table."""
+
     headline = estimate()
     inputs = Inputs()
-    frontier = serving_table(
+    table = serving_table(
         replace(inputs.shape, requests=inputs.requests), "request", "cell"
     )
-    headline_policy = VerificationPolicy(Fraction(headline.q), Fraction(headline.s))
-    simulation = fold_capacity(table, POLICY, ETA)
-    at_headline = rate_capacity(headline.rho, headline.s, headline.inputs.lam)
-    fleet_hour = SDC_RATE_PER_DEVICE_HOUR * 16_384
-    global_year = SDC_RATE_PER_DEVICE_HOUR * 1e6 * 8760
-    where_sim = f"simulation table ({compiled.index.verification_unit_count} VUs), theta = (1/2, 1/8), fold"
-    where_headline = f"headline table, theta = ({headline.q:.2g}, {headline.s:.2g}), rate closed form"
-    corners: list[
-        tuple[str, str, Capacity, VerificationPolicy, float, float | None, str]
-    ] = [
-        (
-            "c",
-            where_sim,
-            simulation,
-            POLICY,
-            unit_fault_bits(table),
-            fleet_hour,
-            "a 16,384-GPU fleet for an hour per round",
-        ),
-        (
-            "d",
-            where_sim,
-            simulation,
-            POLICY,
-            unit_fault_bits(table),
-            fleet_hour * 24,
-            "a 16,384-GPU fleet for a day per round",
-        ),
-        (
-            "e",
-            where_sim,
-            simulation,
-            POLICY,
-            unit_fault_bits(table),
-            None,
-            "the 1% boundary",
-        ),
-        (
-            "f",
-            where_headline,
-            at_headline,
-            headline_policy,
-            unit_fault_bits(frontier),
-            global_year,
-            "a million GPUs for a year per round",
-        ),
-        (
-            "g",
-            where_headline,
-            at_headline,
-            headline_policy,
-            unit_fault_bits(frontier),
-            None,
-            "the 1% boundary",
-        ),
-        (
-            "h",
-            where_headline,
-            at_headline,
-            headline_policy,
-            unit_fault_bits(frontier),
-            global_year * 1e3,
-            "a billion GPUs for a year per round",
-        ),
+    q, s = headline.q, headline.s
+    out = [("headline", VerificationPolicy(Fraction(q), Fraction(s)), headline.rho)]
+    for name, policy in (
+        ("q x 10", VerificationPolicy(Fraction(10 * q), Fraction(s))),
+        ("s x 10", VerificationPolicy(Fraction(q), Fraction(10 * s))),
+    ):
+        out.append((name, policy, rate(table, policy).rho))
+    return out
+
+
+def test_phase_diagram_at_the_headline() -> None:
+    """Section 5's table: the post-J price is the floor ``f_max = 1`` at every realistic density."""
+
+    headline = estimate()
+    inputs = Inputs()
+    table = serving_table(
+        replace(inputs.shape, requests=inputs.requests), "request", "cell"
+    )
+    u1 = unit_fault_bits(table)
+    assert u1 == pytest.approx(16 + math.log2(headline.verification_units), abs=0.01)
+    policies = _headline_policies()
+    diagrams = {
+        name: phase_diagram(rho, policy, u1, [d for _, d in DENSITIES])
+        for name, policy, rho in policies
+    }
+    base = diagrams["headline"]
+    *realistic, absurd = base
+    assert base[0].capacity_bits == pytest.approx(headline.capacity_bits)
+    # u_post(1) is (u(1) + 1) / q at the scattered channel, 3.2e-4 of U_0: the price of the floor.
+    assert base[0].u_post == pytest.approx((u1 + 1) / headline.q, rel=0.03)
+    assert base[0].u_post / base[0].capacity_bits == pytest.approx(3.2e-4, rel=0.02)
+    for point in base:
+        assert point.exceeded == pytest.approx(
+            poisson_tail(point.declarations_mean, point.f_max), rel=1e-6
+        )
+        # the budget is the floor or the smallest count with a tail below 1e-6
+        assert point.exceeded <= 1e-6
+        assert point.f_max == 1 or 1e-6 < poisson_tail(
+            point.declarations_mean, point.f_max - 1
+        )
+        # P3 pardons every fault at u(1) and undercuts the floor, at recompute 1 against q ...
+        assert point.p3_charge_bits < point.p1_charge_bits
+        assert point.p0_rejected == pytest.approx(
+            headline.q * headline.s * point.faults_per_round, rel=0.01
+        )
+        # P0's expected loss of one round is below the floor's price at every density here ...
+        assert point.p0_beats_p1()
+    for point in realistic:
+        assert point.f_max == 1 and point.p1_share == pytest.approx(3.2e-4, rel=0.02)
+        # ... by four orders of magnitude while the floor holds (its charge grows with D)
+        assert point.p3_charge_bits < 1e-4 * point.p1_charge_bits
+    # ... up to a million GPUs for a year; a rejection that forfeits a thousand-round epoch
+    # turns the comparison there (q D x 1000 = 0.039 against log2(e) / lam = 0.036).
+    assert realistic[-1].p0_beats_p1(rounds_lost=100)
+    assert not realistic[-1].p0_beats_p1(rounds_lost=1000)
+    assert all(point.p0_beats_p1(rounds_lost=1000) for point in realistic[:-1])
+    # A billion GPU-years leaves the floor: q D = 0.039 needs f_max = 3 at tail 1e-6.
+    assert absurd.declarations_mean == pytest.approx(0.0389, rel=0.01)
+    assert absurd.f_max == 3 and absurd.p1_share == pytest.approx(3 * 3.2e-4, rel=0.02)
+    # The floor is left (f_max = 2 at tail 1e-6) only near sqrt(2e-6) / q faults per round ...
+    leave = math.sqrt(2e-6) / headline.q
+    assert leave == pytest.approx(9.0e4, rel=0.01)
+    assert (
+        fault_budget(headline.q * leave * 0.5)
+        == 1
+        < fault_budget(headline.q * leave * 2)
+    )
+    # ... and P1's charge reaches 1% of U_0 (31 declarations) only past 1e8 faults per round.
+    thirty_one = math.ceil(0.01 * base[0].capacity_bits / base[0].u_post)
+    assert thirty_one == 31
+    assert fault_budget(headline.q * 1e8) < 31 < fault_budget(headline.q * 1e9)
+    # Ten times q: the same price per declaration (a share set by s alone), ten times the count.
+    tenfold_q = diagrams["q x 10"]
+    assert tenfold_q[0].u_post / tenfold_q[0].capacity_bits == pytest.approx(
+        base[0].u_post / base[0].capacity_bits, rel=0.02
+    )
+    assert tenfold_q[-1].declarations_mean == pytest.approx(
+        10 * base[-1].declarations_mean
+    )
+    assert tenfold_q[-1].f_max == 6
+    # Ten times s: the same count, ten times the share -- 3.4e-3 of U_0 for the one-declaration floor.
+    tenfold_s = diagrams["s x 10"]
+    assert tenfold_s[0].p1_share == pytest.approx(10 * base[0].p1_share, rel=0.05)
+    assert tenfold_s[-1].declarations_mean == pytest.approx(base[-1].declarations_mean)
+    assert tenfold_s[-1].f_max == 3 and tenfold_s[-1].p1_share == pytest.approx(
+        0.0101, rel=0.02
+    )
+    # P0 against P1 does not depend on s: the same verdicts at ten times s.
+    assert [p.p0_beats_p1(1000) for p in tenfold_s] == [
+        p.p0_beats_p1(1000) for p in base
     ]
-    boundaries: dict[str, float] = {}
-    for letter, where, capacity, policy, u1, density, describe in corners:
-        boundary = boundaries.setdefault(
-            where, phase_boundary(capacity, policy, share=0.01)
-        )
-        if density is None:
-            density = boundary
-        (point,) = phase_diagram(capacity, policy, [density], u1=u1)
-        honest.record(
-            id=f"H3{letter}",
-            what=f"random SDC, {describe}: {density:.3g} faults per round; {where}; P1 against P3",
-            mechanism="M6",
-            advice_bits=0,
-            capacity_bits=math.ceil(point.capacity_bits + point.p1_charge_bits),
-            overhead=priced.overhead if policy is POLICY else headline.overhead,
-            description_bytes=0,
-            verdict=(
-                f"P1: q x faults = {point.declarations_mean:.3g} expected declarations, f_max = {point.f_max} at "
-                f"tail 1e-6, charge {point.p1_charge_bits:.3g} bits = {point.p1_share:.2e} of U = {point.capacity_bits:.3g}; "
-                f"P3: f_max = {point.p3_f_max} at u(1) = {point.u1:.1f} bits, charge {point.p3_charge_bits:.3g} bits, "
-                f"recompute 1; P1's charge reaches 1% of U at {boundary:.3g} faults per round"
-            ),
-            notes=(
-                "Faults per round ~ Poisson(rate x device-hours) at the Llama-3 rate; each lands in an opened RU with "
-                "probability q, so P1's declarations ~ Poisson(q x faults) and f_max is the smallest budget with tail "
-                "below 1e-6; the charge is for the budget the header carries. The simulation table is priced by the "
-                "fold (bound/declared_bits, uncapped); the headline by the rate closed form U = rho lambda + log2 e "
-                "that docs/global-estimate.md uses, under which a post-J declaration costs rho log2(1 / (1 - s)) bits, "
-                "a share log2(1 / (1 - s)) / lambda of U whatever the model. P3 pardons every fault before J at u(1) "
-                "and re-executes the whole run."
-            ),
-            declarations=point.f_max,
-            charge_bits=round(point.p1_charge_bits),
-            recompute=float(policy.q),
-        )
-    assert boundaries[where_headline] > boundaries[where_sim]
+
+
+@pytest.mark.slow
+def test_fold_and_closed_form_price_the_headline_declaration() -> None:
+    """``bound(max_faults=1)`` on the headline table is the fold's price; the closed form's is the doc's."""
+
+    headline = estimate()
+    inputs = Inputs()
+    table = serving_table(
+        replace(inputs.shape, requests=inputs.requests), "request", "cell"
+    )
+    policy = VerificationPolicy(Fraction(headline.q), Fraction(headline.s))
+    base = bound(table, policy, ETA)
+    declared = bound(table, policy, ETA, max_faults=1)
+    fold_price = declared.bits - base.bits
+    closed = headline.rho * math.log2(1 / (1 - headline.s))
+    # the fold is loose by four orders of magnitude at this policy, its price of a declaration by one
+    assert base.bits > 1e3 * headline.capacity_bits
+    assert closed < fold_price < 100 * closed

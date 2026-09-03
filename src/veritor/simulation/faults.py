@@ -53,6 +53,26 @@ def expected_faults(
     return device_hours * rate
 
 
+def _poisson_mass(mean: float, k: int) -> float:
+    """The Poisson pmf at ``k``, in log space: stable for large means."""
+
+    if mean == 0:
+        return 1.0 if k == 0 else 0.0
+    return math.exp(k * math.log(mean) - mean - math.lgamma(k + 1))
+
+
+def poisson_tail(mean: float, count: int) -> float:
+    """``P[Poisson(mean) > count]``, summed upward so that tiny tails keep their digits."""
+
+    if mean < 0 or type(count) is not int or count < 0:
+        raise ValueError("mean must be nonnegative and count a nonnegative integer")
+    if mean == 0:
+        return 0.0
+    # past mean + 50 sqrt(mean) + 50 the terms are below double precision of the sum
+    last = int(max(count + 1, mean + 50 * math.sqrt(mean))) + 50
+    return sum(_poisson_mass(mean, k) for k in range(count + 1, last + 1))
+
+
 def fault_budget(mean: float, tail: float = 1e-6, *, at_least: int = 1) -> int:
     """The smallest ``f_max >= at_least`` with ``P[Poisson(mean) > f_max] <= tail``.
 
@@ -67,16 +87,11 @@ def fault_budget(mean: float, tail: float = 1e-6, *, at_least: int = 1) -> int:
         raise ValueError("mean must be nonnegative and at_least a nonnegative integer")
     if mean == 0:
         return at_least
-    log_mean = math.log(mean)
-
-    def mass(k: int) -> float:  # the Poisson pmf in log space: stable for large means
-        return math.exp(k * log_mean - mean - math.lgamma(k + 1))
-
     f = at_least
-    cumulative = sum(mass(k) for k in range(f + 1))
+    cumulative = sum(_poisson_mass(mean, k) for k in range(f + 1))
     while 1 - cumulative > tail:
         f += 1
-        cumulative += mass(f)
+        cumulative += _poisson_mass(mean, f)
     return f
 
 
@@ -322,4 +337,5 @@ __all__ = [
     "fault_budget",
     "inject_fault",
     "is_dot_unit",
+    "poisson_tail",
 ]

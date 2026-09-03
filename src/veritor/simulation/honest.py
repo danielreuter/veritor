@@ -8,16 +8,16 @@ log, and *reconstructs* an opened RU's interior when the q-challenge asks for
 it.  When a recomputed value disagrees with a value it recorded -- and, for a
 boundary value, already committed -- the commitment is binding: the server
 keeps the recorded value and declares the VU that produced it.  This module
-models that server.
+models that server (``docs/honest-prover.md``, sections 3 and 5).
 
 **Recording policies.**  :class:`RecordingPolicy` names what the server
 keeps of a run (:func:`record` restricts the omniscient assignment to it):
 
 * ``BOUNDARY``: the inputs, the weights and every RU's declared outputs
   ``Out(R)`` -- what the boundary commitment and the weight tree need and
-  nothing more.  For ``RequestsG`` (RU = request) the recorded values of a
-  run are its streamed tokens; for ``ClusterG`` (RU = step) the KV values and
-  tokens that cross steps.
+  nothing more.  For ``RequestsG`` (RU = request) the recorded computed
+  values of a run are its streamed tokens; for ``ClusterG`` (RU = step) the
+  KV values and tokens that cross steps as well.
 * ``VU_OUTPUTS``: the boundary plus every VU's declared output word, the
   interior positions of every RU -- the server logs every kernel's output.
   A VU's internal gates are recorded under no policy: they are never
@@ -31,21 +31,21 @@ pinned: it is the value the interior commits at that address, and it is the
 value every later gate of the replay reads there; the recomputed value is
 compared with it and, when the two differ, the VU owning the address is
 added to the pinned set.  At an address the server did not record, the
-recomputed value is stored and read downstream.  The interior this yields is
-recorded where the server recorded, recomputed elsewhere, and satisfies every
-VU's relation except at the pinned VUs, whose relations fail against their
-own (pinned or recomputed) inputs: a reader of a pinned value was recomputed
-from that value, so its relation holds against it.  The pinned VUs are
-therefore exactly what the server must declare (M6) for the run to be
-accepted whatever the s-challenge samples, and ``len(pinned)`` is the
-declaration count of the RU; :func:`~veritor.protocol.self_check` over the
+recomputed value is stored and read downstream.  The interior this yields
+satisfies every VU's relation except at the pinned VUs, whose relations fail
+against their own inputs: a reader of a pinned value was recomputed from that
+value, so its relation holds against it.  The pinned VUs are therefore
+exactly what the server must declare (M6) for the run to be accepted whatever
+the s-challenge samples, and :func:`~veritor.protocol.self_check` over the
 committed interior finds the same set (``tests/veritor/stress/test_honest_replay.py``
-asserts it).  A fault that changed no recorded value costs no declaration:
-the replay recomputes the correct interior, and it agrees with the recorded
-boundary.  A fault that changed a recorded value costs one declaration per
-recorded value it changed, whether or not the VU that produced it is the one
-that faulted: with tokens-only recording the declarations name the tokens
-that came out wrong, not the kernel that went wrong.
+asserts it).  Two consequences shape the declaration counts of section 4: a
+fault that changed no recorded value costs no declaration, since the replay
+recomputes the correct interior and it agrees with the recording; and a fault
+that changed recorded values costs one declaration per recorded value it
+changed, whether or not the VU that produced it is the one that faulted --
+with tokens-only recording the declarations name the tokens that came out
+wrong, not the kernel that went wrong.  The replay consults nothing the
+policy did not record: ``recorded`` is the only source of values.
 
 **Fault classes.**  :class:`FaultClass` and the injection helpers produce
 the production run of each class in the simulation's omniscient view
@@ -56,40 +56,45 @@ cell as another value while the stored value, and the value the boundary or
 the weight root commits, stays right) are its ``misreads``.  The pinned gate
 set of the toy decoder is integer arithmetic without a NaN or infinity, so
 the catastrophic class corrupts every bit of an early word: the garbage is
-a finite value that propagates like any other wrong value, and nothing
-downstream can tell it apart from a legitimate one.
+a finite value that propagates like any other wrong value.  Not every bit
+of a word is significant for the gate that reads it (the toy attention's
+polynomial softmax annihilates the top bits of a key at rest);
+:func:`significant_bits` says which are, and :func:`boundary_at_rest` flips
+the most significant of them.
 
 **Strategies.**  :class:`Strategy` and :func:`account` price a run under the
-four prover strategies of ``docs/honest-prover.md``: ``P0`` declares nothing
-and takes the rejections; ``P1`` records the boundary, replays the opened RUs
-pinned and declares what it pins after ``J`` (the protocol as built); ``P2``
-declares before ``J`` at ``u(1)`` the pins of the RUs a hardware or value
-signal flagged before streaming, and the rest as ``P1``; ``P3`` replays every
-RU before ``J`` and declares every pin at ``u(1)``.  The protocol has no
-pre-``J`` declaration message, so ``P2`` and ``P3`` are counterfactual
-accounting -- their charge is what a protocol with that message would bill,
-their verdict is the built protocol's under ``P1`` declarations.
+four strategies of ``docs/honest-prover.md``, section 5: ``P0`` declares
+nothing and takes the rejections; ``P1`` records the boundary, replays the
+opened RUs pinned and declares what it pins after ``J`` (the protocol as
+built); ``P2`` declares before ``J`` at ``u(1)`` the pins of the RUs a
+signal flagged before streaming, and the rest as ``P1``; ``P3`` replays
+every RU before ``J`` and declares every pin at ``u(1)``.  A post-J
+declaration is priced at ``u_post(1) = rho log2 (1 / (1 - s))``, the slope
+of the fold times the threshold one adaptive declaration lowers
+(``docs/notes/late-advice.md``; ``(u(1) + 1) / q`` at the scattered
+channel); the protocol has no pre-J declaration message, so ``P2`` and
+``P3`` are counterfactual accounting: their charge is what a protocol with
+that message would bill, their verdict is the built protocol's under ``P1``
+declarations.  :func:`phase_diagram` is the same accounting at fleet scale,
+analytic in the fault density with Poisson counts.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from fractions import Fraction
 
-from veritor.analysis.bound import BoundOptions, bound
-from veritor.analysis.faults import declared_bits, unit_fault_bits
-from veritor.core import Compiled, KindTable, VerificationPolicy, as_kind_table
+from veritor.core import Compiled, VerificationPolicy
 from veritor.core.indexed import iter_members
 from veritor.protocol.session import Values
 
-from .faults import FaultInjector, dot_units, fault_budget
+from .faults import FaultInjector, dot_units, fault_budget, poisson_tail
 
 __all__ = [
     "Account",
-    "Capacity",
     "FaultClass",
     "HonestReplay",
     "PhasePoint",
@@ -99,18 +104,16 @@ __all__ = [
     "account",
     "boundary_at_rest",
     "catastrophic",
-    "fold_capacity",
+    "combine",
     "honest_replay",
     "input_read",
     "interior_flip",
-    "phase_boundary",
     "phase_diagram",
     "pin_everything",
-    "post_j_charge_bits",
-    "rate_capacity",
     "record",
     "recorded_addresses",
     "replay_pinned",
+    "significant_bits",
     "token_flip",
     "vu_output_read",
     "weight_read",
@@ -284,6 +287,12 @@ class Production:
     honest_outputs: tuple[int, ...]
 
     @property
+    def stored(self) -> bool:
+        """Whether the word itself is corrupted (else only its readers' copies are)."""
+
+        return not self.misreaders
+
+    @property
     def changed_outputs(self) -> int:
         return sum(
             a != b for a, b in zip(self.outputs, self.honest_outputs, strict=True)
@@ -316,6 +325,29 @@ def _production(
         outputs=tuple(values[a] for a in outputs),
         honest_outputs=tuple(injector.honest[a] for a in outputs),
     )
+
+
+def combine(injector: FaultInjector, faults: Iterable[Production]) -> dict[int, int]:
+    """The production assignment holding every fault of ``faults`` at once.
+
+    Stored corruptions become flips and read faults misreads of one
+    ``propagate`` call, so the cones compose as they would in one run; two
+    faults at one word are refused.
+    """
+
+    flips: dict[int, int] = {}
+    misreads: dict[int, dict[int, int]] = {}
+    seen: set[int] = set()
+    for fault in faults:
+        if fault.address in seen:
+            raise ValueError(f"two faults land on word {fault.address}")
+        seen.add(fault.address)
+        if fault.stored:
+            flips[fault.address] = fault.correct ^ fault.corrupted
+        else:
+            for reader in fault.misreaders:
+                misreads.setdefault(reader, {})[fault.address] = fault.corrupted
+    return injector.propagate(flips, misreads)
 
 
 def _top_bit(injector: FaultInjector, address: int) -> int:
@@ -408,24 +440,53 @@ def input_read(injector: FaultInjector, rank: int = 0) -> Production:
     )
 
 
+def significant_bits(
+    injector: FaultInjector, address: int, readers: Sequence[int]
+) -> tuple[int, ...]:
+    """The bits of the word at ``address`` whose misread by ``readers`` changes a VU output.
+
+    A bit not listed is inert for those readers: flipping it in their copy
+    changes no value any recording policy keeps, so no replay can see it
+    and no declaration is needed for it.
+    """
+
+    compiled = injector.compiled
+    recorded = recorded_addresses(compiled, RecordingPolicy.VU_OUTPUTS)
+    honest = injector.honest
+    significant = []
+    for bit in range(compiled.circuit[address].width):
+        corrupted = honest[address] ^ (1 << bit)
+        values = injector.propagate({}, {r: {address: corrupted} for r in readers})
+        if any(values[a] != honest[a] for a in recorded):
+            significant.append(bit)
+    return tuple(significant)
+
+
 def boundary_at_rest(
     injector: FaultInjector, producer: int, consumer: int
 ) -> Production:
-    """(f) The first output word of RU ``producer`` that RU ``consumer`` reads, read there with its top bit flipped."""
+    """(f) The first output word of RU ``producer`` that RU ``consumer`` reads, read there with its
+    most significant :func:`significant_bits` bit flipped (a top-bit flip may be inert)."""
 
     compiled = injector.compiled
     owner = compiled.index.replay_units.owner
     for address in compiled.circuit.Out(compiled.index.replay_units.unit(producer)):
         readers = tuple(r for r in injector.readers[address] if owner(r) == consumer)
-        if readers:
-            return _production(
-                injector,
-                FaultClass.BOUNDARY_AT_REST,
-                address,
-                injector.honest[address] ^ _top_bit(injector, address),
-                misreaders=readers,
-            )
-    raise LookupError(f"unit {consumer} reads no output of unit {producer}")
+        if not readers:
+            continue
+        significant = significant_bits(injector, address, readers)
+        if not significant:
+            continue
+        return _production(
+            injector,
+            FaultClass.BOUNDARY_AT_REST,
+            address,
+            injector.honest[address] ^ (1 << significant[-1]),
+            misreaders=readers,
+        )
+    raise LookupError(
+        f"unit {consumer} reads no output of unit {producer} significantly"
+    )
 
 
 def vu_output_read(injector: FaultInjector, replay_unit: int) -> Production:
@@ -450,7 +511,7 @@ class Strategy(Enum):
     """The prover's declaration strategy (``docs/honest-prover.md``, section 5)."""
 
     P0 = "P0"
-    """No declarations; a sampled faulty VU is a rejection."""
+    """No declarations; a sampled pinned VU is a rejection."""
     P1 = "P1"
     """Post-J: replay the opened RUs pinned, declare the pins (the protocol as built)."""
     P2 = "P2"
@@ -467,49 +528,37 @@ class Account:
     pre_j: int
     """Declarations priced before the q-challenge, at ``u(1)`` each (counterfactual for P2, P3)."""
     post_j: int
-    """Declarations made after the q-challenge, priced by ``declared_bits`` (what the protocol saw)."""
+    """Declarations made after the q-challenge, at ``u_post(1)`` each (what the protocol saw)."""
     recompute: Fraction
     """The share of the production replay cost the prover re-executed."""
     charge_bits: float
-    """``pre_j * u(1)`` plus the post-J price, uncapped by the interface."""
+    """``pre_j * u(1) + post_j * u_post(1)``."""
 
-
-def post_j_charge_bits(
-    compiled: Compiled,
-    policy: VerificationPolicy,
-    eta: Fraction,
-    declarations: int,
-    options: BoundOptions | None = None,
-) -> float:
-    """What ``declarations`` post-J declarations add to ``U`` at ``policy``, before the interface cap."""
-
-    if declarations == 0:
-        return 0.0
-    table = as_kind_table(compiled)
-    options = BoundOptions() if options is None else options
-    base = bound(table, policy, eta, options)
-    uncapped = min(base.knapsack_bits, base.laplace_bits)
-    return declared_bits(table, policy, eta, options, declarations, uncapped) - uncapped
+    @property
+    def declarations(self) -> int:
+        return self.pre_j + self.post_j
 
 
 def account(
     strategy: Strategy,
     compiled: Compiled,
-    policy: VerificationPolicy,
-    eta: Fraction,
     pinned: Mapping[int, Sequence[int]],
     opened: Iterable[int],
     *,
+    u1: float,
+    u_post: float,
     flagged: Iterable[int] = (),
 ) -> Account:
     """Price one run under ``strategy``.
 
     ``pinned`` is :func:`pin_everything` (what each RU's pinned replay
     declares), ``opened`` the RUs the q-challenge opened, ``flagged`` the RUs
-    a signal marked before streaming (P2 only).  The recompute share counts
-    the RUs the strategy replayed: the opened ones for P0 and P1 -- the
-    protocol requires their replay whether or not anything is declared --
-    the opened and flagged ones for P2, all of them for P3.
+    a signal marked before streaming (P2 only); ``u1`` and ``u_post`` are the
+    prices of one pre-J and one post-J declaration.  The recompute share
+    counts the RUs the strategy replayed by their replay cost: the opened
+    ones for P0 and P1 -- the protocol requires their replay whether or not
+    anything is declared -- the opened and flagged ones for P2, all of them
+    for P3.
     """
 
     circuit, index = compiled.circuit, compiled.index
@@ -539,160 +588,111 @@ def account(
         recompute=Fraction(sum(cost[unit] for unit in replayed), total)
         if total
         else Fraction(0),
-        charge_bits=pre_j * unit_fault_bits(compiled)
-        + post_j_charge_bits(compiled, policy, eta, post_j),
+        charge_bits=pre_j * u1 + post_j * u_post,
     )
 
 
 # -- the phase diagram ------------------------------------------------------------------
 
-Capacity = Callable[[int], tuple[float, float]]
-"""``f -> (U_0, charge)``: the capacity without declarations and what ``f`` post-J
-declarations add to it, in bits, both uncapped by the interface."""
-
-
-def fold_capacity(
-    target: Compiled | KindTable,
-    policy: VerificationPolicy,
-    eta: Fraction,
-    options: BoundOptions | None = None,
-) -> Capacity:
-    """The fold's price of post-J declarations (``bound`` and ``declared_bits``)."""
-
-    table = as_kind_table(target)
-    options = BoundOptions() if options is None else options
-    base = bound(table, policy, eta, options)
-    uncapped = min(base.knapsack_bits, base.laplace_bits)
-
-    def capacity(declarations: int) -> tuple[float, float]:
-        if declarations == 0:
-            return uncapped, 0.0
-        priced = declared_bits(table, policy, eta, options, declarations, uncapped)
-        return uncapped, priced - uncapped
-
-    return capacity
-
-
-def rate_capacity(rho: float, s: float, lam: float = 40.0) -> Capacity:
-    """The headline's closed form: ``U = rho lam + log2 e`` (:mod:`veritor.analysis.rate`).
-
-    ``f`` post-J declarations lower the threshold by ``f log2 (1 / (1 - s))``
-    bits (the first bound of :mod:`veritor.analysis.faults`, the smaller of
-    the two whenever ``s < 1 - 1 / (1 + n)``), so they cost
-    ``rho f log2 (1 / (1 - s))``: a fixed share ``f log2 (1 / (1 - s)) / lam``
-    of ``U`` whatever the model.
-    """
-
-    if not 0 <= s < 1 or rho < 0 or lam <= 0:
-        raise ValueError("rate_capacity needs rho >= 0, 0 <= s < 1 and lam > 0")
-    per_declaration = rho * math.log2(1 / (1 - s))
-    return lambda declarations: (rho * lam + LOG2E, declarations * per_declaration)
-
 
 @dataclass(frozen=True, slots=True)
 class PhasePoint:
-    """One fault density under one policy: what P1 and P3 need and pay."""
+    """One fault density under one policy: what P0 risks and what P1 and P3 pay."""
 
     faults_per_round: float
+    """``D``: the Poisson mean of pinned VUs per round, had every RU been opened."""
     q: float
     s: float
-    declarations_mean: float
-    """``q * faults``: the expected post-J declarations of P1."""
-    f_max: int
-    """The budget P1's header needs: ``fault_budget(declarations_mean, tail)``."""
     capacity_bits: float
-    """``U_0``, uncapped."""
-    p1_charge_bits: float
-    """What ``f_max`` post-J declarations add to ``U_0``."""
+    """``U_0 = rho lambda + log2 e``."""
     u1: float
+    """``u(1)``: one pre-J declaration."""
+    u_post: float
+    """``u_post(1) = rho log2 (1 / (1 - s))``: one post-J declaration."""
+    declarations_mean: float
+    """``q D``: the post-J declarations P1 makes, a Poisson mean."""
+    f_max: int
+    """The round budget P1 needs: ``fault_budget(q D, tail)``."""
+    exceeded: float
+    """``P[Poisson(q D) > f_max]``: the round P1 loses to its budget."""
+    p0_rejected: float
+    """``1 - exp(-q s D)``: some pinned VU opened and sampled, undeclared."""
     p3_f_max: int
-    """The budget P3 needs: every fault, opened or not, ``fault_budget(faults, tail)``."""
-    p3_charge_bits: float
-    """``p3_f_max * u(1)``: pre-J declarations, with recompute 1."""
+    """The budget P3 needs before J: ``fault_budget(D, tail)``, every fault opened or not."""
+
+    @property
+    def p1_charge_bits(self) -> float:
+        return self.f_max * self.u_post
+
+    @property
+    def p3_charge_bits(self) -> float:
+        return self.p3_f_max * self.u1
 
     @property
     def p1_share(self) -> float:
-        return (
-            self.p1_charge_bits / self.capacity_bits if self.capacity_bits else math.inf
-        )
+        return self.p1_charge_bits / self.capacity_bits
+
+    @property
+    def p3_share(self) -> float:
+        return self.p3_charge_bits / self.capacity_bits
+
+    def p0_beats_p1(self, rounds_lost: int = 1) -> bool:
+        """Whether P0's expected loss is below P1's charge, both as shares of a round's ``U_0``.
+
+        A rejection forfeits ``rounds_lost`` rounds' capacity: one when the
+        round alone is lost, the epoch's count under the epoch layer as built
+        (one rejected run rejects the epoch).  For small ``s`` and ``q s D``
+        the comparison is ``q D rounds_lost < log2(e) / lam``: ``s`` cancels.
+        """
+
+        return self.p0_rejected * rounds_lost < self.p1_share
 
 
 def phase_diagram(
-    capacity: Capacity,
+    rho: float,
     policy: VerificationPolicy,
+    u1: float,
     densities: Iterable[float],
     *,
-    u1: float,
+    lam: float = 40.0,
     tail: float = 1e-6,
 ) -> list[PhasePoint]:
-    """P1 and P3 at each fault density (expected faults per round) under ``policy``.
+    """P0, P1 and P3 at each fault density under ``policy`` for a table of slope ``rho``.
 
-    Faults per round are Poisson; each lands in an opened RU with probability
-    ``q``, so P1's declarations are Poisson with mean ``q * faults`` and its
-    header needs the budget :func:`~veritor.simulation.faults.fault_budget`
-    gives for that mean at ``tail``; the charge is for the budget, not for
-    the declarations made.  P3 pardons every fault before J at ``u(1)``.
+    ``U_0 = rho lam + log2 e`` is the closed form of :mod:`veritor.analysis.rate`
+    (``rho`` from ``rate`` or from the fold's ``BoundResult.rho``); a post-J
+    declaration lowers the threshold by ``log2 (1 / (1 - s))`` bits and so
+    costs ``rho`` times that.  Pinned VUs per round are Poisson with mean
+    ``D``; each lies in an opened RU with probability ``q``, so P1 declares
+    ``Poisson(q D)`` and needs the budget :func:`~veritor.simulation.faults.fault_budget`
+    gives at ``tail``, charged whether or not it is used; P0 is rejected
+    when one is sampled as well; P3 pardons every fault before J at ``u1``
+    and re-executes the whole round.
     """
 
     q, s = float(policy.q), float(policy.s)
+    if not 0 <= s < 1 or rho < 0 or lam <= 0:
+        raise ValueError("phase_diagram needs rho >= 0, 0 <= s < 1 and lam > 0")
+    u_post = rho * math.log2(1 / (1 - s))
     points = []
     for density in densities:
         if density < 0:
             raise ValueError("fault densities are nonnegative")
-        f_max = fault_budget(q * density, tail)
-        p3_f_max = fault_budget(density, tail)
-        u0, charge = capacity(f_max)
+        mean = q * density
+        f_max = fault_budget(mean, tail)
         points.append(
             PhasePoint(
                 faults_per_round=density,
                 q=q,
                 s=s,
-                declarations_mean=q * density,
-                f_max=f_max,
-                capacity_bits=u0,
-                p1_charge_bits=charge,
+                capacity_bits=rho * lam + LOG2E,
                 u1=u1,
-                p3_f_max=p3_f_max,
-                p3_charge_bits=p3_f_max * u1,
+                u_post=u_post,
+                declarations_mean=mean,
+                f_max=f_max,
+                exceeded=poisson_tail(mean, f_max),
+                p0_rejected=-math.expm1(-s * mean),
+                p3_f_max=fault_budget(density, tail),
             )
         )
     return points
-
-
-def phase_boundary(
-    capacity: Capacity,
-    policy: VerificationPolicy,
-    *,
-    share: float = 0.01,
-    tail: float = 1e-6,
-    max_declarations: int = 100_000,
-) -> float:
-    """The least fault density (faults per round) at which P1's charge reaches ``share`` of ``U_0``.
-
-    ``0.0`` when the one declaration every admitting header carries already
-    costs that much; ``inf`` when ``max_declarations`` do not.
-    """
-
-    u0, _ = capacity(0)
-    declarations = 1
-    while capacity(declarations)[1] < share * u0:
-        declarations += 1
-        if declarations > max_declarations:
-            return math.inf
-    if declarations <= 1:
-        return 0.0
-    q = float(policy.q)
-    if q == 0:
-        return math.inf
-    low, high = 0.0, 1.0
-    while fault_budget(q * high, tail) < declarations:
-        high *= 2
-    for _ in range(200):
-        middle = (low + high) / 2
-        if fault_budget(q * middle, tail) >= declarations:
-            high = middle
-        else:
-            low = middle
-        if high - low <= 1e-9 * high:
-            break
-    return high
