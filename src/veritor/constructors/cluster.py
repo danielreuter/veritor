@@ -129,10 +129,11 @@ class ClusterG:
     fleet); ``G(x, a)`` returns the description bytes and the public inputs
     -- the prompt tokens and, for a sampling shape, the random words -- as
     the ``in`` gates consume them.  ``gate_set`` is the Σ its descriptions
-    are written over.
+    are written over.  :meth:`advice_bits` declares the schedule's bit
+    length (:meth:`Schedule.bit_length`), which the compiler charges exactly.
     """
 
-    VERSION = "3"
+    VERSION = "4"
 
     def __init__(
         self,
@@ -222,6 +223,15 @@ class ClusterG:
             return Schedule.decode(a)
         except ScheduleError as error:
             raise TracerError(f"malformed advice: {error}") from error
+
+    def advice_bits(self, x: object, a: bytes) -> int:
+        """The schedule's bit length: what the compiler charges for ``a``.
+
+        ``a`` is the schedule's bits zero-padded to whole bytes
+        (:meth:`Schedule.encode`); a malformed ``a`` is a :class:`TracerError`.
+        """
+
+        return self._decode_advice(a).bit_length()
 
     # -- layouts ---------------------------------------------------------------------
 

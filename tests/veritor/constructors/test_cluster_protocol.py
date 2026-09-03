@@ -85,7 +85,8 @@ def test_the_compilation_binds_the_constructor_the_prompts_and_the_schedule(depl
     assert compilation.constructor == deployment.constructor.digest
     assert compilation.inputs == deployment.constructor.flatten_inputs(REQUESTS, deployment.schedule)
     assert compilation.advice == deployment.schedule.encode()
-    assert compilation.advice_bits == 8 * len(deployment.schedule.encode()) > 0
+    assert compilation.advice_bits == deployment.schedule.bit_length() > 0  # exact bits, not 8 * len(a)
+    assert 8 * len(compilation.advice) - 8 < compilation.advice_bits <= 8 * len(compilation.advice)
     assert deployment.weights.count == SHAPE.weight_count == deployment.compiled.index.weight_count
     # the claimed outputs are what sequential decoding gives
     layout = deployment.constructor.output_layout(REQUESTS, deployment.schedule)

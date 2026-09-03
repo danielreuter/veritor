@@ -284,7 +284,7 @@ def run(config: DemoConfig) -> Summary:
     verifier_parameters = VerifierParameters(
         config.eta,
         max_capacity=math.ceil(bound_result.bits),
-        max_advice_bits=8 * len(advice),
+        max_advice_bits=compilation.advice_bits,
         max_work=config.work_budget,
     )
     honest = _honest_run(
@@ -397,7 +397,7 @@ def _workload_summary(
         token_steps=sum(join.length for join in simulation.schedule.joins),
         utilization=simulation.utilization,
         advice_bytes=len(advice),
-        advice_bits=8 * len(advice),
+        advice_bits=simulation.schedule.bit_length(),
         arrival_records=tuple(
             ArrivalRecord(a.index, a.time, len(a.request.prompt), a.request.max_new, a.request_id)
             for a in simulation.arrivals

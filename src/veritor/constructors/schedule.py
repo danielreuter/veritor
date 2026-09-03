@@ -12,7 +12,8 @@ what the cluster constructor takes as its advice ``a``.  The scheduler that
 produces it (:func:`schedule_fcfs`, or the simulated datacenter of
 :mod:`veritor.simulation`) is the client's choice and outside the trust boundary;
 the compiler only needs the schedule to be well formed, and the protocol
-charges its encoded length.
+charges its length in bits (:meth:`Schedule.bit_length`; the bytes on the wire
+are that bit string zero-padded, and the padding is checked).
 
 A request may join more than once: when a pod fails, the tokens its
 occupants had already streamed stand, and each occupant is restarted from
@@ -39,13 +40,62 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import pairwise
 
-_MAGIC = b"veritor/schedule/v3\0"
-_WORD = 4
-_JOIN_WORDS = 7
+_LIMIT = 1 << 32
+"""Every field of a schedule is below this: the words of a run, not of a number theory."""
 
 
 class ScheduleError(ValueError):
     """A schedule that is malformed or inconsistent with its requests."""
+
+
+def width(count: int) -> int:
+    """Bits of a field over ``count`` values: ``ceil(log2 count)``, ``0`` for a single value."""
+
+    return (count - 1).bit_length()
+
+
+def gamma(value: int) -> str:
+    """Elias-gamma code of ``value >= 1``: ``n`` zeros then the ``n + 1`` bits of ``value``.
+
+    Prefix-free and canonical, ``2 * floor(log2 value) + 1`` bits long: the
+    self-delimiting code for a field with no fixed upper bound.
+    """
+
+    if value < 1:
+        raise ScheduleError("gamma codes positive integers")
+    binary = format(value, "b")
+    return "0" * (len(binary) - 1) + binary
+
+
+class _BitReader:
+    """Reads :meth:`Schedule.bits` back out of its bytes, most significant bit first."""
+
+    __slots__ = ("bits", "position")
+
+    def __init__(self, data: bytes) -> None:
+        self.bits = "".join(format(byte, "08b") for byte in data)
+        self.position = 0
+
+    def fixed(self, count: int) -> int:
+        end = self.position + count
+        if end > len(self.bits):
+            raise ScheduleError("truncated schedule")
+        value = int(self.bits[self.position : end], 2) if count else 0
+        self.position = end
+        return value
+
+    def gamma(self) -> int:
+        zeros = 0
+        while self.fixed(1) == 0:
+            zeros += 1
+        return (1 << zeros) | self.fixed(zeros)
+
+    def finish(self) -> None:
+        """The rest must be the zero padding to the byte boundary."""
+
+        rest = self.bits[self.position :]
+        if len(rest) >= 8 or any(bit == "1" for bit in rest):
+            raise ScheduleError("schedule bytes are not canonical")
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,7 +211,7 @@ class Schedule:
     was cut off -- and a resumed attempt has a cache to continue.  Requests
     whose generation is cut short by a failure, an early stop or the end of
     the run simply produce fewer tokens; every such choice is the client's
-    and is paid for by the encoded length of the schedule.
+    and is paid for by the bit length of the schedule.
     """
 
     pods: int
@@ -172,7 +222,7 @@ class Schedule:
     def __post_init__(self) -> None:
         for name in ("pods", "slots", "steps"):
             value = getattr(self, name)
-            if type(value) is not int or value < 1 or value >= 1 << (8 * _WORD):
+            if type(value) is not int or value < 1 or value >= _LIMIT:
                 raise ScheduleError(f"{name} must be a positive integer below 2**32")
         if type(self.joins) is not tuple:
             raise ScheduleError("joins must be a tuple")
@@ -188,8 +238,8 @@ class Schedule:
                 ("pod", self.pods),
                 ("step", self.steps),
                 ("slot", self.slots),
-                ("request", 1 << (8 * _WORD)),
-                ("chunk", 1 << (8 * _WORD)),
+                ("request", _LIMIT),
+                ("chunk", _LIMIT),
             ):
                 value = getattr(join, field)
                 if type(value) is not int or not 0 <= value < limit:
@@ -208,46 +258,76 @@ class Schedule:
                 raise ScheduleError(f"slot {join.slot} of pod {join.pod} is double-booked at step {join.step}")
             busy_until[key] = join.step + join.length
 
-    # -- canonical bytes ----------------------------------------------------------
+    # -- canonical bits -----------------------------------------------------------
 
-    def encode(self) -> bytes:
-        """``magic | pods | slots | steps | count | joins*``, all big-endian ``u32``.
+    def bits(self) -> str:
+        """The schedule as a bit string: what the protocol charges, one bit per character.
 
-        A join is ``pod | step | slot | request | length | resume | chunk``.
+        The header is ``pods``, ``slots``, ``steps`` and ``1 + count``, each
+        Elias-gamma coded (:func:`gamma`).  A join is then ``pod``, ``step``,
+        ``slot`` and ``length - 1`` in fixed widths ``ceil(log2 pods)``,
+        ``ceil(log2 steps)``, ``ceil(log2 slots)`` and ``ceil(log2 steps)``
+        (a field over one value takes no bits), the ``resume`` flag in one
+        bit, and ``1 + request`` and ``1 + chunk`` gamma coded.  The code is
+        prefix-free and a schedule has exactly one encoding, so
+        :meth:`decode` can insist on it.
         """
 
-        out = bytearray(_MAGIC)
-        for value in (self.pods, self.slots, self.steps, len(self.joins)):
-            out.extend(value.to_bytes(_WORD, "big"))
+        out = [gamma(self.pods), gamma(self.slots), gamma(self.steps), gamma(1 + len(self.joins))]
+        pod_width, slot_width, step_width = width(self.pods), width(self.slots), width(self.steps)
         for join in self.joins:
-            words = (join.pod, join.step, join.slot, join.request, join.length, int(join.resume), join.chunk)
-            for value in words:
-                out.extend(value.to_bytes(_WORD, "big"))
-        return bytes(out)
+            out.append(format(join.pod, f"0{pod_width}b") if pod_width else "")
+            out.append(format(join.step, f"0{step_width}b") if step_width else "")
+            out.append(format(join.slot, f"0{slot_width}b") if slot_width else "")
+            out.append(format(join.length - 1, f"0{step_width}b") if step_width else "")
+            out.append("1" if join.resume else "0")
+            out.append(gamma(1 + join.request))
+            out.append(gamma(1 + join.chunk))
+        return "".join(out)
+
+    def bit_length(self) -> int:
+        """``len(self.bits())``: the advice bits a constructor declares for the schedule."""
+
+        return len(self.bits())
+
+    def encode(self) -> bytes:
+        """:meth:`bits` packed big-endian into ``ceil(bits / 8)`` bytes, the padding zero.
+
+        The format is v4 of the schedule; it carries no version tag of its
+        own, since the advice is only ever read by the constructor whose
+        digest (and so version) the header names.
+        """
+
+        bits = self.bits()
+        padded = bits + "0" * (-len(bits) % 8)
+        return int(padded, 2).to_bytes(len(padded) // 8, "big") if padded else b""
 
     @classmethod
     def decode(cls, data: bytes) -> Schedule:
-        """Parse canonical bytes; anything but the exact encoding of a schedule fails."""
+        """Parse canonical bytes; anything but the exact encoding of a schedule fails.
 
-        if type(data) is not bytes or not data.startswith(_MAGIC):
+        Truncated or extended bytes, a nonzero padding bit and every
+        non-canonical rendering (the fields' codes are prefix-free, so there
+        is only the one) are :class:`ScheduleError`.
+        """
+
+        if type(data) is not bytes:
             raise ScheduleError("not a schedule")
-        body = memoryview(data)[len(_MAGIC) :]
-        if len(body) < 4 * _WORD:
-            raise ScheduleError("truncated schedule header")
-        words = [int.from_bytes(body[i : i + _WORD], "big") for i in range(0, 4 * _WORD, _WORD)]
-        pods, slots, steps, count = words
-        rest = body[4 * _WORD :]
-        stride = _JOIN_WORDS * _WORD
-        if len(rest) != count * stride:
-            raise ScheduleError("schedule length does not match its join count")
+        reader = _BitReader(data)
+        pods, slots, steps = reader.gamma(), reader.gamma(), reader.gamma()
+        count = reader.gamma() - 1
+        pod_width, slot_width, step_width = width(pods), width(slots), width(steps)
         joins = []
-        for i in range(0, len(rest), stride):
-            pod, step, slot, request, length, resume, chunk = (
-                int.from_bytes(rest[i + k * _WORD : i + (k + 1) * _WORD], "big") for k in range(_JOIN_WORDS)
-            )
-            if resume > 1:
-                raise ScheduleError("a join's resume flag must be 0 or 1")
-            joins.append(Join(pod, step, slot, request, length, bool(resume), chunk))
+        for _ in range(count):
+            pod = reader.fixed(pod_width)
+            step = reader.fixed(step_width)
+            slot = reader.fixed(slot_width)
+            length = 1 + reader.fixed(step_width)
+            resume = reader.fixed(1) == 1
+            request = reader.gamma() - 1
+            chunk = reader.gamma() - 1
+            joins.append(Join(pod, step, slot, request, length, resume, chunk))
+        reader.finish()
         schedule = cls(pods, slots, steps, tuple(joins))
         if schedule.encode() != data:
             raise ScheduleError("schedule bytes are not canonical")

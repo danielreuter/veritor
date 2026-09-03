@@ -152,25 +152,25 @@ def test_observed_survival_matches_the_prediction(summary):
 
 
 def test_the_advice_is_charged_at_the_encoded_schedule(config, summary):
-    """``a`` is ``Schedule.encode()``: a header and five words per join; a shorter ``A`` rejects the run."""
+    """``a`` is ``Schedule.encode()``, charged at the schedule's bit length; a shorter ``A`` rejects the run."""
 
     w = summary.workload
-    assert w.advice_bytes == 20 + 16 + 28 * w.joins
-    assert w.advice_bits == 8 * w.advice_bytes == summary.compile.advice_bytes * 8
     shape, workload = config.shape, config.workload
     parameters = random_parameters(shape, config.parameters_seed)
     simulation = simulate(workload, shape, parameters)
     advice = simulation.schedule.encode()
-    assert len(advice) == w.advice_bytes
+    assert len(advice) == w.advice_bytes == summary.compile.advice_bytes == -(-w.advice_bits // 8)
+    assert w.advice_bits == simulation.schedule.bit_length() < 8 * w.advice_bytes + 8
     gate_set = make_isa_gate_set(shape.width)
     constructor = ClusterG(shape, workload.pods, workload.slots, workload.steps)
     compilation = Compile(
         constructor, simulation.requests, advice, gate_set, max_advice_bits=8 * len(advice)
     )
+    assert compilation.advice_bits == w.advice_bits
     kappa, _tree = commit_weights(gate_set, parameters.flatten())
     outputs = tuple(token for response in simulation.streamed for token in response)
     parameters_short = VerifierParameters(
-        config.eta, max_capacity=None, max_advice_bits=8 * len(advice) - 8
+        config.eta, max_capacity=None, max_advice_bits=compilation.advice_bits - 1
     )
     expectation = make_expectation(
         compilation, POLICY, outputs, parameters=parameters_short, weights=kappa
