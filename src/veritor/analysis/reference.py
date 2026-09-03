@@ -20,9 +20,8 @@ import math
 from collections.abc import Callable, Iterator, Sequence
 from fractions import Fraction
 
-from circuit_cut_analysis.capacity import GateCapacity
-from circuit_cut_analysis.circuit import CircuitDAG, Gate
-from circuit_cut_analysis.mincut import minimum_vertex_cut
+import networkx as nx
+
 from veritor.core.circuit import Circuit
 from veritor.core.compiled import Compiled
 from veritor.core.description import VERIFICATION, Frame
@@ -146,36 +145,38 @@ def cover_bits(compiled: Compiled, errors: ErrorSet) -> int:
 def cut_bits(compiled: Compiled, errors: ErrorSet) -> int:
     """The exact minimum downstream cut of the gates of ``E``, in bits.
 
-    This is the tightest capacity the downstream-cut theorem allows and is
-    never above :func:`cover_bits`.
+    A minimum vertex cut of the circuit between the erroneous gates and the
+    outputs, each gate weighted by its width: split every gate into an entry
+    and an exit vertex joined by an edge of capacity ``width``, give the
+    wires unbounded capacity, and take the maximum flow from the erroneous
+    gates' entries to the outputs' exits.  The erroneous gates may be cut
+    themselves (their own width bounds their influence), and so may the
+    outputs.  This is the tightest capacity the downstream-cut theorem
+    allows and is never above :func:`cover_bits`.
     """
 
     circuit = compiled.circuit
-    gates = [
-        Gate(str(address), GateCapacity.values(1 << circuit[address].width), op=circuit[address].op)
-        for address in range(circuit.n)
-    ]
-    edges = {
-        (str(arg), str(address))
-        for address in range(circuit.n)
-        for arg in circuit[address].args
-    }
-    dag = CircuitDAG(gates, edges, {str(address) for address in circuit.outputs})
     sources = {
-        str(address)
+        address
         for unit in errors
         for address in compiled.index.verification_unit(unit).interval
         if not circuit[address].is_source  # a source gate holds its pinned value
     }
     if not sources:
         return 0
-    capacity = minimum_vertex_cut(dag, sources, dag.outputs).exact_capacity
-    if capacity is None:  # pragma: no cover - the all-gate cut policy is exact
-        raise AssertionError("the explicit min-cut is exact")
-    multiplier = capacity.multiplier
-    if multiplier.denominator != 1 or multiplier.numerator & (multiplier.numerator - 1):
-        raise ValueError("gate widths must be whole bits")
-    return multiplier.numerator.bit_length() - 1
+    graph: nx.DiGraph[object] = nx.DiGraph()
+    for address in range(circuit.n):
+        gate = circuit[address]
+        graph.add_edge(("entry", address), ("exit", address), capacity=gate.width)
+        for arg in gate.args:
+            graph.add_edge(("exit", arg), ("entry", address))  # no capacity: unbounded
+    for address in sources:
+        graph.add_edge("source", ("entry", address))
+    for address in circuit.outputs:
+        graph.add_edge(("exit", address), "sink")
+    if not graph.has_node("sink"):
+        return 0
+    return int(nx.maximum_flow_value(graph, "source", "sink"))
 
 
 def admissible_sets(compiled: Compiled, policy: VerificationPolicy, eta: Fraction) -> list[ErrorSet]:

@@ -84,10 +84,7 @@ src/veritor/
   analysis/      Bound, Cost, Optimize as folds over the kinds of I
   constructors/  Tracer, DemoG, MatmulG, the toy LM and ClusterG         (untrusted)
   research.py    the paper-level facade
-src/circuit_cut_analysis/
-                 exact downstream cuts on explicit DAGs (the Bound reference)
-docs/            plans and handoffs
-archive/         earlier incarnations, untouched
+docs/            reports, measurements (docs/data), notes
 ~~~
 
 ## Compile
@@ -335,6 +332,6 @@ uv run ruff check src tests
 ~~~
 
 The tests in `tests/veritor/analysis` check the fold against exhaustive
-enumeration of error sets on small circuits and against the explicit cut
-oracle in `circuit_cut_analysis`; `tests/veritor/protocol/test_scaling.py`
+enumeration of error sets on small circuits and against an exact min-cut
+(`veritor.analysis.reference`); `tests/veritor/protocol/test_scaling.py`
 checks that verifier time is flat in the number of gates.

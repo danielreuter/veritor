@@ -6,8 +6,8 @@ At a tiny shape the compiled table is checked gate for gate against the
 closed forms (``gate_budget``), every gate is in exactly one replay unit
 (RU) and one verification unit (VU), the request and the weights are
 closed, no VU is wider than the argmax block's ``(best, index)`` pair, and
-the dot products and MACs reconcile with the legacy ``circuit_cut_analysis``
-GPT-2 DAG built at the same shape.  At ``GPT2Shape.small()`` a three-request
+the dot products and MACs reconcile with the inner-product and MAC counts
+recorded from the legacy explicit GPT-2 DAG at the same shape.  At ``GPT2Shape.small()`` a three-request
 run (prompt 32, 32 generated tokens) compiles in well under a second and its
 table carries the numbers of ``docs/gpt2-structure.md``.  The values the
 circuit computes are tested in ``test_gpt2_reference.py`` (a tiny model
@@ -21,8 +21,6 @@ from fractions import Fraction
 
 import pytest
 
-from circuit_cut_analysis.models.gpt2 import GPT2Config
-from circuit_cut_analysis.models.gpt2_circuit import build_gpt2_indexed_circuit
 from veritor.analysis.bound import BoundOptions, bound, cut_bits
 from veritor.analysis.cost import cost
 from veritor.compile import Compiler
@@ -371,38 +369,24 @@ def test_it_takes_no_advice_and_checks_its_requests() -> None:
 # -- the legacy explicit DAG ----------------------------------------------------------------
 
 
-def legacy_inner_products(shape: GPT2Shape, request: Request) -> tuple[dict[str, int], dict[str, int]]:
-    """The legacy GPT-2 DAG at ``shape`` for one greedy request: inner products and multiplies by family.
+LEGACY_PRODUCTS = {
+    "q-projection": 320,
+    "k-projection": 320,
+    "v-projection": 320,
+    "output-projection": 320,
+    "score": 60,
+    "value-reduction": 320,
+    "expansion": 640,
+    "contraction": 320,
+    "lm-head": 33,
+}
+"""Inner products by family in the legacy explicit GPT-2 DAG (``circuit_cut_analysis``,
+removed after e063ea6) at ``TINY`` for ``LEGACY_REQUEST``: its ``inner-product-output``
+nodes, recorded before the package was deleted."""
 
-    Families tagged ``inner-product-output`` are the legacy ``write`` nodes,
-    one per inner product; the ``mul`` primitives of the same families are
-    its MACs (the score family also holds the ``1/sqrt(d_head)`` scaling,
-    one per score).
-    """
-
-    config = GPT2Config(
-        model_id="tiny",
-        layers=shape.layers,
-        hidden_size=shape.d_model,
-        heads=shape.heads,
-        intermediate_size=shape.d_ff,
-        vocabulary_size=shape.vocab,
-        max_context=shape.context,
-    )
-    circuit = build_gpt2_indexed_circuit(len(request.prompt), request.max_new, config=config).circuit
-    families = ("q-projection", "k-projection", "v-projection", "output-projection", "score", "value-reduction", "expansion", "contraction", "lm-head")
-    products = dict.fromkeys(families, 0)
-    muls = dict.fromkeys(families, 0)
-    for family in circuit.families.values():
-        tags = set(family.tags)
-        name = next((f for f in families if f in tags), None)
-        if name is None:
-            continue
-        if family.primitive is None and "inner-product-output" in tags:
-            products[name] += family.count
-        elif family.primitive == "mul":
-            muls[name] += family.count
-    return products, muls
+LEGACY_MACS = 84_896
+"""The legacy DAG's ``mul`` primitives in the same families, minus the one ``1/sqrt(d_head)``
+scaling multiply per score (which is a VU of its own here)."""
 
 
 def test_the_legacy_explicit_dag_agrees_on_inner_products_and_macs() -> None:
@@ -420,22 +404,10 @@ def test_the_legacy_explicit_dag_agrees_on_inner_products_and_macs() -> None:
     constructor = GPT2G(TINY)
     compiled = compile_gpt2(constructor, (LEGACY_REQUEST,))
     kinds = by_name(constructor, compiled.kind_table())
-    products, muls = legacy_inner_products(TINY, LEGACY_REQUEST)
+    products = LEGACY_PRODUCTS
     d, dh, heads, layers, vocab = TINY.d_model, TINY.d_head, TINY.heads, TINY.layers, TINY.vocab
     positions, predictions, keys = positions_of((LEGACY_REQUEST,)), predictions_of((LEGACY_REQUEST,)), keys_of((LEGACY_REQUEST,))
 
-    assert products == {
-        "q-projection": 320,
-        "k-projection": 320,
-        "v-projection": 320,
-        "output-projection": 320,
-        "score": 60,
-        "value-reduction": 320,
-        "expansion": 640,
-        "contraction": 320,
-        "lm-head": 33,
-    }
-    assert muls["score"] == 60 * dh + 60  # the MACs and the scaling
     assert kinds[f"dot({d},True,True)"][0] == products["q-projection"] + products["k-projection"] + products["v-projection"]
     assert kinds[f"dot({d},True,False)"][0] == products["output-projection"] + products["expansion"]
     assert kinds[f"dot({TINY.d_ff},True,False)"][0] == products["contraction"]
@@ -445,8 +417,7 @@ def test_the_legacy_explicit_dag_agrees_on_inner_products_and_macs() -> None:
     ours = sum(copies for name, (copies, _) in kinds.items() if name.startswith("dot("))
     assert ours == sum(products.values()) + positions * d == 2_653 + positions * d
     # MACs: the legacy multiplies of the dot families; ours from the unpadded chain lengths
-    legacy_macs = sum(muls.values()) - products["score"]
-    assert legacy_macs == 84_896
+    legacy_macs = LEGACY_MACS
     projections = (kinds[f"dot({d},True,True)"][0] + kinds[f"dot({d},True,False)"][0]) * d
     projections += kinds[f"dot({TINY.d_ff},True,False)"][0] * TINY.d_ff
     scores = products["score"] * dh
