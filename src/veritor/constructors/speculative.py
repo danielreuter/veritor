@@ -29,16 +29,17 @@ tokens in a step is output-determined -- the blanks show it -- which is the
 uncharged third route to ``m`` (not taken here).
 
 **Advice** (``acceptance="advice"``).  The per-step ``m`` is advice,
-``ceil(log2(gamma + 2))`` bits each, self-delimiting: steps follow until the
-emitted count reaches ``max_new``.  A step with advice ``m`` drafts ``m + 1``
+``ceil(log2(gamma + 2))`` bits each (:meth:`SpeculativeG.advice_bits`, what
+the protocol charges), self-delimiting: steps follow until the emitted
+count reaches ``max_new``.  A step with advice ``m`` drafts ``m + 1``
 tokens (``d_{m+1}`` is the rejected one, or the cache fill when ``m =
 gamma``), verifies ``m + 1`` positions and emits ``d_1..d_m, z_m``.  Its
 :meth:`SpeculativeG.acceptance_check` unit multiplies into a running ``ok``
 word ``[d_i == z_{i-1}]`` for ``i <= m`` and, for ``m < gamma``, ``1 - [d_{m+1}
 == z_m]``: the accepted prefix is exactly the agreeing prefix.  ``ok`` is the
-request's first output and the verifier requires ``1``.  The circuit holds
-only the accepted work: the same target positions as plain decoding, plus
-the draft's, plus the checks.
+request's first output and a *check output*: the verifier requires ``1``
+and it carries no capacity.  The circuit holds only the accepted work: the
+same target positions as plain decoding, plus the draft's, plus the checks.
 
 Structure.  The root calls the target's ``weights`` unit, then the draft's,
 then one ``request`` replay unit per request whose ports are both weight
@@ -467,14 +468,29 @@ class SpeculativeG:
         def root(_v: Wires) -> object:
             w_target = self.target.weights_unit()()
             w_draft = self.draft.weights_unit()()
-            return [
-                self.request(len(r.prompt), r.max_new, None if acceptances is None else acceptances[i])(
+            outputs: list[Wires] = []
+            for i, r in enumerate(requests):
+                request = self.request(len(r.prompt), r.max_new, None if acceptances is None else acceptances[i])(
                     w_target, w_draft
                 )
-                for i, r in enumerate(requests)
-            ]
+                if acceptances is not None:
+                    self.tracer.check(request[0], 1)  # ok: the verifier requires 1
+                outputs.append(request)
+            return outputs
 
         return root
+
+    def advice_bits(self, x: object, a: bytes | None = None) -> int:
+        """The bits the advice carries: ``acceptance_bits(gamma)`` per step of every request (``0`` when padded).
+
+        The steps are what ``a`` names (the advice is self-delimiting), so
+        this decodes it; a malformed ``a`` is a :class:`TracerError`.
+        """
+
+        if not self.advised:
+            return 0
+        acceptances = decode_acceptances(self.gamma, self.requests(x), b"" if a is None else a)
+        return sum(len(steps) for steps in acceptances) * acceptance_bits(self.gamma)
 
     def __call__(self, x: object, a: bytes) -> tuple[bytes, tuple[int, ...]]:
         if type(a) is not bytes:

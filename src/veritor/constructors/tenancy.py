@@ -87,8 +87,11 @@ class ModelsG:
 
     # -- inputs and advice ----------------------------------------------------------
 
-    def advice_bits(self, x: object) -> int:
-        """``ceil(log2 models)`` per request when the server routes; ``0`` when the client does."""
+    def advice_bits(self, x: object, a: bytes | None = None) -> int:
+        """``ceil(log2 models)`` per request when the server routes; ``0`` when the client does.
+
+        What the compiler charges for ``a``: the bits before padding to bytes.
+        """
 
         if self.routing == "input":
             return 0

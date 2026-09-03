@@ -56,10 +56,15 @@ it:
   per chosen expert per position per layer, charged as advice), the
   circuit runs only the chosen experts, and a ``route_check`` VU recomputes
   the chosen experts' ranks from the router logits and multiplies the
-  result into a running ``ok`` word.  ``ok`` is an output the verifier
-  requires to be ``1``: a route that is not the router's top-``k`` either
-  shows as ``ok = 0`` or forces the client to break the check's relation,
-  which the sampled checks catch like any other incorrect gate.
+  result into a running ``ok`` word.  ``ok`` is a *check output* (the
+  constructor marks it in the root's ``checks``): the verifier requires it
+  to be ``1`` and it carries no capacity.  A route that is not the router's
+  top-``k`` either shows as ``ok = 0``, which the verifier rejects, or
+  forces the client to break the check's relation, which the sampled
+  checks catch like any other incorrect gate.  The step bodies do not
+  depend on the route: a routed step takes the chosen experts' weights as
+  ports, so the route enters at the call site (which parent ranges are
+  passed) and the same definitions serve every route.
 
 The default ``experts = 0`` is the dense decoder, byte for byte.
 
@@ -1138,37 +1143,90 @@ class ToyLM:
 
         return router_topk
 
-    def route_check(self, route: Route) -> TracedDefinition:
-        """``ok_in * prod_{e in route} [rank_e < k]``: the advised route against the router's logits.
+    def route_check(self) -> TracedDefinition:
+        """``ok_in * prod_{j < k} [rank_j < k]``: the advised route against the router's logits.
 
-        Ports: the ``E`` router logits, the constants ``1`` and ``k``, the
-        running ``ok``.  Only the advised experts' ranks are computed, so the
-        unit costs ``k (E - 1)`` comparisons instead of the padded route's
-        ``E (E - 1) / 2``.  Its output is folded into the request's ``ok``
-        output, which the verifier requires to be ``1``.
+        Ports: the ``E`` router logits *in route order* (the advised experts'
+        first, then the rest ascending), the ``E`` expert ids in the same
+        order (words of the constant table), the constant ``k``, the running
+        ``ok``.  ``rank_j = sum_{f != j} [g_f > g_j] + [g_f == g_j] [id_f <
+        id_j]`` is :func:`expert_ranks` with the ids breaking ties, so the
+        body does not depend on which experts were advised: the route enters
+        through the order of the ports.  ``k`` ranks of ``E - 1`` terms each,
+        ``5 k (E - 1)`` gates, against the padded route's ``E (E - 1) / 2``
+        comparisons.  Its output is folded into the request's ``ok`` output,
+        the check output the verifier requires to be ``1``.
         """
 
         experts, k = self.shape.experts, self.shape.top_k
-        self.check_route(route)
+        if experts < 2:
+            raise TracerError("routing needs at least two experts")
 
-        @self.define(
-            input_count=experts + 3,
-            key=("route_check", experts, k, route),
-            role=VERIFICATION,
-        )
+        @self.define(input_count=2 * experts + 2, key=("route_check", experts, k), role=VERIFICATION)
         def route_check(v: Wires) -> object:
-            logits, one, kconst, ok = (
-                v[:experts],
-                v[experts],
-                v[experts + 1],
-                v[experts + 2],
-            )
-            ranks = self._ranks(logits, one, route)
-            for e in route:
-                ok = self.mul(ok, self.lt(ranks[e], kconst))
+            logits, ids = v[:experts], v[experts : 2 * experts]
+            kconst, ok = v[2 * experts], v[2 * experts + 1]
+            add, mul, lt, eq = self.add, self.mul, self.lt, self.eq
+            for j in range(k):
+                rank: Wire | None = None
+                for f in range(experts):
+                    if f == j:
+                        continue
+                    beats = add(lt(logits[j], logits[f]), mul(eq(logits[f], logits[j]), lt(ids[f], ids[j])))
+                    rank = beats if rank is None else add(rank, beats)
+                assert rank is not None
+                ok = mul(ok, lt(rank, kconst))
             return ok
 
         return route_check
+
+    def route_order(self, route: Route) -> tuple[int, ...]:
+        """The experts in route order: the advised ones, then the rest ascending."""
+
+        self.check_route(route)
+        return (*route, *(e for e in range(self.shape.experts) if e not in route))
+
+    @property
+    def route_port_count(self) -> int:
+        """Ports one routed position of one layer adds to an advised step: ``E d + E + k (2 d hidden)``.
+
+        The router's ``E`` columns (``d`` each) and the ``E`` expert ids in
+        route order, then the ``k`` advised experts' ``w_1, w_2``.
+        """
+
+        shape = self.shape
+        d = shape.d_model
+        return shape.experts * d + shape.experts + shape.top_k * 2 * d * shape.hidden
+
+    def route_ports(self, ports: _WeightPorts, routes: Routes) -> list[Wires]:
+        """The call-site arguments that carry ``routes`` into an advised step (:meth:`prefill`,
+        :meth:`decode`, :meth:`extend` with ``advised=True``): per layer, per position,
+        :attr:`route_port_count` ports in the layout :meth:`moe_block` reads.
+
+        The step body is one definition whatever the route; what changes from
+        call to call is which parent ranges these are -- the router's column
+        ``e`` is the strided range ``w_r[e::E]``, expert ``e``'s weights are a
+        slice of the layer's expert block, and its id is the word ``e`` of the
+        constant table (so ``experts <= vocab``).
+        """
+
+        shape = self.shape
+        experts, d, hidden = shape.experts, shape.d_model, shape.hidden
+        if not experts:
+            raise TracerError("a dense shape has no routes")
+        if experts > shape.vocab:
+            raise TracerError("advised routing names experts by the constant table: experts <= vocab")
+        if len(routes) != shape.layers:
+            raise TracerError(f"routes must give {shape.layers} layers")
+        args: list[Wires] = []
+        for layer, layer_routes in zip(ports.layers, routes, strict=True):
+            assert layer.w_r is not None and layer.experts is not None
+            for route in layer_routes:
+                order = self.route_order(route)
+                args.extend(layer.w_r[e : d * experts : experts] for e in order)
+                args.extend(ports.constants[e] for e in order)
+                args.extend(layer.experts[e * 2 * d * hidden : (e + 1) * 2 * d * hidden] for e in route)
+        return args
 
     def check_route(self, route: object) -> Route:
         """A route is ``top_k`` distinct expert ids below ``experts``, ascending."""
@@ -1242,41 +1300,48 @@ class ToyLM:
         )
         return repeat(positions * d, self.add_cell, x[0].by(1), mixture[0].by(1))
 
-    def moe_block(self, routes: tuple[Route, ...]) -> TracedDefinition:
-        """The advised mixture of one layer over ``len(routes)`` positions, route ``routes[p]`` at ``p``.
+    def moe_block(self, positions: int) -> TracedDefinition:
+        """The advised mixture of one layer over ``positions`` positions, the route in the ports.
 
-        Ports: the positions' activations (``positions * d_model``), the
-        router, every expert's weights, the constants ``1`` and ``k``, the
-        running ``ok``.  Outputs: the new activations, then ``ok``.  Only the
-        advised experts run; each position's ``route_check`` folds its
-        verdict into ``ok``.  A definition per distinct route pattern: the
-        description grows with the advice, as it must.
+        Ports: the positions' activations (``positions * d_model``); per
+        position :attr:`route_port_count` ports -- the router's ``E`` columns
+        and the ``E`` expert ids in route order, then the ``k`` advised
+        experts' weights (:meth:`route_ports` lays them out at the call
+        site); the constant ``k``; the running ``ok``.  Outputs: the new
+        activations, then ``ok``.  The router logits come out in route order,
+        so the first ``k`` are the advised experts', which :meth:`route_check`
+        ranks against the rest with the ids breaking ties; only the advised
+        experts run.  One definition per ``positions``, whatever the advice:
+        the route is a matter of which parent ranges the caller passes.
         """
 
         shape = self.shape
         experts, k, d, hidden = shape.experts, shape.top_k, shape.d_model, shape.hidden
-        positions = len(routes)
-        if positions < 1:
+        if type(positions) is not int or positions < 1:
             raise TracerError("a mixture block needs at least one position")
-        for route in routes:
-            self.check_route(route)
+        if experts < 2:
+            raise TracerError("routing needs at least two experts")
+        per = self.route_port_count
+        width = positions * d + positions * per + 2
         repeat = self.tracer.repeat
-        width = positions * d + d * experts + shape.ffn_weights - d * experts + 3
 
-        @self.define(input_count=width, key=("moe_block", experts, k, routes))
+        @self.define(input_count=width, key=("moe_block", experts, k, positions))
         def moe_block(v: Wires) -> object:
             x = v[: positions * d]
-            w_r = v[positions * d : positions * d + d * experts]
-            weights = v[positions * d + d * experts : width - 3]
-            one, kconst, ok = v[width - 3], v[width - 2], v[width - 1]
+            kconst, ok = v[width - 2], v[width - 1]
             new: list[Wires] = []
-            for p, route in enumerate(routes):
+            for p in range(positions):
+                base = positions * d + p * per
+                columns = v[base : base + experts * d]
+                ids = v[base + experts * d : base + experts * d + experts]
+                chosen = v[base + experts * d + experts : base + per]
                 x_p = x[p * d : (p + 1) * d]
-                logits = self.matvec(d, experts)(x_p, w_r)
-                ok = self.route_check(route)(logits, one, kconst, ok)[0]
+                logits = repeat(experts, self.dot(d), x_p, columns[0:d].by(d))
+                ok = self.route_check()(logits, ids, kconst, ok)[0]
                 mixture: Wires | None = None
-                for e in route:
-                    y = self.expert_mlp(*expert_ports(weights, e, d, hidden), x_p, 1)
+                for j in range(k):
+                    w_1, w_2 = expert_ports(chosen, j, d, hidden)
+                    y = self.expert_mlp(w_1, w_2, x_p, 1)
                     mixture = y if mixture is None else repeat(d, self.add_cell, mixture[0].by(1), y[0].by(1))
                 assert mixture is not None
                 new.append(repeat(d, self.add_cell, x_p[0].by(1), mixture[0].by(1)))
@@ -1285,21 +1350,18 @@ class ToyLM:
         return moe_block
 
     def moe_advice(
-        self,
-        layer: _LayerPorts,
-        x: Wires,
-        positions: int,
-        constants: Wires,
-        routes: tuple[Route, ...],
-        ok: Wire,
+        self, x: Wires, positions: int, constants: Wires, route_ports: Wires, ok: Wire
     ) -> tuple[Wires, Wire]:
-        """The advised mixture over ``positions`` positions: the new activations and the running ``ok``."""
+        """The advised mixture over ``positions`` positions: the new activations and the running ``ok``.
+
+        ``route_ports`` are the layer's ``positions * route_port_count`` ports
+        of the step, in the layout of :meth:`route_ports`.
+        """
 
         shape = self.shape
-        assert layer.w_r is not None and layer.experts is not None and len(routes) == positions
-        result = self.moe_block(routes)(
-            x, layer.w_r, layer.experts, constants[1], constants[shape.top_k], ok
-        )
+        if route_ports.count != positions * self.route_port_count:
+            raise TracerError("the route ports do not fit the layer's positions")
+        result = self.moe_block(positions)(x, route_ports, constants[shape.top_k], ok)
         return result[: positions * shape.d_model], result[positions * shape.d_model]
 
     def head(
@@ -1357,7 +1419,7 @@ class ToyLM:
         x: Wires,
         positions: int,
         caches: Sequence[tuple[Wires, Wires] | None],
-        routes: Sequence[tuple[Route, ...]] | None = None,
+        route_ports: Sequence[Wires] | None = None,
         ok: Wire | None = None,
     ) -> tuple[list[Wires], Wires, Wire | None]:
         """The layers over ``positions`` new positions of one sequence.
@@ -1369,18 +1431,19 @@ class ToyLM:
         blocks, the cache entries later steps read), the final activations
         and the running ``ok`` word.
 
-        A mixture-of-experts shape takes the padded route when ``routes`` is
-        ``None`` and the advised route otherwise: ``routes[l][p]`` is position
-        ``p``'s route in layer ``l`` and ``ok`` the word the route checks fold
-        into (``None`` for a dense or a padded pass).
+        A mixture-of-experts shape takes the padded route when ``route_ports``
+        is ``None`` and the advised route otherwise: ``route_ports[l]`` are
+        layer ``l``'s ``positions * route_port_count`` step ports carrying the
+        positions' routes (:meth:`route_ports`) and ``ok`` the word the route
+        checks fold into (``None`` for a dense or a padded pass).
         """
 
         shape = self.shape
         d, dh, heads = shape.d_model, shape.d_head, shape.heads
-        if routes is not None and (ok is None or not shape.experts):
+        if route_ports is not None and (ok is None or not shape.experts):
             raise TracerError("advised routes need a mixture-of-experts shape and an ok word")
-        if routes is not None and (len(routes) != shape.layers or any(len(r) != positions for r in routes)):
-            raise TracerError(f"routes must give {shape.layers} layers of {positions} positions")
+        if route_ports is not None and len(route_ports) != shape.layers:
+            raise TracerError(f"route ports must give {shape.layers} layers")
         repeat = self.tracer.repeat
         project = self.matvec(d, d)
 
@@ -1417,11 +1480,11 @@ class ToyLM:
                 assert layer.w_1 is not None and layer.w_2 is not None
                 m = self.expert_mlp(layer.w_1, layer.w_2, x, positions)
                 x = repeat(positions * d, self.add_cell, x[0].by(1), m[0].by(1))
-            elif routes is None:
+            elif route_ports is None:
                 x = self.moe_padded(layer, x, positions, ports.constants)
             else:
                 assert ok is not None
-                x, ok = self.moe_advice(layer, x, positions, ports.constants, routes[index], ok)
+                x, ok = self.moe_advice(x, positions, ports.constants, route_ports[index], ok)
             state += [k, v]
         return state, x, ok
 
@@ -1432,7 +1495,7 @@ class ToyLM:
         new: int,
         inside: bool,
         heads: int,
-        routes: Routes | None,
+        advised: bool,
         key: tuple[Hashable, ...],
         masked: bool = False,
     ) -> TracedDefinition:
@@ -1443,10 +1506,12 @@ class ToyLM:
         the head decides the last ``heads`` positions (``0``: none, a chunk
         of a prompt that only extends the cache).  Ports: the weights, the
         tokens (unless inside), per layer the cached ``K`` then ``V``, for a
-        ``masked`` head the request's ``vocab`` allowed flags, and for advised
-        routes the incoming ``ok``.  Outputs: per layer the new ``K`` then
-        ``V`` (position-major), the decided tokens, and for advised routes
-        the outgoing ``ok``.
+        ``masked`` head the request's ``vocab`` allowed flags, and for an
+        ``advised`` step the incoming ``ok`` and then, per layer and position,
+        the :attr:`route_port_count` ports that carry the route
+        (:meth:`route_ports`).  Outputs: per layer the new ``K`` then ``V``
+        (position-major), the decided tokens, and for an advised step the
+        outgoing ``ok``.  An advised step is one definition for every route.
         """
 
         shape = self.shape
@@ -1457,20 +1522,16 @@ class ToyLM:
             raise TracerError("a sampling shape decides one position per step")
         if masked and heads != 1:
             raise TracerError("a masked step decides exactly one position")
-        advised = routes is not None
-        if routes is not None:
+        if advised:
             if not shape.experts:
                 raise TracerError("routes need a mixture-of-experts shape")
-            if len(routes) != shape.layers or any(len(r) != new for r in routes):
-                raise TracerError(f"routes must give {shape.layers} layers of {new} positions")
-            for layer_routes in routes:
-                for route in layer_routes:
-                    self.check_route(route)
-            key = (*key, routes)
+            key = (*key, ADVICE)
         token_ports = 0 if inside else new
         cache = cached * d
         mask_start = weights + token_ports + shape.layers * 2 * cache
-        input_count = mask_start + (vocab if masked else 0) + (1 if advised else 0)
+        route_start = mask_start + (vocab if masked else 0) + (1 if advised else 0)
+        per_layer = new * self.route_port_count if advised else 0
+        input_count = route_start + shape.layers * per_layer
 
         @self.define(input_count=input_count, key=key)
         def step(v: Wires) -> object:
@@ -1484,14 +1545,19 @@ class ToyLM:
                 start = weights + token_ports + layer * 2 * cache
                 caches.append((v[start : start + cache], v[start + cache : start + 2 * cache]))
             allowed = v[mask_start : mask_start + vocab] if masked else None
-            ok = v[input_count - 1] if advised else None
+            ok = v[route_start - 1] if advised else None
+            route_ports = (
+                [v[route_start + i * per_layer : route_start + (i + 1) * per_layer] for i in range(shape.layers)]
+                if advised
+                else None
+            )
             r = self.randomness() if heads == 1 else None
             embed = self.embed_row()
             if not inside and new == 1:
                 x = embed(tokens[0], ports.constants, ports.embedding)  # a lone token is a call
             else:
                 x = self.tracer.repeat(new, embed, tokens[0].by(1), ports.constants, ports.embedding)
-            state, x, ok = self.forward(ports, x, new, caches, routes, ok)
+            state, x, ok = self.forward(ports, x, new, caches, route_ports, ok)
             unembed = self.matvec(d, vocab)
             decided: list[Wire | Wires] = []
             if heads == 1:
@@ -1504,7 +1570,7 @@ class ToyLM:
         return step
 
     def prefill(
-        self, n: int, routes: Routes | None = None, *, cached: int = 0, masked: bool = False
+        self, n: int, *, advised: bool = False, cached: int = 0, masked: bool = False
     ) -> TracedDefinition:
         """An ``n``-token prompt: ports are the weights; the tokens are ``in`` gates inside.
 
@@ -1514,10 +1580,12 @@ class ToyLM:
         sampling shape the position's random word is one more ``in`` gate,
         after the prompt tokens.
 
-        For a mixture-of-experts shape ``routes[l][p]`` (layer ``l``, prompt
-        position ``p``) takes the advice route: one more port, the incoming
-        ``ok``, and one more output, the outgoing ``ok``.  Without ``routes``
-        the mixture is padded.
+        For a mixture-of-experts shape an ``advised`` step takes the advice
+        route: one more port, the incoming ``ok``, then per layer and prompt
+        position the ports that carry the route (:meth:`route_ports` builds
+        them at the call site), and one more output, the outgoing ``ok``.
+        The definition is the same for every route.  Without ``advised`` the
+        mixture is padded.
 
         With ``cached > 0`` the ``n`` tokens end a prompt whose first
         ``cached`` positions earlier :meth:`chunk` steps processed: per layer
@@ -1531,7 +1599,7 @@ class ToyLM:
         if type(cached) is not int or cached < 0:
             raise TracerError("cached positions must be nonnegative")
         key: tuple[Hashable, ...] = ("prefill", n, *((cached,) if cached else ()), *(("masked",) if masked else ()))
-        return self._step(cached=cached, new=n, inside=True, heads=1, routes=routes, key=key, masked=masked)
+        return self._step(cached=cached, new=n, inside=True, heads=1, advised=advised, key=key, masked=masked)
 
     def chunk(self, n: int, cached: int) -> TracedDefinition:
         """``n`` prompt tokens that do not end the prompt (chunked prefill): :meth:`prefill`
@@ -1544,7 +1612,7 @@ class ToyLM:
             raise TracerError("chunk length must be positive")
         if type(cached) is not int or cached < 0:
             raise TracerError("cached positions must be nonnegative")
-        return self._step(cached=cached, new=n, inside=True, heads=0, routes=None, key=("chunk", n, cached))
+        return self._step(cached=cached, new=n, inside=True, heads=0, advised=False, key=("chunk", n, cached))
 
     def prefill_ports(self, n: int) -> TracedDefinition:
         """:meth:`prefill` with the ``n`` prompt tokens as ports after the weights instead of ``in`` gates.
@@ -1555,25 +1623,25 @@ class ToyLM:
 
         if type(n) is not int or n <= 0:
             raise TracerError("prompt length must be positive")
-        return self._step(cached=0, new=n, inside=False, heads=1, routes=None, key=("prefill_ports", n))
+        return self._step(cached=0, new=n, inside=False, heads=1, advised=False, key=("prefill_ports", n))
 
-    def decode(self, c: int, routes: Routes | None = None, *, masked: bool = False) -> TracedDefinition:
+    def decode(self, c: int, *, advised: bool = False, masked: bool = False) -> TracedDefinition:
         """One token at context ``c``: ports are the weights, the token, then per layer
         the cached ``K`` and ``V`` of the ``c - 1`` earlier positions (then, when
         ``masked``, the request's ``vocab`` allowed flags).
 
         Outputs: per layer the new ``k`` then ``v`` (``state_size(1)`` values), then
         the next token.  For a sampling shape the position's random word is
-        an ``in`` gate inside the step.  ``routes`` as in :meth:`prefill`,
+        an ``in`` gate inside the step.  ``advised`` as in :meth:`prefill`,
         one position per layer.
         """
 
         if type(c) is not int or c < 2:
             raise TracerError("a decode step needs at least one cached position")
         key: tuple[Hashable, ...] = ("decode", c, *(("masked",) if masked else ()))
-        return self._step(cached=c - 1, new=1, inside=False, heads=1, routes=routes, key=key, masked=masked)
+        return self._step(cached=c - 1, new=1, inside=False, heads=1, advised=advised, key=key, masked=masked)
 
-    def extend(self, cached: int, new: int, routes: Routes | None = None) -> TracedDefinition:
+    def extend(self, cached: int, new: int, *, advised: bool = False) -> TracedDefinition:
         """``new`` tokens after ``cached`` cached positions, the head deciding every one of them.
 
         Ports: the weights, the ``new`` tokens, per layer the cached ``K`` then
@@ -1591,7 +1659,7 @@ class ToyLM:
             new=new,
             inside=False,
             heads=new,
-            routes=routes,
+            advised=advised,
             key=("extend", cached, new),
         )
 
