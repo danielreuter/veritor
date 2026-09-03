@@ -39,13 +39,37 @@ scores ``s_j = l_j >> score_shift`` have ``score_bits`` bits, weights
 2**random_bits``, and the token is the first ``j`` with ``cdf_j > t``,
 counted as ``sum_j [cdf_j < t + 1]``.  The bit budget ``vocab_bits + 2 *
 score_bits + random_bits <= width`` keeps every value below ``2**width``.
+
+Mixture of experts.  With :attr:`LMShape.experts` ``= E > 0`` each layer's
+MLP is replaced by a router matvec (``d_model x E``) and ``E`` expert MLPs
+of the dense MLP's shape; a position is routed to its ``top_k`` experts
+(the largest router logits, ties to the lower index; :func:`top_k_route`)
+and their outputs are summed into the residual.  The route is a
+data-dependent *structural* choice, and the circuit has two ways to take
+it:
+
+* **padded** (no advice): every position runs every expert; the ``k``-hot
+  route is computed in-circuit by the ``router_topk`` VU (a rank count by
+  ``lt`` chains) and the ``E`` expert outputs are combined through
+  ``masked_sum`` cells.  Every gate is in the circuit whatever the route.
+* **advice**: the route is given to the constructor (``ceil(log2 E)`` bits
+  per chosen expert per position per layer, charged as advice), the
+  circuit runs only the chosen experts, and a ``route_check`` VU recomputes
+  the chosen experts' ranks from the router logits and multiplies the
+  result into a running ``ok`` word.  ``ok`` is an output the verifier
+  requires to be ``1``: a route that is not the router's top-``k`` either
+  shows as ``ok = 0`` or forces the client to break the check's relation,
+  which the sampled checks catch like any other incorrect gate.
+
+The default ``experts = 0`` is the dense decoder, byte for byte.
 """
 
 from __future__ import annotations
 
 import random
-from collections.abc import Sequence
+from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 
 from veritor.core import JSONValue, make_isa_gate_set
 from veritor.core.description import VERIFICATION
@@ -55,6 +79,18 @@ from .tracer import TracedDefinition, Tracer, TracerError, Wire, Wires
 
 Matrix = tuple[tuple[int, ...], ...]
 """A row-major matrix in the ``x @ W`` orientation: rows are inputs, columns outputs."""
+
+Route = tuple[int, ...]
+"""The experts one position of one layer is routed to: ``top_k`` distinct ids, ascending."""
+
+Routes = tuple[tuple[Route, ...], ...]
+"""The routes of one step's positions, layer by layer: ``routes[l][p]`` is position ``p``'s in layer ``l``."""
+
+PADDED = "padded"
+"""A data-dependent structural choice made in-circuit, the structure padded to its maximum."""
+
+ADVICE = "advice"
+"""A data-dependent structural choice given to the constructor as charged advice."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +104,10 @@ class LMShape:
     With ``sampling`` the LM head samples from a public random word per
     generated position instead of taking the argmax (see the module
     docstring); the sampler's bit budget needs ``width >= vocab_bits + 3``.
+    With ``experts = E > 0`` every layer's MLP is a mixture of ``E`` experts
+    routed ``top_k`` at a time (see the module docstring); ``top_k`` must be
+    below ``vocab`` because the constant table is where the circuit finds
+    it.
     """
 
     vocab: int
@@ -77,6 +117,8 @@ class LMShape:
     context: int
     width: int
     sampling: bool = False
+    experts: int = 0
+    top_k: int = 1
 
     def __post_init__(self) -> None:
         for name in ("vocab", "d_model", "heads", "layers", "context", "width"):
@@ -93,6 +135,16 @@ class LMShape:
             raise ValueError("token ids must be words: vocab <= 2**width")
         if self.sampling and self.width < self.vocab_bits + 3:
             raise ValueError("sampling needs width >= vocab_bits + 3")
+        if type(self.experts) is not int or self.experts < 0:
+            raise ValueError("experts must be a nonnegative integer")
+        if type(self.top_k) is not int or self.top_k < 1:
+            raise ValueError("top_k must be a positive integer")
+        if self.experts == 0 and self.top_k != 1:
+            raise ValueError("top_k needs experts")
+        if self.experts and self.top_k > self.experts:
+            raise ValueError("top_k must be at most experts")
+        if self.experts and self.top_k >= self.vocab:
+            raise ValueError("top_k must be below vocab: the constant table holds it")
 
     @property
     def d_head(self) -> int:
@@ -101,6 +153,17 @@ class LMShape:
     @property
     def hidden(self) -> int:
         return 2 * self.d_model
+
+    @property
+    def route_bits(self) -> int:
+        """Bits naming one expert: ``ceil(log2 experts)``; ``0`` for a dense shape."""
+
+        return (self.experts - 1).bit_length() if self.experts else 0
+
+    def route_advice_bits(self, positions: int) -> int:
+        """The description length of the routes of ``positions`` positions: ``top_k`` ids per layer each."""
+
+        return positions * self.layers * self.top_k * self.route_bits
 
     @property
     def vocab_bits(self) -> int:
@@ -131,11 +194,20 @@ class LMShape:
         return (self.score_shift, self.random_bits) if self.sampling else ()
 
     @property
+    def ffn_weights(self) -> int:
+        """Weights of one layer's feed-forward block: the dense pair, or the router and the experts."""
+
+        d, hidden = self.d_model, self.hidden
+        if self.experts:
+            return d * self.experts + self.experts * 2 * d * hidden
+        return 2 * d * hidden
+
+    @property
     def weight_count(self) -> int:
         """The number of ``weight`` gates: every matrix, the constant table, the shift, the sampler's."""
 
-        d, hidden, vocab = self.d_model, self.hidden, self.vocab
-        matrices = vocab * d + self.layers * (4 * d * d + 2 * d * hidden) + d * vocab
+        d, vocab = self.d_model, self.vocab
+        matrices = vocab * d + self.layers * (4 * d * d + self.ffn_weights) + d * vocab
         return matrices + vocab + 1 + len(self.sampler_constants)
 
     def state_size(self, positions: int) -> int:
@@ -167,6 +239,9 @@ class LMShape:
         }
         if self.sampling:  # argmax shapes keep the manifest (and the digests) they had
             manifest["sampling"] = True
+        if self.experts:  # dense shapes too
+            manifest["experts"] = self.experts
+            manifest["top_k"] = self.top_k
         return manifest
 
 
@@ -184,15 +259,41 @@ def _check_matrix(value: object, rows: int, columns: int, width: int, name: str)
 
 
 @dataclass(frozen=True, slots=True)
+class ExpertParameters:
+    """One expert's MLP: ``w_1`` up (``d_model x hidden``) and ``w_2`` down (``hidden x d_model``)."""
+
+    w_1: Matrix
+    w_2: Matrix
+
+
+@dataclass(frozen=True, slots=True)
 class LayerParameters:
-    """One layer's matrices: ``w_q, w_k, w_v, w_o`` square, ``w_1`` up and ``w_2`` down."""
+    """One layer's matrices: ``w_q, w_k, w_v, w_o`` square, then the feed-forward block.
+
+    Dense: ``w_1`` up and ``w_2`` down.  Mixture of experts (a shape with
+    ``experts > 0``): the router ``w_r`` (``d_model x experts``) and one
+    :class:`ExpertParameters` per expert; ``w_1`` and ``w_2`` are then
+    ``None``.
+    """
 
     w_q: Matrix
     w_k: Matrix
     w_v: Matrix
     w_o: Matrix
-    w_1: Matrix
-    w_2: Matrix
+    w_1: Matrix | None
+    w_2: Matrix | None
+    w_r: Matrix | None = None
+    experts: tuple[ExpertParameters, ...] = ()
+
+    def matrices(self) -> tuple[Matrix, ...]:
+        """The layer's matrices in weight-gate order (see :meth:`Parameters.flatten`)."""
+
+        attention = (self.w_q, self.w_k, self.w_v, self.w_o)
+        if self.w_r is None:
+            assert self.w_1 is not None and self.w_2 is not None
+            return (*attention, self.w_1, self.w_2)
+        experts = tuple(m for expert in self.experts for m in (expert.w_1, expert.w_2))
+        return (*attention, self.w_r, *experts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,8 +306,11 @@ class Parameters:
     ``unembedding`` (``d_model x vocab``), the constant table
     ``0, 1, ..., vocab - 1``, ``shift`` and, for a sampling shape, the
     sampler's ``score_shift`` and ``random_bits``, every matrix row-major.
-    The constants are fixed by the shape and not stored; ``shift`` is the
-    amount each attention output is shifted right (``0`` leaves it alone).
+    For a mixture-of-experts shape a layer's ``w_1, w_2`` are replaced by
+    the router ``w_r`` (``d_model x experts``) and then ``w_1, w_2`` of
+    every expert in order.  The constants are fixed by the shape and not
+    stored; ``shift`` is the amount each attention output is shifted right
+    (``0`` leaves it alone).
     """
 
     shape: LMShape
@@ -228,8 +332,36 @@ class Parameters:
                 raise TypeError(f"layers[{index}] must be LayerParameters")
             for name in ("w_q", "w_k", "w_v", "w_o"):
                 _check_matrix(getattr(layer, name), d, d, width, f"layers[{index}].{name}")
-            _check_matrix(layer.w_1, d, hidden, width, f"layers[{index}].w_1")
-            _check_matrix(layer.w_2, hidden, d, width, f"layers[{index}].w_2")
+            if shape.experts:
+                if layer.w_1 is not None or layer.w_2 is not None:
+                    raise ValueError(f"layers[{index}] of a mixture-of-experts shape has no dense w_1, w_2")
+                _check_matrix(layer.w_r, d, shape.experts, width, f"layers[{index}].w_r")
+                if type(layer.experts) is not tuple or len(layer.experts) != shape.experts:
+                    raise ValueError(
+                        f"layers[{index}].experts must be a tuple of {shape.experts} ExpertParameters"
+                    )
+                for e, expert in enumerate(layer.experts):
+                    if not isinstance(expert, ExpertParameters):
+                        raise TypeError(f"layers[{index}].experts[{e}] must be ExpertParameters")
+                    _check_matrix(
+                        expert.w_1,
+                        d,
+                        hidden,
+                        width,
+                        f"layers[{index}].experts[{e}].w_1",
+                    )
+                    _check_matrix(
+                        expert.w_2,
+                        hidden,
+                        d,
+                        width,
+                        f"layers[{index}].experts[{e}].w_2",
+                    )
+            else:
+                if layer.w_r is not None or layer.experts:
+                    raise ValueError(f"layers[{index}] of a dense shape has no router or experts")
+                _check_matrix(layer.w_1, d, hidden, width, f"layers[{index}].w_1")
+                _check_matrix(layer.w_2, hidden, d, width, f"layers[{index}].w_2")
         _check_matrix(self.unembedding, d, vocab, width, "unembedding")
         if type(self.shift) is not int or not 0 <= self.shift < 1 << width:
             raise ValueError(f"shift must be a {width}-bit value")
@@ -245,7 +377,7 @@ class Parameters:
 
         matrices: list[Matrix] = [self.embedding]
         for layer in self.layers:
-            matrices.extend((layer.w_q, layer.w_k, layer.w_v, layer.w_o, layer.w_1, layer.w_2))
+            matrices.extend(layer.matrices())
         matrices.append(self.unembedding)
         flat = [item for matrix in matrices for row in matrix for item in row]
         flat.extend(self.constants)
@@ -267,15 +399,18 @@ def random_parameters(shape: LMShape, seed: int) -> Parameters:
     def matrix(rows: int, columns: int) -> Matrix:
         return tuple(tuple(rng.randrange(limit) for _ in range(columns)) for _ in range(rows))
 
+    def layer() -> LayerParameters:
+        attention = (matrix(d, d), matrix(d, d), matrix(d, d), matrix(d, d))
+        if not shape.experts:
+            return LayerParameters(*attention, matrix(d, hidden), matrix(hidden, d))
+        router = matrix(d, shape.experts)
+        experts = tuple(ExpertParameters(matrix(d, hidden), matrix(hidden, d)) for _ in range(shape.experts))
+        return LayerParameters(*attention, None, None, router, experts)
+
     return Parameters(
         shape,
         matrix(vocab, d),
-        tuple(
-            LayerParameters(
-                matrix(d, d), matrix(d, d), matrix(d, d), matrix(d, d), matrix(d, hidden), matrix(hidden, d)
-            )
-            for _ in range(shape.layers)
-        ),
+        tuple(layer() for _ in range(shape.layers)),
         matrix(d, vocab),
         shape.width // 4,
     )
@@ -296,6 +431,28 @@ def argmax_token(logits: Sequence[int]) -> int:
         if best < logits[candidate]:  # ties keep the first maximum
             best, index = logits[candidate], candidate
     return index
+
+
+def expert_ranks(logits: Sequence[int]) -> list[int]:
+    """``rank_e``: the experts that beat ``e`` -- a larger logit, or an equal one at a lower index.
+
+    This is what the ``router_topk`` and ``route_check`` VUs count with
+    ``lt`` gates: ``rank_e = sum_{f < e} [g_f >= g_e] + sum_{f > e} [g_f > g_e]``.
+    """
+
+    return [
+        sum(1 for f in range(e) if logits[f] >= logits[e])
+        + sum(1 for f in range(e + 1, len(logits)) if logits[f] > logits[e])
+        for e in range(len(logits))
+    ]
+
+
+def top_k_route(logits: Sequence[int], k: int) -> Route:
+    """The ``k`` experts of rank below ``k``: the largest logits, ties to the lower index, ascending."""
+
+    if not 1 <= k <= len(logits):
+        raise ValueError("k must lie in 1..experts")
+    return tuple(e for e, rank in enumerate(expert_ranks(logits)) if rank < k)
 
 
 def sample_token(shape: LMShape, logits: Sequence[int], r: int) -> int:
@@ -336,6 +493,24 @@ class Decoder:
         self.mask = (1 << self.shape.width) - 1
         self.keys: list[list[list[int]]] = [[] for _ in range(self.shape.layers)]
         self.values: list[list[list[int]]] = [[] for _ in range(self.shape.layers)]
+        self.routes: list[list[Route]] = [[] for _ in range(self.shape.layers)]
+        """Per layer, the route of every position fed so far (empty lists for a dense shape)."""
+
+    @property
+    def positions(self) -> int:
+        """The positions fed so far: the length of the KV cache."""
+
+        return len(self.keys[0])
+
+    def truncate(self, keep: int) -> None:
+        """Forget every position after the first ``keep``: the rollback of speculative decoding."""
+
+        if not 0 <= keep <= self.positions:
+            raise ValueError("keep must lie in 0..positions")
+        for layer in range(self.shape.layers):
+            del self.keys[layer][keep:]
+            del self.values[layer][keep:]
+            del self.routes[layer][keep:]
 
     def forward(self, token: int, r: int | None = None) -> int:
         """Feed ``token`` at the next position; return the next token (argmax, or sampled with ``r``)."""
@@ -363,16 +538,25 @@ class Decoder:
             attention: list[int] = []
             for head in range(shape.heads):
                 low, high = head * dh, (head + 1) * dh
-                scores = [
-                    sum(q[i] * key[i] for i in range(low, high)) & mask for key in keys
-                ]
+                scores = [sum(q[i] * key[i] for i in range(low, high)) & mask for key in keys]
                 weights = [(s * s) & mask for s in scores]
                 for i in range(low, high):
                     mixed = sum(w * value[i] for w, value in zip(weights, values)) & mask
                     attention.append(mixed >> p.shift if p.shift < shape.width else 0)
             x = [(a + b) & mask for a, b in zip(x, _matvec(attention, layer.w_o, mask))]
-            hidden = [(h * h) & mask for h in _matvec(x, layer.w_1, mask)]
-            x = [(a + b) & mask for a, b in zip(x, _matvec(hidden, layer.w_2, mask))]
+            if layer.w_r is None:
+                assert layer.w_1 is not None and layer.w_2 is not None
+                hidden = [(h * h) & mask for h in _matvec(x, layer.w_1, mask)]
+                x = [(a + b) & mask for a, b in zip(x, _matvec(hidden, layer.w_2, mask))]
+            else:
+                route = top_k_route(_matvec(x, layer.w_r, mask), shape.top_k)
+                self.routes[index].append(route)
+                mixture = [0] * shape.d_model
+                for e in route:
+                    expert = layer.experts[e]
+                    hidden = [(h * h) & mask for h in _matvec(x, expert.w_1, mask)]
+                    mixture = [(a + b) & mask for a, b in zip(mixture, _matvec(hidden, expert.w_2, mask))]
+                x = [(a + b) & mask for a, b in zip(x, mixture)]
         return _matvec(x, p.unembedding, mask)
 
 
@@ -423,6 +607,16 @@ def wires(value: Wire | Wires) -> Wires:
     return value
 
 
+def wire(value: Wire | Wires) -> Wire:
+    """A one-output call's result as the single wire it is."""
+
+    if isinstance(value, Wire):
+        return value
+    if len(value) != 1:
+        raise TracerError(f"expected one wire, got {len(value)}")
+    return value[0]
+
+
 def concat(parts: Sequence[Wires]) -> Wires:
     """Consecutive results as one range: each part must start where the previous ends.
 
@@ -452,8 +646,24 @@ class _LayerPorts:
     w_k: Wires
     w_v: Wires
     w_o: Wires
-    w_1: Wires
-    w_2: Wires
+    w_1: Wires | None
+    w_2: Wires | None
+    w_r: Wires | None = None
+    experts: Wires | None = None
+    """Every expert's ``w_1`` then ``w_2``, consecutive: ``experts * 2 * d_model * hidden`` ports."""
+
+    def expert(self, e: int, d: int, hidden: int) -> tuple[Wires, Wires]:
+        """Expert ``e``'s ``w_1`` and ``w_2`` ports."""
+
+        assert self.experts is not None
+        return expert_ports(self.experts, e, d, hidden)
+
+
+def expert_ports(experts: Wires, e: int, d: int, hidden: int) -> tuple[Wires, Wires]:
+    """Expert ``e``'s ``w_1`` (``d x hidden``) and ``w_2`` (``hidden x d``) in a block of expert weights."""
+
+    start = e * 2 * d * hidden
+    return experts[start : start + d * hidden], experts[start + d * hidden : start + 2 * d * hidden]
 
 
 @dataclass(frozen=True, slots=True)
@@ -490,17 +700,41 @@ class ToyLM:
     (one-hot then matvec), ``prefill_n`` (``n`` prompt positions with causal
     attention) and ``decode_c`` (one position over a cache of ``c - 1``).  The
     ``weights`` replay unit holds every ``weight`` gate, all declared.
+
+    A mixture-of-experts shape adds the verification units ``router_topk``
+    (the ``k``-hot route of one position from its ``E`` router logits),
+    ``route_check`` (the ranks of an advised route, folded into a running
+    ``ok`` word), ``masked_sum`` (one output of the ``E`` masked experts) and
+    the one-gate ``mul_cell``; see the module docstring for the padded and
+    the advice route.
+
+    Two models in one description (a draft and a target for speculative
+    decoding) share a ``tracer``; each instance then qualifies its cache
+    keys with a ``prefix`` so that shape-dependent kinds of the two models
+    stay apart while identical bodies still hash-cons to one definition.
     """
 
-    def __init__(self, shape: LMShape) -> None:
+    def __init__(self, shape: LMShape, *, tracer: Tracer | None = None, prefix: str | None = None) -> None:
         if not isinstance(shape, LMShape):
             raise TypeError("shape must be an LMShape")
         self.shape = shape
-        self.tracer = Tracer(make_isa_gate_set(shape.width))
+        if tracer is None:
+            tracer = Tracer(make_isa_gate_set(shape.width))
+        elif tracer.gate_set["add"].width != shape.width:
+            raise TracerError("the shared tracer's gate set has another word width")
+        self.tracer = tracer
+        self.prefix = prefix
         gate = self.tracer.gate
         add, mul, sub, lt, eq, shr = (gate(name) for name in ("add", "mul", "sub", "lt", "eq", "shr"))
-        self.add, self.mul, self.sub, self.lt, self.shr = add, mul, sub, lt, shr
-        define = self.tracer.definition
+        self.add, self.mul, self.sub, self.lt, self.eq, self.shr = (
+            add,
+            mul,
+            sub,
+            lt,
+            eq,
+            shr,
+        )
+        define = self.define
         self.mul_pair = define(input_count=2, key="mul")(lambda v: mul(v[0], v[1]))
         self.add_pair = define(input_count=2, key="add")(lambda v: add(v[0], v[1]))
         self.eq_pair = define(input_count=2, key="eq")(lambda v: eq(v[0], v[1]))
@@ -509,9 +743,23 @@ class ToyLM:
         self.square_cell = define(input_count=1, key="square_cell", role=VERIFICATION)(
             lambda v: mul(v[0], v[0])
         )
-        self.add_cell = define(input_count=2, key="add_cell", role=VERIFICATION)(
-            lambda v: add(v[0], v[1])
-        )
+        self.add_cell = define(input_count=2, key="add_cell", role=VERIFICATION)(lambda v: add(v[0], v[1]))
+        self.mul_cell = define(input_count=2, key="mul_cell", role=VERIFICATION)(lambda v: mul(v[0], v[1]))
+
+    def key(self, *parts: Hashable) -> Hashable:
+        """A tracer cache key: as given for a lone model, qualified by the prefix for a shared tracer."""
+
+        if self.prefix is not None:
+            return (self.prefix, *parts)
+        return parts[0] if len(parts) == 1 else parts
+
+    def define(
+        self, *, input_count: int, key: Hashable, role: str | None = None
+    ) -> Callable[[Callable[[Wires], object]], TracedDefinition]:
+        """:meth:`Tracer.definition` under this model's :meth:`key`."""
+
+        parts = key if isinstance(key, tuple) else (key,)
+        return self.tracer.definition(input_count=input_count, key=self.key(*parts), role=role)
 
     # -- ports --------------------------------------------------------------------
 
@@ -528,11 +776,20 @@ class ToyLM:
             cursor += count
             return piece
 
+        def layer() -> _LayerPorts:
+            attention = (take(d * d), take(d * d), take(d * d), take(d * d))
+            if not shape.experts:
+                return _LayerPorts(*attention, take(d * hidden), take(hidden * d))
+            return _LayerPorts(
+                *attention,
+                None,
+                None,
+                take(d * shape.experts),
+                take(shape.ffn_weights - d * shape.experts),
+            )
+
         embedding = take(vocab * d)
-        layers = tuple(
-            _LayerPorts(take(d * d), take(d * d), take(d * d), take(d * d), take(d * hidden), take(hidden * d))
-            for _ in range(shape.layers)
-        )
+        layers = tuple(layer() for _ in range(shape.layers))
         unembedding = take(d * vocab)
         constants = take(vocab)
         shift = take(1)[0]
@@ -553,7 +810,7 @@ class ToyLM:
             raise TracerError("dot length must be positive")
         role = VERIFICATION if marked else None
 
-        @self.tracer.definition(input_count=2 * k, key=("dot", k, role), role=role)
+        @self.define(input_count=2 * k, key=("dot", k, role), role=role)
         def dot(v: Wires) -> object:
             x, w = v[:k], v[k:]
             level = self.tracer.repeat(k, self.mul_pair, x[0].by(1), w[0].by(1))
@@ -574,7 +831,7 @@ class ToyLM:
 
         vocab = self.shape.vocab
 
-        @self.tracer.definition(input_count=1 + vocab, key="onehot", role=VERIFICATION)
+        @self.define(input_count=1 + vocab, key="onehot", role=VERIFICATION)
         def onehot(v: Wires) -> object:
             return self.tracer.repeat(vocab, self.eq_pair, v[0], v[1].by(1))
 
@@ -591,9 +848,14 @@ class ToyLM:
         dh = self.shape.d_head
         repeat = self.tracer.repeat
 
-        @self.tracer.definition(input_count=dh + 2 * c * dh + 1, key=("attend_head", c), role=VERIFICATION)
+        @self.define(input_count=dh + 2 * c * dh + 1, key=("attend_head", c), role=VERIFICATION)
         def attend_head(v: Wires) -> object:
-            q, keys, values, shift = v[:dh], v[dh : dh + c * dh], v[dh + c * dh : dh + 2 * c * dh], v[-1]
+            q, keys, values, shift = (
+                v[:dh],
+                v[dh : dh + c * dh],
+                v[dh + c * dh : dh + 2 * c * dh],
+                v[-1],
+            )
             scores = repeat(c, self.dot(dh, marked=False), q, keys[0:dh].by(dh))
             weights = repeat(c, self.square, scores[0].by(1))
             mixed = repeat(dh, self.dot(c, marked=False), weights, values[0 : c * dh : dh].by(1))
@@ -606,7 +868,7 @@ class ToyLM:
 
         vocab = self.shape.vocab
 
-        @self.tracer.definition(input_count=2 * vocab, key="argmax", role=VERIFICATION)
+        @self.define(input_count=2 * vocab, key="argmax", role=VERIFICATION)
         def argmax(v: Wires) -> object:
             logits, constants = v[:vocab], v[vocab:]
             best, index = logits[0], constants[0]
@@ -629,10 +891,15 @@ class ToyLM:
         vocab = self.shape.vocab
         add, mul, lt, shr = self.add, self.mul, self.lt, self.shr
 
-        @self.tracer.definition(input_count=vocab + 4, key="sample", role=VERIFICATION)
+        @self.define(input_count=vocab + 4, key="sample", role=VERIFICATION)
         def sample(v: Wires) -> object:
             logits = wires(v[:vocab])
-            r, one, score_shift, random_bits = v[vocab], v[vocab + 1], v[vocab + 2], v[vocab + 3]
+            r, one, score_shift, random_bits = (
+                v[vocab],
+                v[vocab + 1],
+                v[vocab + 2],
+                v[vocab + 3],
+            )
             weights = []
             for logit in logits:
                 score = shr(logit, score_shift)
@@ -648,6 +915,218 @@ class ToyLM:
             return index
 
         return sample
+
+    # -- mixture of experts ----------------------------------------------------------
+
+    def _ranks(self, logits: Wires, one: Wire, chosen: Sequence[int]) -> dict[int, Wire]:
+        """``rank_e`` of every expert in ``chosen`` (see :func:`expert_ranks`), by ``lt`` gates.
+
+        A pair ``f < e`` shares one ``lt(g_f, g_e)``: it counts towards
+        ``rank_f`` as is and towards ``rank_e`` as ``1 - lt``.
+        """
+
+        add, sub, lt = self.add, self.sub, self.lt
+        wanted = set(chosen)
+        beaten: dict[tuple[int, int], Wire] = {}
+        ranks: dict[int, Wire] = {}
+        for e in sorted(wanted):
+            terms: list[Wire] = []
+            for f in range(len(logits)):
+                if f == e:
+                    continue
+                low, high = min(e, f), max(e, f)
+                if (low, high) not in beaten:
+                    beaten[(low, high)] = lt(logits[low], logits[high])  # g_high beats g_low
+                terms.append(beaten[(low, high)] if f > e else sub(one, beaten[(low, high)]))
+            rank = terms[0]
+            for term in terms[1:]:
+                rank = add(rank, term)
+            ranks[e] = rank
+        return ranks
+
+    def router_topk(self) -> TracedDefinition:
+        """The ``k``-hot route of one position: ``[rank_e < k]`` for every expert ``e``.
+
+        Ports: the ``E`` router logits, the constants ``1`` and ``k``.  The
+        padded route's decision unit: every expert's flag is a gate the
+        sampled checks can catch, and the flags mask the experts' outputs.
+        """
+
+        experts, k = self.shape.experts, self.shape.top_k
+        if experts < 2:
+            raise TracerError("routing needs at least two experts")
+
+        @self.define(input_count=experts + 2, key=("router_topk", experts, k), role=VERIFICATION)
+        def router_topk(v: Wires) -> object:
+            logits, one, kconst = v[:experts], v[experts], v[experts + 1]
+            ranks = self._ranks(logits, one, range(experts))
+            return [self.lt(ranks[e], kconst) for e in range(experts)]
+
+        return router_topk
+
+    def route_check(self, route: Route) -> TracedDefinition:
+        """``ok_in * prod_{e in route} [rank_e < k]``: the advised route against the router's logits.
+
+        Ports: the ``E`` router logits, the constants ``1`` and ``k``, the
+        running ``ok``.  Only the advised experts' ranks are computed, so the
+        unit costs ``k (E - 1)`` comparisons instead of the padded route's
+        ``E (E - 1) / 2``.  Its output is folded into the request's ``ok``
+        output, which the verifier requires to be ``1``.
+        """
+
+        experts, k = self.shape.experts, self.shape.top_k
+        self.check_route(route)
+
+        @self.define(
+            input_count=experts + 3,
+            key=("route_check", experts, k, route),
+            role=VERIFICATION,
+        )
+        def route_check(v: Wires) -> object:
+            logits, one, kconst, ok = (
+                v[:experts],
+                v[experts],
+                v[experts + 1],
+                v[experts + 2],
+            )
+            ranks = self._ranks(logits, one, route)
+            for e in route:
+                ok = self.mul(ok, self.lt(ranks[e], kconst))
+            return ok
+
+        return route_check
+
+    def check_route(self, route: object) -> Route:
+        """A route is ``top_k`` distinct expert ids below ``experts``, ascending."""
+
+        experts, k = self.shape.experts, self.shape.top_k
+        if type(route) is not tuple or len(route) != k:
+            raise TracerError(f"a route names exactly {k} experts")
+        if any(type(e) is not int or not 0 <= e < experts for e in route):
+            raise TracerError(f"route {route!r} names an expert outside 0..{experts - 1}")
+        if any(a >= b for a, b in pairwise(route)):
+            raise TracerError(f"route {route!r} must list distinct experts in ascending order")
+        return route
+
+    def masked_sum(self) -> TracedDefinition:
+        """``sum_e flag_e * y_e`` over the ``E`` experts: one output of the padded mixture."""
+
+        experts = self.shape.experts
+
+        @self.define(input_count=2 * experts, key=("masked_sum", experts), role=VERIFICATION)
+        def masked_sum(v: Wires) -> object:
+            flags, values = v[:experts], v[experts:]
+            total = self.mul(flags[0], values[0])
+            for e in range(1, experts):
+                total = self.add(total, self.mul(flags[e], values[e]))
+            return total
+
+        return masked_sum
+
+    def combine(self) -> TracedDefinition:
+        """The ``d_model`` masked sums of one position: ports ``E`` flags then ``E`` expert outputs."""
+
+        experts, d = self.shape.experts, self.shape.d_model
+
+        @self.define(input_count=experts + experts * d, key=("combine", experts, d))
+        def combine(v: Wires) -> object:
+            flags, values = v[:experts], v[experts:]
+            return self.tracer.repeat(d, self.masked_sum(), flags, values[0 : experts * d : d].by(1))
+
+        return combine
+
+    def expert_mlp(self, w_1: Wires, w_2: Wires, x: Wires, positions: int) -> Wires:
+        """One expert (or the dense MLP) over ``positions`` positions: up, square, down."""
+
+        d, hidden = self.shape.d_model, self.shape.hidden
+        repeat = self.tracer.repeat
+        h = repeat(positions, self.matvec(d, hidden), x[0:d].by(d), w_1)
+        h = repeat(positions * hidden, self.square_cell, h[0].by(1))
+        return repeat(positions, self.matvec(hidden, d), h[0:hidden].by(hidden), w_2)
+
+    def moe_padded(self, layer: _LayerPorts, x: Wires, positions: int, constants: Wires) -> Wires:
+        """The padded mixture: every position through every expert, combined by the in-circuit route."""
+
+        shape = self.shape
+        experts, k, d = shape.experts, shape.top_k, shape.d_model
+        repeat = self.tracer.repeat
+        assert layer.w_r is not None
+        logits = repeat(positions, self.matvec(d, experts), x[0:d].by(d), layer.w_r)
+        flags = repeat(
+            positions,
+            self.router_topk(),
+            logits[0:experts].by(experts),
+            constants[1],
+            constants[k],
+        )
+        outputs = [self.expert_mlp(*layer.expert(e, d, shape.hidden), x, positions) for e in range(experts)]
+        mixture = repeat(
+            positions,
+            self.combine(),
+            flags[0:experts].by(experts),
+            *(y[0:d].by(d) for y in outputs),
+        )
+        return repeat(positions * d, self.add_cell, x[0].by(1), mixture[0].by(1))
+
+    def moe_block(self, routes: tuple[Route, ...]) -> TracedDefinition:
+        """The advised mixture of one layer over ``len(routes)`` positions, route ``routes[p]`` at ``p``.
+
+        Ports: the positions' activations (``positions * d_model``), the
+        router, every expert's weights, the constants ``1`` and ``k``, the
+        running ``ok``.  Outputs: the new activations, then ``ok``.  Only the
+        advised experts run; each position's ``route_check`` folds its
+        verdict into ``ok``.  A definition per distinct route pattern: the
+        description grows with the advice, as it must.
+        """
+
+        shape = self.shape
+        experts, k, d, hidden = shape.experts, shape.top_k, shape.d_model, shape.hidden
+        positions = len(routes)
+        if positions < 1:
+            raise TracerError("a mixture block needs at least one position")
+        for route in routes:
+            self.check_route(route)
+        repeat = self.tracer.repeat
+        width = positions * d + d * experts + shape.ffn_weights - d * experts + 3
+
+        @self.define(input_count=width, key=("moe_block", experts, k, routes))
+        def moe_block(v: Wires) -> object:
+            x = v[: positions * d]
+            w_r = v[positions * d : positions * d + d * experts]
+            weights = v[positions * d + d * experts : width - 3]
+            one, kconst, ok = v[width - 3], v[width - 2], v[width - 1]
+            new: list[Wires] = []
+            for p, route in enumerate(routes):
+                x_p = x[p * d : (p + 1) * d]
+                logits = self.matvec(d, experts)(x_p, w_r)
+                ok = wire(self.route_check(route)(logits, one, kconst, ok))
+                mixture: Wires | None = None
+                for e in route:
+                    y = self.expert_mlp(*expert_ports(weights, e, d, hidden), x_p, 1)
+                    mixture = y if mixture is None else repeat(d, self.add_cell, mixture[0].by(1), y[0].by(1))
+                assert mixture is not None
+                new.append(repeat(d, self.add_cell, x_p[0].by(1), mixture[0].by(1)))
+            return [*new, ok]
+
+        return moe_block
+
+    def moe_advice(
+        self,
+        layer: _LayerPorts,
+        x: Wires,
+        positions: int,
+        constants: Wires,
+        routes: tuple[Route, ...],
+        ok: Wire,
+    ) -> tuple[Wires, Wire]:
+        """The advised mixture over ``positions`` positions: the new activations and the running ``ok``."""
+
+        shape = self.shape
+        assert layer.w_r is not None and layer.experts is not None and len(routes) == positions
+        result = wires(
+            self.moe_block(routes)(x, layer.w_r, layer.experts, constants[1], constants[shape.top_k], ok)
+        )
+        return result[: positions * shape.d_model], result[positions * shape.d_model]
 
     def head(self, logits: Wire | Wires, ports: _WeightPorts, r: Wire | None) -> Wire | Wires:
         """The LM head's decision: the argmax, or a sample with the position's random word."""
@@ -672,7 +1151,7 @@ class ToyLM:
     def matvec(self, k: int, m: int) -> TracedDefinition:
         """``x W`` for a ``k``-vector and a row-major ``k x m`` matrix: ``m`` dot units."""
 
-        @self.tracer.definition(input_count=k + k * m, key=("matvec", k, m))
+        @self.define(input_count=k + k * m, key=("matvec", k, m))
         def matvec(v: Wires) -> object:
             x, w = v[:k], v[k:]
             return self.tracer.repeat(m, self.dot(k), x, w[0 : k * m : m].by(1))
@@ -684,7 +1163,7 @@ class ToyLM:
 
         vocab, d = self.shape.vocab, self.shape.d_model
 
-        @self.tracer.definition(input_count=1 + vocab + vocab * d, key="embed_row")
+        @self.define(input_count=1 + vocab + vocab * d, key="embed_row")
         def embed_row(v: Wires) -> object:
             token, constants, embedding = v[0], v[1 : 1 + vocab], v[1 + vocab :]
             return self.matvec(vocab, d)(self.onehot()(token, constants), embedding)
@@ -697,18 +1176,30 @@ class ToyLM:
         x: Wires,
         positions: int,
         caches: Sequence[tuple[Wires, Wires] | None],
-    ) -> tuple[list[Wires], Wires]:
+        routes: Sequence[tuple[Route, ...]] | None = None,
+        ok: Wire | None = None,
+    ) -> tuple[list[Wires], Wires, Wire | None]:
         """The layers over ``positions`` new positions of one sequence.
 
         ``x`` holds the new positions' embeddings; ``caches[l]`` the layer's
         cached ``(K, V)`` for the earlier positions, position-major, or
         ``None``.  New position ``p`` attends to the cache and to new positions
         ``0..p``.  Returns the new ``K`` and ``V`` of every layer (position-major
-        blocks, the cache entries later steps read) and the final activations.
+        blocks, the cache entries later steps read), the final activations
+        and the running ``ok`` word.
+
+        A mixture-of-experts shape takes the padded route when ``routes`` is
+        ``None`` and the advised route otherwise: ``routes[l][p]`` is position
+        ``p``'s route in layer ``l`` and ``ok`` the word the route checks fold
+        into (``None`` for a dense or a padded pass).
         """
 
         shape = self.shape
-        d, dh, heads, hidden = shape.d_model, shape.d_head, shape.heads, shape.hidden
+        d, dh, heads = shape.d_model, shape.d_head, shape.heads
+        if routes is not None and (ok is None or not shape.experts):
+            raise TracerError("advised routes need a mixture-of-experts shape and an ok word")
+        if routes is not None and (len(routes) != shape.layers or any(len(r) != positions for r in routes)):
+            raise TracerError(f"routes must give {shape.layers} layers of {positions} positions")
         repeat = self.tracer.repeat
         project = self.matvec(d, d)
 
@@ -718,7 +1209,7 @@ class ToyLM:
             return [block[j * d : j * d + dh].by(dh) for block in blocks for j in range(count)]
 
         state: list[Wires] = []
-        for layer, cache in zip(ports.layers, caches, strict=True):
+        for index, (layer, cache) in enumerate(zip(ports.layers, caches, strict=True)):
             q = repeat(positions, project, x[0:d].by(d), layer.w_q)
             k = repeat(positions, project, x[0:d].by(d), layer.w_k)
             v = repeat(positions, project, x[0:d].by(d), layer.w_v)
@@ -741,14 +1232,89 @@ class ToyLM:
                 )
             o = repeat(positions, project, concat(attended)[0:d].by(d), layer.w_o)
             x = repeat(positions * d, self.add_cell, x[0].by(1), o[0].by(1))
-            h = repeat(positions, self.matvec(d, hidden), x[0:d].by(d), layer.w_1)
-            h = repeat(positions * hidden, self.square_cell, h[0].by(1))
-            m = repeat(positions, self.matvec(hidden, d), h[0:hidden].by(hidden), layer.w_2)
-            x = repeat(positions * d, self.add_cell, x[0].by(1), m[0].by(1))
+            if layer.w_r is None:
+                assert layer.w_1 is not None and layer.w_2 is not None
+                m = self.expert_mlp(layer.w_1, layer.w_2, x, positions)
+                x = repeat(positions * d, self.add_cell, x[0].by(1), m[0].by(1))
+            elif routes is None:
+                x = self.moe_padded(layer, x, positions, ports.constants)
+            else:
+                assert ok is not None
+                x, ok = self.moe_advice(layer, x, positions, ports.constants, routes[index], ok)
             state += [k, v]
-        return state, x
+        return state, x, ok
 
-    def prefill(self, n: int) -> TracedDefinition:
+    def _step(
+        self,
+        *,
+        cached: int,
+        new: int,
+        inside: bool,
+        heads: int,
+        routes: Routes | None,
+        key: tuple[Hashable, ...],
+    ) -> TracedDefinition:
+        """The body shared by :meth:`prefill`, :meth:`decode` and :meth:`extend`.
+
+        ``new`` positions after ``cached`` cached ones; the tokens are ``in``
+        gates inside the definition (``inside``) or ports after the weights;
+        the head decides the last ``heads`` positions.  Ports: the weights,
+        the tokens (unless inside), per layer the cached ``K`` then ``V``,
+        and for advised routes the incoming ``ok``.  Outputs: per layer the
+        new ``K`` then ``V`` (position-major), the decided tokens, and for
+        advised routes the outgoing ``ok``.
+        """
+
+        shape = self.shape
+        d, vocab, weights = shape.d_model, shape.vocab, shape.weight_count
+        if heads not in (1, new):
+            raise TracerError("the head decides the last position or every position")
+        if heads != 1 and shape.sampling:
+            raise TracerError("a sampling shape decides one position per step")
+        advised = routes is not None
+        if routes is not None:
+            if not shape.experts:
+                raise TracerError("routes need a mixture-of-experts shape")
+            if len(routes) != shape.layers or any(len(r) != new for r in routes):
+                raise TracerError(f"routes must give {shape.layers} layers of {new} positions")
+            for layer_routes in routes:
+                for route in layer_routes:
+                    self.check_route(route)
+            key = (*key, routes)
+        token_ports = 0 if inside else new
+        cache = cached * d
+        input_count = weights + token_ports + shape.layers * 2 * cache + (1 if advised else 0)
+
+        @self.define(input_count=input_count, key=key)
+        def step(v: Wires) -> object:
+            ports = self.ports(v)
+            tokens = self.tracer.inputs(new) if inside else v[weights : weights + new]
+            caches: list[tuple[Wires, Wires] | None] = []
+            for layer in range(shape.layers):
+                if not cached:
+                    caches.append(None)
+                    continue
+                start = weights + token_ports + layer * 2 * cache
+                caches.append((v[start : start + cache], v[start + cache : start + 2 * cache]))
+            ok = v[input_count - 1] if advised else None
+            r = self.randomness() if heads == 1 else None
+            embed = self.embed_row()
+            if not inside and new == 1:
+                x = wires(embed(tokens[0], ports.constants, ports.embedding))  # a lone token is a call
+            else:
+                x = self.tracer.repeat(new, embed, tokens[0].by(1), ports.constants, ports.embedding)
+            state, x, ok = self.forward(ports, x, new, caches, routes, ok)
+            unembed = self.matvec(d, vocab)
+            if heads == 1:
+                decided = self.head(unembed(x[(new - 1) * d : new * d], ports.unembedding), ports, r)
+            else:
+                logits = self.tracer.repeat(new, unembed, x[0:d].by(d), ports.unembedding)
+                decided = self.tracer.repeat(new, self.argmax(), logits[0:vocab].by(vocab), ports.constants)
+            return [*state, decided, *([ok] if advised else [])]
+
+        return step
+
+    def prefill(self, n: int, routes: Routes | None = None) -> TracedDefinition:
         """An ``n``-token prompt: ports are the weights; the tokens are ``in`` gates inside.
 
         Outputs: per layer ``K`` then ``V`` for the ``n`` positions
@@ -756,60 +1322,68 @@ class ToyLM:
         token, the head's decision on the last position's logits.  For a
         sampling shape the position's random word is one more ``in`` gate,
         after the prompt tokens.
+
+        For a mixture-of-experts shape ``routes[l][p]`` (layer ``l``, prompt
+        position ``p``) takes the advice route: one more port, the incoming
+        ``ok``, and one more output, the outgoing ``ok``.  Without ``routes``
+        the mixture is padded.
         """
 
         if type(n) is not int or n <= 0:
             raise TracerError("prompt length must be positive")
-        shape = self.shape
-        d, vocab = shape.d_model, shape.vocab
+        return self._step(cached=0, new=n, inside=True, heads=1, routes=routes, key=("prefill", n))
 
-        @self.tracer.definition(input_count=shape.weight_count, key=("prefill", n))
-        def prefill(v: Wires) -> object:
-            ports = self.ports(v)
-            tokens = self.tracer.inputs(n)
-            r = self.randomness()
-            x = self.tracer.repeat(n, self.embed_row(), tokens[0].by(1), ports.constants, ports.embedding)
-            state, x = self.forward(ports, x, n, [None] * shape.layers)
-            logits = self.matvec(d, vocab)(x[(n - 1) * d : n * d], ports.unembedding)
-            return [*state, self.head(logits, ports, r)]
+    def prefill_ports(self, n: int) -> TracedDefinition:
+        """:meth:`prefill` with the ``n`` prompt tokens as ports after the weights instead of ``in`` gates.
 
-        return prefill
+        Two models reading one prompt (speculative decoding's draft and
+        target) take it this way from ``in`` gates the caller emits once.
+        """
 
-    def decode(self, c: int) -> TracedDefinition:
+        if type(n) is not int or n <= 0:
+            raise TracerError("prompt length must be positive")
+        return self._step(cached=0, new=n, inside=False, heads=1, routes=None, key=("prefill_ports", n))
+
+    def decode(self, c: int, routes: Routes | None = None) -> TracedDefinition:
         """One token at context ``c``: ports are the weights, the token, then per layer
         the cached ``K`` and ``V`` of the ``c - 1`` earlier positions.
 
         Outputs: per layer the new ``k`` then ``v`` (``state_size(1)`` values), then
         the next token.  For a sampling shape the position's random word is
-        an ``in`` gate inside the step.
+        an ``in`` gate inside the step.  ``routes`` as in :meth:`prefill`,
+        one position per layer.
         """
 
         if type(c) is not int or c < 2:
             raise TracerError("a decode step needs at least one cached position")
-        shape = self.shape
-        d, vocab, weights = shape.d_model, shape.vocab, shape.weight_count
-        cached = (c - 1) * d
+        return self._step(cached=c - 1, new=1, inside=False, heads=1, routes=routes, key=("decode", c))
 
-        @self.tracer.definition(input_count=weights + 1 + shape.layers * 2 * cached, key=("decode", c))
-        def decode(v: Wires) -> object:
-            ports = self.ports(v)
-            token = v[weights]
-            caches = []
-            for layer in range(shape.layers):
-                start = weights + 1 + layer * 2 * cached
-                caches.append((v[start : start + cached], v[start + cached : start + 2 * cached]))
-            r = self.randomness()
-            x = wires(self.embed_row()(token, ports.constants, ports.embedding))
-            state, x = self.forward(ports, x, 1, caches)
-            logits = self.matvec(d, vocab)(x, ports.unembedding)
-            return [*state, self.head(logits, ports, r)]
+    def extend(self, cached: int, new: int, routes: Routes | None = None) -> TracedDefinition:
+        """``new`` tokens after ``cached`` cached positions, the head deciding every one of them.
 
-        return decode
+        Ports: the weights, the ``new`` tokens, per layer the cached ``K`` then
+        ``V``.  Outputs: per layer the new ``K`` then ``V`` (``state_size(new)``
+        values), then the ``new`` argmax tokens, position by position: token
+        ``p`` is the model's greedy continuation of the sequence through new
+        position ``p``.  This is the target model's verification pass of
+        speculative decoding; a sampling shape has no such pass.
+        """
+
+        if type(cached) is not int or cached < 0 or type(new) is not int or new < 1:
+            raise TracerError("extend needs a nonnegative cache and at least one new token")
+        return self._step(
+            cached=cached,
+            new=new,
+            inside=False,
+            heads=new,
+            routes=routes,
+            key=("extend", cached, new),
+        )
 
     def weights_unit(self) -> TracedDefinition:
         """The replay unit holding every ``weight`` gate, all declared."""
 
-        return self.tracer.definition(input_count=0, key="weights", role="replay")(
+        return self.define(input_count=0, key="weights", role="replay")(
             lambda _v: self.tracer.weights(self.shape.weight_count)
         )
 
