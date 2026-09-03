@@ -14,7 +14,7 @@ from veritor.compile import Compilation, constructor_digest
 from veritor.core import CompilationLimits, make_word_gate_set
 from veritor.research import Compile
 
-from .tracer import TracedDefinition, Tracer, TracerError, Wires
+from .tracer import TracedDefinition, Tracer, TracerError, Wire, Wires
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +79,7 @@ class DemoG:
         @self.tracer.definition(input_count=0, key=("dot", length), role="replay")
         def dot(_v: Wires) -> object:
             cells = self.tracer.inputs(1 + 2 * length)  # accumulator, values, weights
-            accumulator = cells[0]
+            accumulator: Wire | Wires = cells[0]
             for index in range(length):
                 accumulator = self.mac(accumulator, cells[1 + index], cells[1 + length + index])
             return accumulator
