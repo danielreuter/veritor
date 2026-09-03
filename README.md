@@ -273,16 +273,21 @@ than `max_advice_bits` is rejected at admission, before any commitment.
 `Bound(C, I, θ)` certifies `U`, a bound in bits on the outputs an adversary
 can reach with acceptance probability above `η`. It is a fold over the kinds
 of `I`: every error set is assigned a cover by index nodes, the reachable
-outputs of a cover are at most `2^{Σ min(out_bits, reach_bits)}` (a node's
-interface and the circuit outputs it can reach are both downstream cuts; the
-reach is computed at step granularity, so a replay unit (RU) or verification
-unit (VU) inside one request of a serving run is charged that request's
-tokens, not its interface), and the
-distinct covers of admissible error sets are summed. Admissibility is a
-knapsack over replay units against the budget `ln(1/η)`, solved on a cost
-grid that only ever admits more; a grid-free Laplace bound is taken alongside
-and the smaller reported. No copy is ever enumerated: a `10^8`-gate
-transformer index bounds in milliseconds.
+outputs of a cover are at most `2^{Σ min(out_bits, reach_bits, ancestor_bits)}`
+(a node's interface, the circuit outputs it can reach and the narrowest
+interface of a node enclosing it are all downstream cuts -- together the
+node's *bottleneck*, `KindSummary.cut_bits`; reach and ancestors are computed
+at step granularity, so a replay unit (RU) or verification unit (VU) inside
+one request of a serving run is charged that request's tokens, not its
+interface), and the distinct covers of admissible error sets are summed.
+Admissibility is a knapsack over replay units against the budget `ln(1/η)`,
+solved on a cost grid that only ever admits more; a grid-free Laplace bound
+is taken alongside and the smaller reported. No copy is ever enumerated: a
+`10^8`-gate transformer index bounds in milliseconds. `rate(compiled, θ)`
+(`veritor.analysis.rate`) reads a closed-form slope `ρ` off four numbers of
+the table -- RUs, widest RU and VU bottlenecks, VUs per RU -- with
+`log2|Y_η| ≤ ρ log2(1/η) + log2 e` proved directly; `Bound(...).rho` is the
+fold's own slope, and the two are compared in the tests.
 
 ~~~python
 from fractions import Fraction
@@ -304,8 +309,10 @@ of `(G, x, a)`. With `U_max` and `A` enforced at admission, every accepted
 request has capacity at most `U_max + A`.
 
 `Cost` is the exact per-request expectation
-`h|∂| + Recompute + q Σ_r h|Int(r)| + q s Σ_v (proof(V_v) + c_0)`, with
-`|∂| = |In| + Σ_r |Out(R_r)|`. `Recompute` assumes the honest prover retains
+`h|∂| + Recompute + q Σ_r h|Int(r)| + q s Σ_v (α proof(V_v) + c_0)`, with
+`|∂| = |In| + Σ_r |Out(R_r)|` and `α = CostParameters.proof_factor` the cost
+of proving one VU relative to executing it natively (`1` by default).
+`Recompute` assumes the honest prover retains
 only the circuit inputs and the weights: a sampled replay unit whose ports
 are all fed by source gates (a *closed* kind, `KindSummary.closed`) costs its
 own `replay(R_r)`, so the term is `q Σ_r replay(R_r)` when every unit is

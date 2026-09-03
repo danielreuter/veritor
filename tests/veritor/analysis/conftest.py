@@ -168,6 +168,57 @@ def random_compiled(seed: int, width: int = 2, max_gates: int = 8) -> Compiled:
     return Compiler(gate_set).compile(tracer.serialize(root), list(range(1, input_count + 1)))
 
 
+def bottlenecked(fanout: int, width: int = 8) -> Compiled:
+    """A one-word ``stage`` of two wide replay units (RUs) whose single output word feeds ``fanout`` outputs.
+
+    A ``wide`` RU is two ``pair`` verification units (VUs) in a row (16-bit
+    interface, ``2 * width`` bits in general); ``narrow`` adds two words
+    into one.  The stage is unmarked and one word wide, and its word is
+    read by ``fanout`` ``narrow`` RUs each writing a circuit output, so
+    everything inside the stage reaches every output: neither the
+    interface nor the reach of a ``wide`` RU is below two words, while the
+    stage encloses it in one.  The inputs sit in a source RU.
+    """
+
+    gate_set = make_word_gate_set(width)
+    tracer = Tracer(gate_set)
+    add, mul = tracer.gate("add"), tracer.gate("mul")
+
+    @tracer.definition(input_count=2, key="pair", role="verification")
+    def pair(v):
+        return add(v[0], v[1]), mul(v[0], v[1])
+
+    @tracer.definition(input_count=2, key="one", role="verification")
+    def one(v):
+        return add(v[0], v[1])
+
+    @tracer.definition(input_count=2, key="wide", role="replay")
+    def wide(v):
+        return pair(*pair(v[0], v[1]))
+
+    @tracer.definition(input_count=2, key="narrow", role="replay")
+    def narrow(v):
+        return one(v[0], v[1])
+
+    @tracer.definition(input_count=2, key="stage")
+    def stage(v):
+        a, b = wide(v[0], v[1])
+        a, b = wide(a, b)
+        return narrow(a, b)
+
+    @tracer.definition(input_count=0, key=("sources", fanout), role="replay")
+    def sources(_v):
+        return tracer.inputs(fanout + 2)
+
+    @tracer.definition(input_count=0, key=("root", fanout))
+    def root(_v):
+        x = sources()
+        word = stage(x[0], x[1])
+        return [narrow(word, x[2 + r]) for r in range(fanout)]
+
+    return Compiler(gate_set).compile(tracer.serialize(root), [1] * (fanout + 2))
+
+
 @pytest.fixture(scope="session")
 def make_compiled():
     return build_compiled

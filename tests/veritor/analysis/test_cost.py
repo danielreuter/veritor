@@ -26,7 +26,7 @@ from veritor.analysis.cost import (
 from veritor.compile import Compiler
 from veritor.constructors import Tracer
 from veritor.core import Compiled, VerificationPolicy, make_word_gate_set
-from veritor.core.description import REPLAY
+from veritor.core.description import REPLAY, VERIFICATION
 from veritor.evaluation import ServingShape, serving_table
 from veritor.evaluation.frontier import honest_cost
 
@@ -37,11 +37,11 @@ def explicit_cost(compiled: Compiled, policy: VerificationPolicy, parameters: Co
     """The formula evaluated unit by unit over the explicit index, every replay unit taken as closed."""
 
     index, circuit = compiled.index, compiled.circuit
-    h, c0 = parameters.hash_cost, parameters.proof_overhead
+    h, c0, alpha = parameters.hash_cost, parameters.proof_overhead, parameters.proof_factor
     recompute = sum(circuit.Cost(index.replay_units.unit(r), "replay") for r in range(index.replay_units.count))
     interior = sum(h * index.interior(r).count for r in range(index.replay_units.count))
     proof = sum(
-        circuit.Cost(index.verification_unit(v), "proof") + c0
+        alpha * circuit.Cost(index.verification_unit(v), "proof") + c0
         for v in range(index.verification_unit_count)
     )
     return ExpectedCost(
@@ -223,6 +223,34 @@ def test_the_fold_agrees_on_the_artifact_and_its_table(make_paper_example):
         assert cost(compiled, policy) == cost(compiled.kind_table(), policy)
 
 
+def test_the_proving_factor_scales_the_proofs_and_nothing_else(make_compiled, make_paper_example):
+    """``alpha`` multiplies ``Cost_proof`` of every sampled VU; ``c_0``, the replay and the boundary are untouched."""
+
+    policy = VerificationPolicy(Fraction(1, 3), Fraction(1, 5))
+    for compiled in (make_compiled((3, 2)), make_paper_example(2, True), compile_matmul().compiled):
+        table = compiled.kind_table()
+        plain = cost(table, policy, CostParameters(2, 1))
+        assert cost(table, policy, CostParameters(2, 1, 1)) == plain  # the default is one native execution
+        scaled = cost(table, policy, CostParameters(2, 1, Fraction(7, 2)))
+        assert (scaled.boundary, scaled.recompute, scaled.commit_interior, scaled.weights) == (
+            plain.boundary,
+            plain.recompute,
+            plain.commit_interior,
+            plain.weights,
+        )
+        proofs = policy.q * policy.s * sum(row.copies * row.proof_cost for row in table.rows if row.role == VERIFICATION)
+        assert scaled.proof - plain.proof == Fraction(5, 2) * proofs
+        assert scaled.proof == Fraction(7, 2) * proofs + policy.q * policy.s * sum(
+            row.copies for row in table.rows if row.role == VERIFICATION
+        )
+        # zero prices the proofs at their fixed overhead alone; the explicit sum agrees at every alpha
+        assert cost(table, policy, CostParameters(2, 1, 0)).proof == plain.proof - proofs
+        if all_closed(compiled):
+            for alpha in (0, Fraction(7, 2), 100):
+                parameters = CostParameters(2, 1, alpha)
+                assert cost(compiled, policy, parameters) == explicit_cost(compiled, policy, parameters)
+
+
 def test_survival_is_exact_then_certain_then_a_float():
     # exact: the result's denominator stays within EXACT_BITS
     assert survival(Fraction(1, 2), 10) == Fraction(1, 1024)
@@ -256,4 +284,8 @@ def test_cost_validates_its_inputs(make_compiled):
         CostParameters(-1)
     with pytest.raises(TypeError, match="proof_overhead"):
         CostParameters(1, 0.5)
+    with pytest.raises(ValueError, match="proof_factor"):
+        CostParameters(1, 0, -1)
     assert CostParameters("3/2").hash_cost == Fraction(3, 2)
+    assert CostParameters().proof_factor == 1
+    assert CostParameters(proof_factor="5/2").proof_factor == Fraction(5, 2)
