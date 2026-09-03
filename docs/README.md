@@ -22,6 +22,7 @@ What each file is, what it is generated from, and where to start.
 ## Notes and drafts
 
 - `notes/datacenter-realities.md` — literature brief: twelve topics on what production inference datacenters actually do, with checked sources.
+- `notes/declaration-kinds.md` — design note, nothing implemented: source-position, port and RU-scope pardons as declaration kinds beyond the VU; syntax, what the verifier checks instead, scope, the price each must carry in `Bound` (the ladder of `notes/late-advice.md`), the wire and verifier changes each would need, and the open pricing questions. Motivated by the systematic-fault rows `H4a`-`H4d` of `honest-prover.md`.
 - `paper/` — drafts of paper sections (§5 covert capacity, §7 secure circuit compilation) and their context notes.
 - `compute-accounting/` — a separate track: compute-accounted bounded accumulation, combining the sampled verification with proofs of useful work.
 - `lean-collaborator-handoff.md` — brief for a Lean collaborator on private optimized macros over public instructions.
