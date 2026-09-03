@@ -21,3 +21,8 @@ wheels/
 .DS_Store
 
 .sesskey
+
+# GPU build artifacts and large captures (gpu/gpt2/README in docs/gpt2-silicon.md says how to regenerate)
+*.so
+gpu/gpt2/results/*.npz
+gpu/gpt2/results/ada_pinned_f32.json

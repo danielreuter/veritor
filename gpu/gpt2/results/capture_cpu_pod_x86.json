@@ -1,0 +1,20 @@
+{
+  "backend": "numpy+ref_chain",
+  "tokens": [
+    318,
+    262,
+    38760,
+    2615,
+    287,
+    262,
+    995,
+    13
+  ],
+  "forward_seconds_wall": 205.07764039933681,
+  "identity": {
+    "nvidia_smi": "NVIDIA GeForce RTX 4090, 550.127.05, 24564 MiB, GPU-123812ef-87c2-f233-64d8-fb86dd5e364b, 8.9",
+    "host": "Linux-6.8.0-60-generic-x86_64-with-glibc2.35",
+    "python": "3.12.14",
+    "numpy": "2.5.2"
+  }
+}

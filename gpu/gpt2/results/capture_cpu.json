@@ -1,0 +1,20 @@
+{
+  "backend": "numpy+ref_chain",
+  "tokens": [
+    318,
+    262,
+    38760,
+    2615,
+    287,
+    262,
+    995,
+    13
+  ],
+  "forward_seconds_wall": 9.75315950019285,
+  "identity": {
+    "nvidia_smi": "unavailable: [Errno 2] No such file or directory: 'nvidia-smi'",
+    "host": "macOS-26.5.1-arm64-arm-64bit",
+    "python": "3.12.11",
+    "numpy": "2.5.2"
+  }
+}
