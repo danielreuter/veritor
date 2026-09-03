@@ -60,16 +60,9 @@ from veritor.constructors import (
     Request,
     Schedule,
 )
-from veritor.core import (
-    CompilationLimits,
-    KindTable,
-    VerificationLimits,
-    VerificationPolicy,
-    make_isa_gate_set,
-)
+from veritor.core import KindTable, VerificationPolicy, make_isa_gate_set
 from veritor.protocol import MerkleTree, Weights, commit_weights
 from veritor.protocol.epoch import EpochParameters, EpochReport, Run, run_epoch
-from veritor.protocol.parameters import DEFAULT_MAX_WORK
 from veritor.research import Compile
 
 from .workload import Simulation
@@ -99,10 +92,6 @@ class Window:
             raise ValueError("a window's steps are integers")
         if not 0 <= self.start < self.end:
             raise ValueError("a window needs at least one step")
-
-    @property
-    def steps(self) -> int:
-        return self.end - self.start
 
     def holds(self, step: int) -> bool:
         return self.start <= step < self.end
@@ -159,10 +148,6 @@ class RoundTrace:
             raise ValueError("a run's schedule ends with its window")
         if len(self.pods) != self.schedule.pods:
             raise ValueError("one simulation pod per pod of the schedule")
-
-    @property
-    def joins(self) -> int:
-        return len(self.schedule.joins)
 
     @property
     def tokens(self) -> int:
@@ -310,7 +295,10 @@ def _cut(
     Every attempt must be fresh (a restart from the prefill), so its step
     ``k`` computes the request's position ``k``.  A piece is the part of one
     attempt inside one window; ``reached[w]`` is the furthest position the
-    request had streamed when window ``w`` ended.
+    request had streamed when window ``w`` ended.  Under :data:`CONTINUE`
+    a piece must begin at the position the earlier windows streamed up to:
+    a restart that recomputes, in a later window, positions streamed in an
+    earlier one is not modelled.
     """
 
     pieces: dict[int, list[tuple[Join, int, int]]] = {}
@@ -333,31 +321,24 @@ def _cut(
     for index in sorted(pieces):
         cut: list[_Piece] = []
         for join, start, stop in pieces[index]:
-            if spanning == SPLIT:
-                if (
-                    start == join.step
-                ):  # the attempt as scheduled, cut at the window's end
-                    cut.append(_Piece.of(join, start, stop))
-                else:  # a fresh attempt of the same request, the whole length again
-                    cut.append(_Piece(join.pod, start, -1, join.length))
-                continue
-            first = start - join.step  # the first position this piece computes
-            length = (stop - join.step) - max(first, offset)
-            if length > 0:  # skip the steps that only recompute streamed positions
-                cut.append(
-                    _Piece(join.pod, start + max(0, offset - first), join.slot, length)
+            if spanning == SPLIT and start > join.step:
+                # a fresh attempt of the same request, the whole length again
+                cut.append(_Piece(join.pod, start, -1, join.length))
+            elif spanning == CONTINUE and start - join.step < offset:
+                raise ValueError(
+                    f"request {origin} recomputes streamed positions across a window"
+                    " boundary: not modelled"
                 )
-        if spanning == CONTINUE:
-            if offset < len(tokens) and cut:
-                continuation = Request(
-                    request.prompt + tokens[:offset],
-                    request.max_new - offset,
-                    request.randomness[offset:],
-                    request.banned,
-                )
-                members[index].append(
-                    _Member(origin, continuation, tokens[offset:], cut)
-                )
+            else:  # the attempt as scheduled, cut at the window's end
+                cut.append(_Piece.of(join, start, stop))
+        if spanning == CONTINUE:  # the rest is a new request with the prefix in x
+            continuation = Request(
+                request.prompt + tokens[:offset],
+                request.max_new - offset,
+                request.randomness[offset:],
+                request.banned,
+            )
+            members[index].append(_Member(origin, continuation, tokens[offset:], cut))
         else:
             members[index].append(_Member(origin, request, tokens, cut))
         offset = reached[index]
@@ -425,7 +406,6 @@ class CompiledRound:
     """One run compiled and evaluated: its :class:`Run` for the epoch and the numbers a row reads."""
 
     trace: RoundTrace
-    constructor: ClusterG
     compilation: Compilation
     values: dict[int, int]
     outputs: tuple[int, ...]
@@ -451,10 +431,6 @@ class CompiledRound:
     def check_outputs(self) -> int:
         return sum(1 for _ in self.compilation.compiled.check_values())
 
-    @property
-    def gates(self) -> int:
-        return self.compilation.compiled.circuit.n
-
 
 @dataclass(frozen=True, slots=True)
 class EpochOutcome:
@@ -463,8 +439,6 @@ class EpochOutcome:
     parameters: EpochParameters
     report: EpochReport
     runs: tuple[CompiledRound, ...]
-    weights: Weights
-    weight_tree: MerkleTree
 
     @property
     def accepted(self) -> bool:
@@ -537,7 +511,6 @@ def compile_round(
     weight_tree: MerkleTree,
     *,
     session_id: bytes,
-    limits: CompilationLimits | None = None,
 ) -> CompiledRound:
     """``Compile(ClusterG, x, a)`` for one run, evaluated on ``weights``; the outputs must be what was streamed."""
 
@@ -549,7 +522,6 @@ def compile_round(
         trace.requests,
         advice,
         make_isa_gate_set(shape.width),
-        limits=limits,
         max_advice_bits=8 * len(advice),
     )
     circuit = compilation.compiled.circuit
@@ -571,7 +543,6 @@ def compile_round(
     )
     return CompiledRound(
         trace,
-        constructor,
         compilation,
         values,
         outputs,
@@ -586,7 +557,6 @@ def compile_rounds(
     parameters: Parameters,
     *,
     seed: str = "",
-    limits: CompilationLimits | None = None,
 ) -> tuple[CompiledRound, ...]:
     """:func:`compile_round` for every trace under one weight commitment; session ids derive from ``seed``."""
 
@@ -602,7 +572,6 @@ def compile_rounds(
             kappa,
             weight_tree,
             session_id=_seed_bytes(seed, f"run/{index}")[:16],
-            limits=limits,
         )
         for index, trace in enumerate(traces)
     )
@@ -615,12 +584,6 @@ def run_rounds(
     *,
     rounds: int | None = None,
     admission: Sequence[int] | None = None,
-    eta: Fraction = ETA,
-    policy: VerificationPolicy = POLICY,
-    max_faults: int = 0,
-    max_work: int = DEFAULT_MAX_WORK,
-    limits: VerificationLimits | None = None,
-    compilation_limits: CompilationLimits | None = None,
     seed: str = "",
 ) -> EpochOutcome:
     """Compile every trace and run the epoch: each trace is one run, admitted in its round.
@@ -629,8 +592,9 @@ def run_rounds(
     (``trace.round`` by default; a straggler's run may be admitted later).
     ``rounds`` is the epoch's round count (one past the last admission
     unless given: a trailing round with nothing served still closes).
-    Round seeds and session ids derive from ``seed``, so the outcome is
-    deterministic.
+    The epoch runs at :data:`ETA` and :data:`POLICY` with no fault budget
+    and no ``U_max``.  Round seeds and session ids derive from ``seed``, so
+    the outcome is deterministic.
     """
 
     admitted = (
@@ -645,29 +609,21 @@ def run_rounds(
     count = 1 + max(admitted, default=0) if rounds is None else rounds
     if any(not 0 <= round < count for round in admitted):
         raise ValueError("every run's round must lie within the epoch's rounds")
-    compiled = compile_rounds(
-        traces, shape, parameters, seed=seed, limits=compilation_limits
-    )
-    kappa, weight_tree = compiled[0].run.weights, compiled[0].run.weight_tree
-    assert kappa is not None and weight_tree is not None
+    compiled = compile_rounds(traces, shape, parameters, seed=seed)
     epoch = EpochParameters(
-        eta,
-        policy,
+        ETA,
+        POLICY,
         max_capacity=None,
         rounds=count,
         max_advice_bits=max(run.advice_bits for run in compiled),
-        max_work=max_work,
-        max_faults=max_faults,
     )
     schedule = [
         [index for index, round in enumerate(admitted) if round == r]
         for r in range(count)
     ]
     seeds = [_seed_bytes(seed, f"round/{r}") for r in range(count)]
-    report = run_epoch(
-        epoch, [run.run for run in compiled], schedule, seeds, limits=limits
-    )
-    return EpochOutcome(epoch, report, compiled, kappa, weight_tree)
+    report = run_epoch(epoch, [run.run for run in compiled], schedule, seeds)
+    return EpochOutcome(epoch, report, compiled)
 
 
 def epoch_from_simulation(
@@ -677,11 +633,6 @@ def epoch_from_simulation(
     rounds: int | Sequence[Window],
     *,
     spanning: str = HOLD,
-    eta: Fraction = ETA,
-    policy: VerificationPolicy = POLICY,
-    max_faults: int = 0,
-    limits: VerificationLimits | None = None,
-    compilation_limits: CompilationLimits | None = None,
     seed: str = "",
 ) -> EpochOutcome:
     """Cut ``simulation`` into rounds (:func:`partition`) and run the epoch (:func:`run_rounds`)."""
@@ -691,11 +642,6 @@ def epoch_from_simulation(
         shape,
         parameters,
         rounds=rounds if isinstance(rounds, int) else len(rounds),
-        eta=eta,
-        policy=policy,
-        max_faults=max_faults,
-        limits=limits,
-        compilation_limits=compilation_limits,
         seed=seed,
     )
 
