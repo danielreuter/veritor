@@ -11,6 +11,7 @@ from veritor.analysis.probability import (
     survival_factor,
     unit_cost,
 )
+from veritor.analysis.rate import RateResult, capacity_from_rate, rate
 
 __all__ = [
     "BoundOptions",
@@ -19,11 +20,14 @@ __all__ = [
     "ExpectedCost",
     "Optimization",
     "PolicyGrid",
+    "RateResult",
     "admissible",
     "bound",
     "budget",
+    "capacity_from_rate",
     "cost",
     "optimize",
+    "rate",
     "saturation_cost",
     "survival",
     "survival_factor",

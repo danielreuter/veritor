@@ -135,6 +135,14 @@ class BoundResult:
     the ``theta`` and threshold bounded.  The result is always an upper
     bound; it is exact for the relaxed admissibility described in the module
     docstring when ``knapsack_bits`` is the minimum.
+
+    ``rho`` is the slope of the Laplace fold: writing its per-kind sum as
+    ``Z_K(t) = 1 + eps_K(t)``, the least ``t >= 0`` at which the excess
+    ``sum_K n_K eps_K(t)`` is at most one, so that ``laplace_bits <= rho *
+    log2 (1 / eta) + log2 e`` (``log2 prod (1 + eps) <= log2 e * sum eps``).
+    It does not depend on ``eta`` beyond the error truncation, and is the
+    quantity the closed form of :mod:`veritor.analysis.rate` approximates
+    from the table's summary numbers; ``inf`` when some error is free.
     """
 
     bits: float
@@ -148,6 +156,7 @@ class BoundResult:
     policy: VerificationPolicy
     eta: Fraction
     digest: Digest
+    rho: float
 
 
 def bound(
@@ -188,6 +197,7 @@ def bound(
         policy=policy,
         eta=eta,
         digest=table.digest,
+        rho=fold.slope(replay),
     )
 
 
@@ -342,7 +352,14 @@ class _Fold:
 
     # -- Laplace transform bound --------------------------------------------
 
-    def laplace(self, replay: list[KindSummary]) -> float:
+    def _terms(self, replay: list[KindSummary]) -> list[tuple[int, np.ndarray, np.ndarray]]:
+        """Per RU kind: copies, ``log2`` cover weights and costs in bits, ``l = 0`` first.
+
+        Terms of infinite cost (error sets that never survive) and of zero
+        weight are dropped; the ``l = 0`` term, weight one at cost zero, is
+        always kept and first.
+        """
+
         terms = []
         for row in replay:
             series = self.series(row.kind)
@@ -351,6 +368,51 @@ class _Fold:
             costs = np.append(costs, self.cost(self.limit + 1))
             keep = np.isfinite(costs) & (weights > NEG_INF)
             terms.append((row.copies, weights[keep], costs[keep] * LOG2E))
+        return terms
+
+    def slope(self, replay: list[KindSummary]) -> float:
+        """The least ``t`` at which the excess ``sum_K n_K (Z_K(t) - 1)`` is at most one.
+
+        The excess is decreasing in ``t`` (every cost is nonnegative), so a
+        doubling search brackets the root and a bisection closes in; the
+        upper end, where the excess was computed (rounded up) to be at most
+        one, is returned.  ``inf`` when a term of positive weight costs
+        nothing (``q = 0`` or ``s = 0``): the excess then never falls to one.
+        """
+
+        weights = []
+        costs = []
+        for copies, kind_weights, kind_costs in self._terms(replay):
+            if len(kind_weights) > 1:
+                weights.append(kind_weights[1:] + math.nextafter(math.log2(copies), math.inf))
+                costs.append(kind_costs[1:])
+        if not weights:
+            return 0.0
+        weight = np.concatenate(weights)
+        cost = np.concatenate(costs)
+
+        def excess(t: float) -> float:
+            return float(log2_sum(weight - t * cost))
+
+        if excess(0.0) <= 0.0:
+            return 0.0
+        if np.any(cost <= 0.0):
+            return math.inf
+        low, high = 0.0, 1.0
+        while excess(high) > 0.0:
+            low, high = high, 2.0 * high
+            if high > 2.0**80:
+                return math.inf
+        for _ in range(64):
+            middle = (low + high) / 2
+            if excess(middle) <= 0.0:
+                high = middle
+            else:
+                low = middle
+        return high
+
+    def laplace(self, replay: list[KindSummary]) -> float:
+        terms = self._terms(replay)
 
         def value(t: float) -> float:
             total = t * self.budget * LOG2E if t else 0.0
