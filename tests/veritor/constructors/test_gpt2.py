@@ -1,15 +1,18 @@
-"""GPT-2's structure: gate counts, marks, determinism, the legacy explicit DAG, and GPT-2 Small.
+"""GPT-2's structure over the pinned gate set: gate counts, marks, determinism, the legacy DAG, GPT-2 Small.
 
-``GPT2G`` writes GPT-2's shape over the structural gate set.  At a tiny
-shape the compiled table is checked gate for gate against the closed forms
-(``gate_budget``: MACs per token, inner products, cells), every gate is in
-exactly one replay unit (RU) and one verification unit (VU), the request and
-the weights are closed, no VU is wider than the accumulator, and the per
-component totals reconcile with the legacy ``circuit_cut_analysis`` GPT-2
-DAG built at the same shape, up to four documented structural deltas.  At
-``GPT2Shape.small()`` a three-request run (prompt 32, 32 generated tokens)
-compiles in well under a second and its table carries the numbers of
-``docs/gpt2-structure.md``.
+``GPT2G`` writes GPT-2's shape over ``make_pinned_gate_set()``: tensor-core
+chains for every dot product and explicit IEEE fp32 sequences for the rest.
+At a tiny shape the compiled table is checked gate for gate against the
+closed forms (``gate_budget``), every gate is in exactly one replay unit
+(RU) and one verification unit (VU), the request and the weights are
+closed, no VU is wider than the argmax block's ``(best, index)`` pair, and
+the dot products and MACs reconcile with the legacy ``circuit_cut_analysis``
+GPT-2 DAG built at the same shape.  At ``GPT2Shape.small()`` a three-request
+run (prompt 32, 32 generated tokens) compiles in well under a second and its
+table carries the numbers of ``docs/gpt2-structure.md``.  The values the
+circuit computes are tested in ``test_gpt2_reference.py`` (a tiny model
+end to end, including the protocol) and ``test_gpt2_capture.py`` (VUs of
+the RTX 4090 run).
 """
 
 from __future__ import annotations
@@ -24,11 +27,12 @@ from veritor.analysis.bound import BoundOptions, bound, cut_bits
 from veritor.analysis.cost import cost
 from veritor.compile import Compiler
 from veritor.constructors import GPT2G, GPT2Shape, Request, TracerError, gate_budget
+from veritor.constructors.gpt2 import STEP, padded
 from veritor.core import Compiled, VerificationPolicy
 from veritor.core.description import REPLAY, VERIFICATION
 from veritor.core.index import KindTable
 
-TINY = GPT2Shape(layers=2, d_model=8, heads=2, d_ff=16, vocab=11, context=8)
+TINY = GPT2Shape(layers=2, d_model=32, heads=2, d_ff=64, vocab=11, context=8)
 REQUESTS = (Request((1, 2, 3), 3), Request((4, 5), 2))
 LEGACY_REQUEST = REQUESTS[0]
 ETA = Fraction(1, 2**40)
@@ -74,14 +78,17 @@ def components(constructor: GPT2G, table: KindTable, requests: tuple[Request, ..
     shape = constructor.shape
     d, f, vocab = shape.d_model, shape.d_ff, shape.vocab
     kinds = by_name(constructor, table)
+    forwards = predictions_of(requests)
     return {
         "embedding": gates_of(kinds, "embed"),
+        "constants": 2 * forwards,  # the two widened scalars per forward, ``widen_cell`` copies outside ``embed``
         "layer_norm": gates_of(kinds, "layer_norm"),
-        "attention": gates_of(kinds, f"matvec({d},{d},True,False)") + gates_with_prefix(kinds, "attend_head("),
-        "mlp": gates_of(kinds, f"matvec({d},{f},True,False)", f"matvec({f},{d},True,False)", "gelu_cell"),
+        "attention": gates_of(kinds, f"matvec({d},{d},True,True,False)", f"matvec({d},{d},True,False,False)")
+        + gates_with_prefix(kinds, "attend_head("),
+        "mlp": gates_of(kinds, f"matvec({d},{f},True,False,False)", f"matvec({f},{d},True,False,False)", "gelu_cell"),
         "residual": gates_of(kinds, "add_cell") - positions_of(requests) * d,  # minus the embedding adds
-        "lm_head": gates_of(kinds, f"matvec({d},{vocab},False,True)"),
-        "argmax": gates_of(kinds, "argmax"),
+        "lm_head": gates_of(kinds, f"matvec({d},{vocab},False,False,True)"),
+        "argmax": gates_with_prefix(kinds, "argmax_block(") + gates_with_prefix(kinds, "argmax_top("),
     }
 
 
@@ -104,29 +111,37 @@ def test_the_shape_validates_and_small_is_gpt2_small() -> None:
         50257,
         1024,
     )
-    assert (small.width, small.acc_width, small.d_head) == (16, 32, 64)
-    # 124,439,808 parameters (tied embedding), plus the token table and the seven scalars
-    assert small.weight_count == 124_439_808 + 50257 + 7
+    assert (small.width, small.acc_width, small.d_head, small.argmax_block) == (16, 32, 64, 64)
+    # 124,439,808 parameters (tied embedding), plus the token table and the three BF16 scalars
+    assert small.weight_count == 124_439_808 + 50257 + 3
     assert dict(small.layout())["wte"] == 50257 * 768 and dict(small.layout())["layer11.w_proj"] == 3072 * 768
+    assert small.vocab_padded == 50272 and small.scalar_words() == {"n": 0x4440, "scale": 0x3E00, "zero": 0}
     with pytest.raises(ValueError, match="multiple of heads"):
-        GPT2Shape(layers=1, d_model=6, heads=4, d_ff=8, vocab=5, context=4)
+        GPT2Shape(layers=1, d_model=48, heads=5, d_ff=16, vocab=5, context=4)
     with pytest.raises(ValueError, match="positive"):
-        GPT2Shape(layers=0, d_model=4, heads=2, d_ff=8, vocab=5, context=4)
-    with pytest.raises(ValueError, match="acc_width"):
-        GPT2Shape(layers=1, d_model=4, heads=2, d_ff=8, vocab=5, context=4, width=32, acc_width=16)
+        GPT2Shape(layers=0, d_model=16, heads=1, d_ff=16, vocab=5, context=4)
+    with pytest.raises(ValueError, match=f"multiples of {STEP}"):
+        GPT2Shape(layers=1, d_model=8, heads=1, d_ff=16, vocab=5, context=4)
+    with pytest.raises(ValueError, match=f"multiples of {STEP}"):
+        GPT2Shape(layers=1, d_model=32, heads=4, d_ff=16, vocab=5, context=4)  # d_head 8
     with pytest.raises(ValueError, match="vocab <= 2"):
-        GPT2Shape(layers=1, d_model=4, heads=2, d_ff=8, vocab=300, context=4, width=8)
+        GPT2Shape(layers=1, d_model=16, heads=1, d_ff=16, vocab=1 << 17, context=4)
+    with pytest.raises(ValueError, match="not exact in BF16"):
+        GPT2Shape(layers=1, d_model=16 * 257, heads=1, d_ff=16, vocab=5, context=4)  # 4112 = 2^12 (1 + 2^-8)
+    assert padded(50257) == 50272 and padded(16) == 16 and padded(17) == 32
 
 
 def test_the_flat_weight_layout_is_documented_and_consistent() -> None:
     layout = TINY.layout()
     names = [name for name, _ in layout]
-    assert names[:2] == ["wte", "wpe"] and names[-10:-7] == ["lnf_g", "lnf_b", "tokens"]
-    assert names[-7:] == ["inv_d", "eps", "scale", "gelu_c3", "gelu_k", "one", "half"]
+    assert names[:2] == ["wte", "wpe"] and names[-6:-3] == ["lnf_g", "lnf_b", "tokens"]
+    assert names[-3:] == ["n", "scale", "zero"]
     assert names[2:18] == [f"layer0.{field}" for field, _ in TINY.layer_layout()]
     assert sum(count for _, count in layout) == TINY.weight_count
-    assert TINY.layer_weights == 2 * 8 + 3 * (64 + 8) + (64 + 8) + 2 * 8 + (128 + 16) + (128 + 8)
-    assert TINY.state_size(3) == 2 * 2 * 3 * 8
+    d, f = TINY.d_model, TINY.d_ff
+    assert TINY.layer_weights == 2 * d + 3 * (d * d + d) + (d * d + d) + 2 * d + (d * f + f) + (f * d + d)
+    assert TINY.state_size(3) == 2 * 2 * 3 * d
+    assert TINY.scalar_words() == {"n": 0x4200, "scale": 0x3E00, "zero": 0}  # 32.0, 0.125, 0.0
 
 
 # -- gate counts ------------------------------------------------------------------------
@@ -141,43 +156,54 @@ def test_the_closed_forms_account_for_every_computed_gate(run) -> None:
     assert budget["total"] == sum(gate_budget(TINY, len(r.prompt), r.max_new)["total"] for r in REQUESTS)
     assert index.n == budget["total"] + index.input_count + index.weight_count
     assert index.input_count == sum(len(r.prompt) for r in REQUESTS) == 5
-    assert index.weight_count == TINY.weight_count == 1386
-    assert index.n == 27_783
+    assert index.weight_count == TINY.weight_count == 17_774
+    assert index.n == 48_748 and budget["total"] == 30_969
 
 
-def test_macs_per_token_match_the_multiply_count(run) -> None:
-    """MACs: ``4 d^2 + 2 d d_ff`` per layer (``12 d^2`` when ``d_ff = 4 d``), ``2 d c`` for attention, ``vocab d`` for the head.
+def test_dot_products_are_tensor_core_chains_of_k_over_16_steps(run) -> None:
+    """Every inner product is a ``dot(k, biased, rounded)`` VU of ``k/16`` ``tc_dot16`` steps plus its bias and rounding.
 
-    Every dot-product multiply is a copy of the one-gate ``acc_mul`` kind (the
-    other ``acc_mul`` gates -- statistics, scale, GELU -- are inline), so its
-    copy count is the MAC count.  The embedding one-hot adds ``vocab d`` MACs
-    per position that a gather would not.
+    The MACs of a run are ``16 x`` the tensor-core steps; the classical
+    count (``4 d^2 + 2 d d_ff`` per layer and position, ``2 d c`` for
+    attention at context ``c``, ``vocab d`` per prediction) is recovered
+    from the unpadded chain lengths, and the embedding's one-hot adds
+    ``vocab_padded d`` per position that a gather would not.
     """
 
     constructor, compiled = run
     kinds = by_name(constructor, compiled.kind_table())
-    d, f, vocab, layers = TINY.d_model, TINY.d_ff, TINY.vocab, TINY.layers
+    d, f, dh, heads, layers = TINY.d_model, TINY.d_ff, TINY.d_head, TINY.heads, TINY.layers
     positions, predictions, keys = positions_of(REQUESTS), predictions_of(REQUESTS), keys_of(REQUESTS)
 
-    projections = positions * layers * (4 * d * d + 2 * d * f)
-    attention = layers * 2 * d * keys
-    head = predictions * vocab * d
-    embedding = positions * vocab * d
-    assert kinds["acc_mul"] == (projections + attention + head + embedding, 1)
+    # (copies, gates): the widened bias, k/16 steps, the rounding
+    assert kinds[f"dot({d},True,True)"] == (3 * d * positions * layers, 1 + d // STEP + 1)  # q, k, v
+    assert kinds[f"dot({d},True,False)"] == ((d + f) * positions * layers, 1 + d // STEP)  # o and fc (length d)
+    assert kinds[f"dot({f},True,False)"] == (d * positions * layers, 1 + f // STEP)  # proj (length d_ff)
+    assert kinds[f"dot({dh},False,False)"] == (layers * heads * keys + positions * d, dh // STEP)  # scores + embedding
+    assert kinds[f"dot({dh},False,True)"] == (layers * heads * dh * positions, 1 + 1)  # the mix: ceil(c/16) = 1 step
+    assert kinds[f"dot({d},False,False)"] == (predictions * TINY.vocab, d // STEP)  # the tied head
+    inner_products = sum(copies for name, (copies, _) in kinds.items() if name.startswith("dot("))
+    assert inner_products == positions * layers * (4 * d + f + d) + layers * heads * keys + layers * positions * d + (
+        positions * d + predictions * TINY.vocab
+    )
+    # unpadded MACs: the classical count plus the one-hot
+    macs = (
+        positions * layers * (4 * d * d + 2 * d * f)
+        + layers * 2 * d * keys
+        + predictions * TINY.vocab * d
+        + positions * TINY.vocab_padded * d
+    )
+    steps = 0
+    for name, (copies, size) in kinds.items():
+        if name.startswith("dot("):
+            k, biased, rounded = name[4:-1].split(",")
+            steps += copies * int(k) // STEP
+            assert size == int(k) // STEP + int(biased == "True") + int(rounded == "True")
+    padded_macs = STEP * steps
+    padding = layers * heads * dh * (positions * padded(1) - keys)  # the mix pads each context to 16 keys
+    assert padded_macs == macs + padding
     small = GPT2Shape.small()  # d_ff = 4 d: the familiar 12 d^2 MACs per layer and token
     assert 4 * small.d_model**2 + 2 * small.d_model * small.d_ff == 12 * small.d_model**2
-    # one ``narrow`` per inner product: the projections, the scores, the mix, the embedding and the head
-    inner_products = (
-        positions * layers * (4 * d + f + d) + layers * keys * TINY.heads + layers * positions * d + positions * d
-    ) + predictions * vocab
-    assert kinds[f"dot({d},True)"] == (positions * layers * (4 * d + f), 2 * d + 1)  # q, k, v, o and fc
-    assert kinds[f"dot({f},True)"] == (positions * layers * d, 2 * f + 1)
-    assert kinds[f"dot({d},False)"] == (predictions * vocab, 2 * d)
-    assert kinds[f"dot({vocab},False)"] == (positions * d, 2 * vocab)
-    assert kinds["score"] == (layers * TINY.heads * keys, 2 * TINY.d_head + 1)
-    assert sum(copies for name, (copies, _) in kinds.items() if name.startswith("dot(") or name == "score") == (
-        inner_products
-    )
 
 
 def test_the_components_match_the_closed_forms(run) -> None:
@@ -186,19 +212,22 @@ def test_the_components_match_the_closed_forms(run) -> None:
 
     found = components(constructor, compiled.kind_table(), REQUESTS)
 
-    assert found == {
-        "embedding": budget["embedding"],
-        "layer_norm": budget["layer_norm"],
-        "attention": budget["attention"] + budget["softmax"],  # the head kind holds its softmax
-        "mlp": budget["mlp"],
-        "residual": budget["residual"],
-        "lm_head": budget["lm_head"],
-        "argmax": budget["argmax"],
-    }
+    assert found == {k: v for k, v in budget.items() if k != "total"}
     kinds = by_name(constructor, compiled.kind_table())
-    assert kinds["layer_norm"] == (2 * TINY.layers * positions_of(REQUESTS) + predictions_of(REQUESTS), 7 * 8 + 2)
-    assert kinds["gelu_cell"] == (TINY.layers * positions_of(REQUESTS) * TINY.d_ff, 9)
-    assert kinds["argmax"] == (predictions_of(REQUESTS), 3 * (TINY.vocab - 1))
+    d = TINY.d_model
+    normalised = 2 * TINY.layers * positions_of(REQUESTS) + predictions_of(REQUESTS)
+    assert kinds["ln_mean"] == (normalised, d)  # d - 1 adds and the division
+    assert kinds["ln_var"] == (normalised, 2 * d + 1)  # d squares, d - 1 adds, the division, ln_rstd
+    assert kinds["sub_cell"] == (normalised * d, 1) and kinds["ln_out"] == (normalised * d, 6)
+    assert kinds["gelu_cell"] == (TINY.layers * positions_of(REQUESTS) * TINY.d_ff, 2)
+    assert kinds["argmax_block(11)"] == (predictions_of(REQUESTS), 2 * (TINY.vocab - 1))  # one block covers the vocab
+    assert kinds["eq_cell"] == (positions_of(REQUESTS) * TINY.vocab, 1)
+    assert kinds["widen_cell"] == (2 * predictions_of(REQUESTS) + positions_of(REQUESTS) * d, 1)
+    for c in range(2, 6):
+        assert kinds[f"softmax_max({c})"] == kinds[f"softmax_sum({c})"]
+        assert kinds[f"softmax_max({c})"][1] == c - 1
+    for cell in ("scale_cell", "exp_cell", "prob_cell"):
+        assert kinds[cell][0] == TINY.layers * TINY.heads * keys_of(REQUESTS)
 
 
 # -- marks ------------------------------------------------------------------------------
@@ -224,11 +253,11 @@ def test_marks_tile_every_gate(run) -> None:
     assert sum(row.copies * row.size for row in table.rows if row.role == REPLAY) == n
     assert sum(row.copies * row.size for row in table.rows if row.role == VERIFICATION) == n
     assert index.replay_units.count == 1 + len(REQUESTS)
-    assert index.verification_unit_count == sum(row.copies for row in table.rows if row.role == VERIFICATION)
+    assert index.verification_unit_count == sum(row.copies for row in table.rows if row.role == VERIFICATION) == 27_675
 
 
 def test_interfaces_match_enumeration_at_a_smaller_shape(check_interfaces) -> None:
-    shape = GPT2Shape(layers=1, d_model=4, heads=2, d_ff=8, vocab=5, context=4)
+    shape = GPT2Shape(layers=1, d_model=16, heads=1, d_ff=16, vocab=5, context=4, argmax_block=2)
     constructor = GPT2G(shape)
     compiled = compile_gpt2(constructor, (Request((1, 2), 2),))
 
@@ -257,14 +286,15 @@ def test_the_request_and_the_weights_are_closed_and_the_decode_steps_are_not(run
     assert rows[table.root].out_bits == predictions_of(REQUESTS) * TINY.width
 
 
-def test_no_verification_unit_is_wider_than_the_accumulator(run) -> None:
-    """``kappa_V = min(out_bits, reach_bits)`` is 16 or 32 bits for every computed gate.
+def test_no_verification_unit_is_wider_than_an_argmax_block(run) -> None:
+    """``kappa_V = min(out_bits, reach_bits)`` is 16, 32 or 48 bits for every computed gate.
 
-    This is the paper's bottleneck claim read off the table: a dot product,
-    a score, a probability, a GELU, an argmax and a scaled-and-shifted
-    coordinate leave through one 16-bit value; a mean, a variance, a
-    softmax maximum or denominator, a centred coordinate or an exponential
-    through one 32-bit value; an equality of the one-hot through one bit.
+    The paper's bottleneck claim read off the table: a rounded dot product,
+    a probability, a GELU, a LayerNorm output or the argmax leave through
+    one BF16 word or a token id; an fp32 dot product, a residual, a
+    statistic, an exponential or a scaled score through one fp32 word; an
+    argmax block through its ``(best, index)`` pair.  The one-hot's
+    equalities are 16-bit words too (BF16 ``1.0`` or ``0``).
     """
 
     constructor, compiled = run
@@ -272,29 +302,33 @@ def test_no_verification_unit_is_wider_than_the_accumulator(run) -> None:
     names = constructor.model.kind_names()
     cells = [row for row in table.rows if row.role == VERIFICATION]
 
-    widths = {}
+    widths: dict[int, set[str]] = {}
     for row in cells:
         widths.setdefault(cut_bits(row), set()).add(names[row.kind].split("(")[0])
     assert widths == {
         0: {"veritor.source"},
-        1: {"eq_cell"},
-        16: {"add_cell", "argmax", "dot", "gelu_cell", "ln_out", "prob_cell", "score"},
-        32: {"exp_cell", "ln_center", "ln_mean", "ln_var", "softmax_denominator", "softmax_max"},
+        16: {"dot", "eq_cell", "gelu_cell", "ln_out", "prob_cell"},
+        32: {
+            "add_cell",
+            "dot",
+            "exp_cell",
+            "ln_mean",
+            "ln_var",
+            "scale_cell",
+            "softmax_max",
+            "softmax_sum",
+            "sub_cell",
+            "widen_cell",
+        },
+        48: {"argmax_block"},
     }
     assert all(row.out_bits == cut_bits(row) for row in cells)  # the interface, not the reach, is the cut
     sources = table.input_count + table.weight_count
     gates_at = {k: sum(r.copies * r.size for r in cells if cut_bits(r) == k) for k in widths}
     assert sum(gates_at.values()) == table.n
-    computed = table.n - sources
     assert gates_at[0] == sources
-    d, layers, heads = TINY.d_model, TINY.layers, TINY.heads
-    positions, predictions, keys = positions_of(REQUESTS), predictions_of(REQUESTS), keys_of(REQUESTS)
-    # 32-bit cells: mean, centre and variance of each LayerNorm (4 d + 2), and per query and head the
-    # shifted exponentials (2 c), the maximum (c - 1) and the denominator (c): 4 c - 1
-    assert gates_at[32] == (2 * layers * positions + predictions) * (4 * d + 2) + layers * heads * (4 * keys - positions)
-    assert gates_at[32] == 1562 and gates_at[1] == positions * TINY.vocab == 88
-    assert gates_at[1] + gates_at[16] + gates_at[32] == computed == 26_392
-    assert (gates_at[1] + gates_at[16]) / computed == pytest.approx(0.94082, abs=1e-5)
+    assert gates_at == {0: 17_779, 16: 16_576, 32: 14_293, 48: 100}
+    assert gates_at[48] == predictions_of(REQUESTS) * 2 * (TINY.vocab - 1)
 
 
 # -- determinism and the constructor protocol --------------------------------------------
@@ -309,8 +343,9 @@ def test_compilation_is_deterministic(run) -> None:
     recompiled = Compiler(again.gate_set).compile(description, inputs)
     assert recompiled.digest == compiled.digest and recompiled.index.digest == compiled.index.digest
     assert again.digest == constructor.digest
-    other = GPT2Shape(layers=2, d_model=8, heads=4, d_ff=16, vocab=11, context=8)
+    other = GPT2Shape(layers=2, d_model=32, heads=1, d_ff=64, vocab=11, context=8)
     assert GPT2G(other).digest != constructor.digest
+    assert constructor.manifest["gate_set"] == constructor.gate_set.digest  # the semantics are part of the identity
     # requests of one shape are one kind; the same run in another order is another description
     same = compile_gpt2(constructor, (Request((1, 2), 2), Request((3, 4), 2), Request((5, 6), 2)))
     units = [row for row in same.index.kinds() if row.role == REPLAY and row.out_count > 0]
@@ -336,12 +371,13 @@ def test_it_takes_no_advice_and_checks_its_requests() -> None:
 # -- the legacy explicit DAG ----------------------------------------------------------------
 
 
-def legacy_components(shape: GPT2Shape, request: Request) -> dict[str, int]:
-    """The legacy GPT-2 DAG at ``shape`` for one greedy request, its computed primitives by component.
+def legacy_inner_products(shape: GPT2Shape, request: Request) -> tuple[dict[str, int], dict[str, int]]:
+    """The legacy GPT-2 DAG at ``shape`` for one greedy request: inner products and multiplies by family.
 
-    Families tagged ``inner-product-output`` are the legacy ``write`` nodes
-    (no primitive: they are not counted as gates there) and ``embedding``
-    lookups are zero-work wiring; both are returned separately.
+    Families tagged ``inner-product-output`` are the legacy ``write`` nodes,
+    one per inner product; the ``mul`` primitives of the same families are
+    its MACs (the score family also holds the ``1/sqrt(d_head)`` scaling,
+    one per score).
     """
 
     config = GPT2Config(
@@ -354,125 +390,73 @@ def legacy_components(shape: GPT2Shape, request: Request) -> dict[str, int]:
         max_context=shape.context,
     )
     circuit = build_gpt2_indexed_circuit(len(request.prompt), request.max_new, config=config).circuit
-    totals = {
-        "embedding": 0,
-        "layer_norm": 0,
-        "attention": 0,
-        "mlp": 0,
-        "residual": 0,
-        "lm_head": 0,
-        "argmax": 0,
-        "writes": 0,
-        "lookups": 0,
-    }
+    families = ("q-projection", "k-projection", "v-projection", "output-projection", "score", "value-reduction", "expansion", "contraction", "lm-head")
+    products = dict.fromkeys(families, 0)
+    muls = dict.fromkeys(families, 0)
     for family in circuit.families.values():
         tags = set(family.tags)
-        if family.primitive is None:
-            totals["writes" if "inner-product-output" in tags else "lookups"] += family.count
+        name = next((f for f in families if f in tags), None)
+        if name is None:
             continue
-        if "layernorm" in tags:
-            component = "layer_norm"
-        elif "attention" in tags:
-            component = "attention"
-        elif "mlp" in tags:
-            component = "mlp"
-        elif "lm-head" in tags:
-            component = "lm_head"
-        elif "token" in tags:
-            component = "argmax"
-        elif "embedding" in tags:
-            component = "embedding"
-        else:
-            assert "residual" in tags, family
-            component = "residual"
-        totals[component] += family.count
-    assert sum(totals.values()) == circuit.gate_count
-    assert sum(v for k, v in totals.items() if k not in ("writes", "lookups")) == sum(circuit.primitive_counts.values())
-    return totals
+        if family.primitive is None and "inner-product-output" in tags:
+            products[name] += family.count
+        elif family.primitive == "mul":
+            muls[name] += family.count
+    return products, muls
 
 
-def test_the_legacy_explicit_dag_agrees_up_to_four_structural_deltas() -> None:
-    """Both structures at ``TINY`` for one request (prompt 3, 3 tokens): 16,627 gates here, 14,988 primitives there.
+def test_the_legacy_explicit_dag_agrees_on_inner_products_and_macs() -> None:
+    """Both structures at ``TINY`` for one request (prompt 3, 3 tokens): the same 2,653 inner products and 84,896 MACs.
 
-    The deltas, each a modelling choice and each exact:
-
-    1. *Embedding gather.*  The legacy DAG looks a row up for free (a
-       ``lookup`` node without a primitive); the grammar has no gather, so
-       here it is a one-hot (``vocab`` equalities) and ``d_model`` dots of
-       length ``vocab``: ``vocab + 2 vocab d_model`` gates per position.
-    2. *Inner-product write-out.*  Every dot product here ends in a
-       ``narrow`` gate (the 32 -> 16 bit rounding); the legacy DAG has the
-       same node as a ``write`` without a primitive.  One per inner product,
-       and the counts agree exactly.
-    3. *Final LayerNorm.*  The legacy DAG normalises every processed
-       position; here only positions that predict a token are normalised
-       (``prompt - 1`` fewer copies of ``7 d_model + 2`` gates).
-    4. *Argmax.*  One atomic ``vocab``-ary gate there; a tournament of
-       ``vocab - 1`` compare-and-select nodes of three gates here.
-
-    Layer norm cells, softmax (``5 c - 1`` per query and head), GELU
-    (``9`` per hidden unit), the residual adds and every multiply-accumulate
-    agree gate for gate.
+    Gates are not comparable (the legacy DAG has one ``mul`` and one ``add``
+    per MAC; here a ``tc_dot16`` step is 16 MACs), so the cross-check is
+    on what both count: every dot product of the projections, scores, mix
+    and LM head, and the multiplies inside them.  The deltas are the
+    embedding (a free row lookup there, a one-hot times ``wte`` here: ``d``
+    dots of ``vocab_padded`` per position) and the tensor-core padding of
+    the value mix to 16 keys, both exact.
     """
 
     constructor = GPT2G(TINY)
     compiled = compile_gpt2(constructor, (LEGACY_REQUEST,))
-    table = compiled.kind_table()
-    ours = components(constructor, table, (LEGACY_REQUEST,))
-    legacy = legacy_components(TINY, LEGACY_REQUEST)
-    d, vocab = TINY.d_model, TINY.vocab
-    positions, predictions = positions_of((LEGACY_REQUEST,)), predictions_of((LEGACY_REQUEST,))
-    kinds = by_name(constructor, table)
-    narrows = kinds["narrow"][0] if "narrow" in kinds else None
-    assert narrows is None  # narrow is inline in the dot kinds: count it through them
-    inner_products = sum(copies for name, (copies, _) in kinds.items() if name.startswith("dot(") or name == "score")
+    kinds = by_name(constructor, compiled.kind_table())
+    products, muls = legacy_inner_products(TINY, LEGACY_REQUEST)
+    d, dh, heads, layers, vocab = TINY.d_model, TINY.d_head, TINY.heads, TINY.layers, TINY.vocab
+    positions, predictions, keys = positions_of((LEGACY_REQUEST,)), predictions_of((LEGACY_REQUEST,)), keys_of((LEGACY_REQUEST,))
 
-    assert legacy == {
-        "embedding": 40,
-        "layer_norm": 1450,
-        "attention": 6280,
-        "mlp": 6560,
-        "residual": 160,
-        "lm_head": 495,
-        "argmax": 3,
-        "writes": 733,
-        "lookups": 40,
+    assert products == {
+        "q-projection": 320,
+        "k-projection": 320,
+        "v-projection": 320,
+        "output-projection": 320,
+        "score": 60,
+        "value-reduction": 320,
+        "expansion": 640,
+        "contraction": 320,
+        "lm-head": 33,
     }
-    assert ours == {
-        "embedding": 975,
-        "layer_norm": 1334,
-        "attention": 6740,
-        "mlp": 6800,
-        "residual": 160,
-        "lm_head": 528,
-        "argmax": 90,
-    }
-    # the deltas, exactly
-    assert ours["embedding"] == legacy["embedding"] + positions * (vocab + 2 * vocab * d)
-    assert legacy["lookups"] == positions * d  # a free row lookup per coordinate
-    assert ours["layer_norm"] == legacy["layer_norm"] - (positions - predictions) * (7 * d + 2)
-    writes = {"attention": 4 * d * positions * TINY.layers + TINY.heads * TINY.layers * keys_of((LEGACY_REQUEST,))}
-    writes["attention"] += d * positions * TINY.layers  # the mix
-    writes["mlp"] = (TINY.d_ff + d) * positions * TINY.layers
-    writes["lm_head"] = vocab * predictions
-    assert sum(writes.values()) == legacy["writes"] == 733
-    assert inner_products == legacy["writes"] + d * positions  # plus the embedding dots the legacy looks up
-    assert ours["attention"] == legacy["attention"] + writes["attention"]
-    assert ours["mlp"] == legacy["mlp"] + writes["mlp"]
-    assert ours["lm_head"] == legacy["lm_head"] + writes["lm_head"]
-    assert ours["residual"] == legacy["residual"]
-    assert ours["argmax"] == 3 * (vocab - 1) * predictions and legacy["argmax"] == predictions
-    computed = table.n - table.input_count - table.weight_count
-    assert computed == sum(ours.values()) == 16_627
-    legacy_primitives = sum(v for k, v in legacy.items() if k not in ("writes", "lookups"))
-    assert legacy_primitives == 14_988
-    assert computed == (
-        legacy_primitives
-        + legacy["writes"]
-        + positions * (vocab + 2 * vocab * d)
-        - (positions - predictions) * (7 * d + 2)
-        + (3 * (vocab - 1) - 1) * predictions
-    )
+    assert muls["score"] == 60 * dh + 60  # the MACs and the scaling
+    assert kinds[f"dot({d},True,True)"][0] == products["q-projection"] + products["k-projection"] + products["v-projection"]
+    assert kinds[f"dot({d},True,False)"][0] == products["output-projection"] + products["expansion"]
+    assert kinds[f"dot({TINY.d_ff},True,False)"][0] == products["contraction"]
+    assert kinds[f"dot({dh},False,False)"][0] == products["score"] + positions * d  # plus the embedding dots
+    assert kinds[f"dot({dh},False,True)"][0] == products["value-reduction"]
+    assert kinds[f"dot({d},False,False)"][0] == products["lm-head"]
+    ours = sum(copies for name, (copies, _) in kinds.items() if name.startswith("dot("))
+    assert ours == sum(products.values()) + positions * d == 2_653 + positions * d
+    # MACs: the legacy multiplies of the dot families; ours from the unpadded chain lengths
+    legacy_macs = sum(muls.values()) - products["score"]
+    assert legacy_macs == 84_896
+    projections = (kinds[f"dot({d},True,True)"][0] + kinds[f"dot({d},True,False)"][0]) * d
+    projections += kinds[f"dot({TINY.d_ff},True,False)"][0] * TINY.d_ff
+    scores = products["score"] * dh
+    mix = layers * heads * dh * keys
+    head = predictions * vocab * d
+    assert projections + scores + mix + head == legacy_macs
+    assert kinds["scale_cell"][0] == products["score"]  # the scaling is a VU of its own here
+    # what the tensor cores actually execute: 16 MACs per step, the mix padded to 16 keys, the one-hot embedding
+    steps = sum(copies * int(name[4:-1].split(",")[0]) // STEP for name, (copies, _) in kinds.items() if name.startswith("dot("))
+    assert STEP * steps == legacy_macs + layers * heads * dh * (positions * STEP - keys) + positions * d * TINY.vocab_padded
 
 
 # -- GPT-2 Small ----------------------------------------------------------------------------
@@ -493,22 +477,25 @@ def test_gpt2_small_compiles_and_the_table_has_the_documented_numbers(small) -> 
     table = compiled.kind_table()
 
     description, _ = constructor(SMALL_REQUESTS, b"")
-    assert len(description) == 773_651
-    assert index.n == 54_589_340_261
-    assert index.weight_count == 124_490_072 and index.input_count == 96
-    assert index.replay_units.count == 4 and index.verification_unit_count == 176_763_749
-    assert len(table.rows) == 348
+    assert len(description) == 1_090_248
+    assert index.n == 1_924_349_881
+    assert index.weight_count == 124_490_068 and index.input_count == 96
+    assert index.replay_units.count == 4 and index.verification_unit_count == 177_855_025
+    assert len(table.rows) == 291
     assert index.n == constructor.gate_budget(SMALL_REQUESTS)["total"] + index.input_count + index.weight_count
     cells = [row for row in table.rows if row.role == VERIFICATION]
-    assert max(row.out_bits for row in cells) == 32 and max(cut_bits(row) for row in cells) == 32
+    assert max(row.out_bits for row in cells) == 48 and max(cut_bits(row) for row in cells) == 48
     computed = table.n - table.input_count - table.weight_count
-    narrow = sum(row.copies * row.size for row in cells if cut_bits(row) <= 16) - table.input_count - table.weight_count
-    assert narrow / computed == pytest.approx(0.999675, abs=1e-6)
-    assert sum(row.copies * row.size for row in cells if cut_bits(row) == 32) == 17_695_200
+    at = {k: sum(row.copies * row.size for row in cells if cut_bits(row) == k) for k in (16, 32, 48)}
+    assert at == {16: 313_998_477, 32: 1_476_362_808, 48: 9_498_432}
+    assert sum(at.values()) == computed
+    assert at[32] / computed == pytest.approx(0.820265, abs=1e-6)
     requests = [row for row in table.rows if row.role == REPLAY and row.out_count > 0]
     assert len(requests) == 1 and requests[0].copies == 3
     assert requests[0].closed and requests[0].out_bits == requests[0].reach_bits == 32 * 16
-    assert requests[0].size == 18_154_950_063
+    assert requests[0].size == 599_953_271
+    budget = constructor.gate_budget(SMALL_REQUESTS)
+    assert budget["embedding"] == 465_856_461 and budget["lm_head"] == 231_584_256 and budget["mlp"] == 691_504_128
 
 
 def test_gpt2_small_bound_and_cost_fold_over_the_table(small) -> None:
@@ -523,21 +510,21 @@ def test_gpt2_small_bound_and_cost_fold_over_the_table(small) -> None:
     full = bound(compiled, VerificationPolicy(1, 1), ETA, BoundOptions(knapsack=False))
     assert full.bits == 0.0
     strict = bound(compiled, VerificationPolicy(1, Fraction(3, 4)), ETA, BoundOptions(knapsack=False))
-    assert not strict.capped and 1000 < strict.bits < 1100  # 1023.96: two of three requests' worth
+    assert not strict.capped and 1200 < strict.bits < 1250  # 1224.6: two and a half requests' worth
     expected = cost(compiled, policy)
-    assert expected.total > 0 and expected.weights == 124_490_072
+    assert expected.total > 0 and expected.weights == 124_490_068
     assert expected.boundary == 96 + 96  # the prompts and the tokens, at h = 1
 
 
 def test_a_thousand_gpt2_small_requests_are_one_repeat_and_the_bound_bites() -> None:
-    """1000 requests of one shape: one ``repeat`` (one output run), 18.2 T gates, ``U`` well below the output."""
+    """1000 requests of one shape: one ``repeat`` (one output run), 600 G gates, ``U`` well below the output."""
 
     constructor = GPT2G(GPT2Shape.small())
     requests = tuple(Request(tuple((11 * i + r) % 50257 for i in range(32)), 32) for r in range(1000))
     compiled = compile_gpt2(constructor, requests)
     table = compiled.kind_table()
 
-    assert table.n == 18_155_074_553_072 and table.replay_unit_count == 1001
+    assert table.n == 600_077_761_068 and table.replay_unit_count == 1001
     (request,) = [row for row in table.rows if row.role == REPLAY and row.out_count > 0]
     assert request.copies == 1000 and request.out_bits == 512
     root = {row.kind: row for row in table.rows}[table.root]
@@ -546,5 +533,5 @@ def test_a_thousand_gpt2_small_requests_are_one_repeat_and_the_bound_bites() -> 
     assert compiled.circuit.outputs[32] == compiled.circuit.Out(compiled.index.replay_units.unit(2))[0]
     loose = bound(compiled, VerificationPolicy(Fraction(1, 10), Fraction(1, 10)), ETA, BoundOptions(knapsack=False))
     firm = bound(compiled, VerificationPolicy(Fraction(1, 2), Fraction(1, 10)), ETA, BoundOptions(knapsack=False))
-    assert not loose.capped and 208_000 < loose.bits < 208_500  # 40.7% of the output
-    assert not firm.capped and 35_500 < firm.bits < 36_000  # 7.0%
+    assert not loose.capped and 230_000 < loose.bits < 231_000  # 45.1% of the output
+    assert not firm.capped and 40_000 < firm.bits < 41_000  # 7.9%

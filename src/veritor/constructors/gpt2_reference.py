@@ -210,7 +210,7 @@ class GPT2Weights:
         )
 
 
-# -- GEMM backends -------------------------------------------------------------------------
+# -- backends -----------------------------------------------------------------------------
 
 
 class GemmBackend(Protocol):
@@ -222,6 +222,62 @@ class GemmBackend(Protocol):
     """
 
     def gemm(self, a: U16, bt: U16, c: F32 | None) -> F32: ...
+
+
+class Ops(GemmBackend, Protocol):
+    """Every operation of the forward pass, on numpy arrays of words.
+
+    The CUDA-core operations are exactly the gate sequences of
+    :func:`~veritor.core.silicon.make_pinned_gate_set`; a backend runs them
+    where it likes (numpy here, the CUDA kernels of ``gpu/gpt2/`` on the GPU)
+    but may not change an operation, an order or a rounding.
+    """
+
+    def add(self, a: F32, b: F32) -> F32:
+        """Elementwise ``f32_add``."""
+        ...
+
+    def scale(self, a: F32, s: np.float32) -> F32:
+        """Elementwise ``f32_mul`` by one fp32 scalar."""
+        ...
+
+    def round(self, a: F32) -> U16:
+        """Elementwise ``f32_to_bf16``."""
+        ...
+
+    def ln_stats(self, x: F32, n: np.float32) -> tuple[F32, F32, F32]:
+        """Per row of ``x[M][d]``: ``(mean, center, rstd)`` -- tree sum / n, ``x - mean``, tree sum of squares / n, ``ln_rstd``."""
+        ...
+
+    def ln_out(self, center: F32, rstd: F32, g: U16, b: U16) -> U16:
+        """Per row: ``round(((center * rstd) * g) + b)`` with ``g``, ``b`` widened BF16 words."""
+        ...
+
+    def gelu(self, x: F32) -> F32:
+        """Elementwise ``gelu_tanh`` (fp32; rounded separately)."""
+        ...
+
+    def row_max(self, u: F32) -> F32:
+        """Tree ``f32_max`` over the last axis of ``u[R][c]``."""
+        ...
+
+    def exp_shift(self, u: F32, m: F32) -> F32:
+        """``f32_exp(u - m[:, None])``."""
+        ...
+
+    def row_sum(self, e: F32) -> F32:
+        """Tree ``f32_add`` over the last axis of ``e[R][c]``."""
+        ...
+
+    def div_round(self, e: F32, s: F32) -> U16:
+        """``round(e / s[:, None])``."""
+        ...
+
+    def argmax(
+        self, logits: F32, tokens: U16, blocks: Sequence[int]
+    ) -> tuple[F32, U16, int]:
+        """The blocked tournament: per block ``(best, index)``, then the token among the block winners."""
+        ...
 
 
 class PythonGemm:
@@ -249,6 +305,79 @@ class PythonGemm:
                     self.pipeline, int(acc[i, j]), rows[i], cols[j]
                 )
         return out.view(np.float32)
+
+
+class NumpyOps:
+    """The CPU backend: numpy float32 for the CUDA-core operations, any :class:`GemmBackend` for the chains."""
+
+    def __init__(self, gemm: GemmBackend | None = None) -> None:
+        self._gemm = PythonGemm() if gemm is None else gemm
+
+    def gemm(self, a: U16, bt: U16, c: F32 | None) -> F32:
+        return self._gemm.gemm(a, bt, c)
+
+    def add(self, a: F32, b: F32) -> F32:
+        return f32_add(a, b)
+
+    def scale(self, a: F32, s: np.float32) -> F32:
+        with np.errstate(all="ignore"):
+            return (a * s).astype(np.float32)
+
+    def round(self, a: F32) -> U16:
+        return f32_to_bf16(np.ascontiguousarray(a, dtype=np.float32).view(np.uint32))
+
+    def ln_stats(self, x: F32, n: np.float32) -> tuple[F32, F32, F32]:
+        total = tree_reduce(x, f32_add)
+        with np.errstate(all="ignore"):
+            mean = (total / n).astype(np.float32)
+            center = (x - mean[:, None]).astype(np.float32)
+            squares = (center * center).astype(np.float32)
+            variance = (tree_reduce(squares, f32_add) / n).astype(np.float32)
+        return mean, center, ln_rstd(variance)
+
+    def ln_out(self, center: F32, rstd: F32, g: U16, b: U16) -> U16:
+        with np.errstate(all="ignore"):
+            y = (center * rstd[:, None]).astype(np.float32)
+            y = (y * words_as_f32(g)[None, :]).astype(np.float32)
+            y = (y + words_as_f32(b)[None, :]).astype(np.float32)
+        return self.round(y)
+
+    def gelu(self, x: F32) -> F32:
+        return gelu_tanh(x)
+
+    def row_max(self, u: F32) -> F32:
+        return tree_reduce(u, f32_max)
+
+    def exp_shift(self, u: F32, m: F32) -> F32:
+        with np.errstate(all="ignore"):
+            return f32_exp((u - m[:, None]).astype(np.float32))
+
+    def row_sum(self, e: F32) -> F32:
+        return tree_reduce(e, f32_add)
+
+    def div_round(self, e: F32, s: F32) -> U16:
+        with np.errstate(all="ignore"):
+            return self.round((e / s[:, None]).astype(np.float32))
+
+    def argmax(
+        self, logits: F32, tokens: U16, blocks: Sequence[int]
+    ) -> tuple[F32, U16, int]:
+        bests: list[np.float32] = []
+        indices: list[np.uint16] = []
+        start = 0
+        for size in blocks:
+            best, index = tournament(
+                logits[start : start + size], tokens[start : start + size]
+            )
+            bests.append(best)
+            indices.append(index)
+            start += size
+        best_array = np.array(bests, dtype=np.float32)
+        index_array = np.array(indices, dtype=np.uint16)
+        if len(blocks) == 1:
+            return best_array, index_array, int(index_array[0])
+        _, token = tournament(best_array, index_array)
+        return best_array, index_array, int(token)
 
 
 # -- the forward pass -----------------------------------------------------------------------
@@ -350,7 +479,7 @@ def argmax_blocks(shape: GPT2Shape) -> list[int]:
 
 
 def forward(
-    weights: GPT2Weights, prompt: Sequence[int], max_new: int, backend: GemmBackend
+    weights: GPT2Weights, prompt: Sequence[int], max_new: int, backend: Ops
 ) -> Run:
     """Greedy decoding of ``prompt`` for ``max_new`` tokens with the pinned semantics; records everything."""
 
@@ -434,26 +563,13 @@ def forward(
     def bias_rows(bias: U16, m: int) -> F32:
         return np.repeat(words_as_f32(bias)[None, :], m, axis=0)
 
-    def layer_norm(
-        x: F32, g: U16, b: U16, out: Capture, prefix: str, rows: slice
-    ) -> U16:
-        total = tree_reduce(x, f32_add)
-        with np.errstate(all="ignore"):
-            mean = (total / n32).astype(np.float32)
-            center = (x - mean[:, None]).astype(np.float32)
-            var = (
-                tree_reduce((center * center).astype(np.float32), f32_add) / n32
-            ).astype(np.float32)
-            rstd = ln_rstd(var)
-            y = (
-                (center * rstd[:, None]).astype(np.float32) * words_as_f32(g)[None, :]
-            ).astype(np.float32)
-            y = (y + words_as_f32(b)[None, :]).astype(np.float32)
-        y16 = f32_to_bf16(y.view(np.uint32))
-        out[f"{prefix}.mean"][rows] = mean
-        out[f"{prefix}.center"][rows] = center
-        out[f"{prefix}.rstd"][rows] = rstd
-        out[f"{prefix}.out"][rows] = y16
+    def layer_norm(x: F32, g: U16, b: U16, prefix: str, rows: slice) -> U16:
+        mean, center, rstd = backend.ln_stats(x, n32)
+        y16 = backend.ln_out(center, rstd, g, b)
+        cap[f"{prefix}.mean"][rows] = mean
+        cap[f"{prefix}.center"][rows] = center
+        cap[f"{prefix}.rstd"][rows] = rstd
+        cap[f"{prefix}.out"][rows] = y16
         return y16
 
     generated: list[int] = []
@@ -470,21 +586,21 @@ def forward(
         onehot_all[rows] = onehot[:, :vocab]
         e = backend.gemm(onehot, wte_t, None)
         emb[rows] = e
-        row32 = words_as_f32(weights.wpe[p0 : p0 + m])
+        row32 = np.ascontiguousarray(words_as_f32(weights.wpe[p0 : p0 + m]))
         wpe32[rows] = row32
-        x = f32_add(e, row32)
+        x = backend.add(e, row32)
         x0[rows] = x
         for layer in range(shape.layers):
             lw, tw = weights.layers[layer], transposed[layer]
             prefix = f"L{layer}."
-            h = layer_norm(x, lw.ln1_g, lw.ln1_b, cap, f"{prefix}ln1", rows)
+            h = layer_norm(x, lw.ln1_g, lw.ln1_b, f"{prefix}ln1", rows)
             qkv: dict[str, U16] = {}
             for name in ("q", "k", "v"):
                 value32 = backend.gemm(
                     h, tw[f"w_{name}"], bias_rows(getattr(lw, f"b_{name}"), m)
                 )
                 cap[f"{prefix}{name}32"][rows] = value32
-                qkv[name] = f32_to_bf16(value32.view(np.uint32))
+                qkv[name] = backend.round(value32)
                 cap[f"{prefix}{name}"][rows] = qkv[name]
             k_cache[layer] = np.concatenate([k_cache[layer], qkv["k"]])
             v_cache[layer] = np.concatenate([v_cache[layer], qkv["v"]])
@@ -499,78 +615,53 @@ def forward(
                 probs = np.zeros((m, padded(keys)), dtype=np.uint16)
                 for i in range(m):
                     c = p0 + i + 1
-                    s = scores[i, :c]
-                    with np.errstate(all="ignore"):
-                        u = (s * scale32).astype(np.float32)
-                    mx = tree_reduce(u, f32_max) if c >= 2 else u[0]
-                    with np.errstate(all="ignore"):
-                        ex = f32_exp((u - mx).astype(np.float32))
-                    total = tree_reduce(ex, f32_add) if c >= 2 else ex[0]
-                    with np.errstate(all="ignore"):
-                        p = f32_to_bf16((ex / total).astype(np.float32).view(np.uint32))
-                    probs[i, :c] = p
+                    s = np.ascontiguousarray(scores[i : i + 1, :c])  # [1, c]
+                    u = backend.scale(s, scale32)
+                    mx = backend.row_max(u)
+                    ex = backend.exp_shift(u, mx)
+                    total = backend.row_sum(ex)
+                    pr = backend.div_round(ex, total)
+                    probs[i, :c] = pr[0]
                     pos = p0 + i
-                    cap[f"{prefix}scores"][head, pos, :c] = s
-                    cap[f"{prefix}u"][head, pos, :c] = u
-                    cap[f"{prefix}m"][head, pos] = mx
-                    cap[f"{prefix}e"][head, pos, :c] = ex
-                    cap[f"{prefix}S"][head, pos] = total
-                    cap[f"{prefix}p"][head, pos, :c] = p
+                    cap[f"{prefix}scores"][head, pos, :c] = s[0]
+                    cap[f"{prefix}u"][head, pos, :c] = u[0]
+                    cap[f"{prefix}m"][head, pos] = mx[0]
+                    cap[f"{prefix}e"][head, pos, :c] = ex[0]
+                    cap[f"{prefix}S"][head, pos] = total[0]
+                    cap[f"{prefix}p"][head, pos, :c] = pr[0]
                 v_pad = np.zeros((dh, padded(keys)), dtype=np.uint16)
                 v_pad[:, :keys] = v_h_t
                 mix32[:, cols] = backend.gemm(probs, v_pad, None)
             cap[f"{prefix}mix32"][rows] = mix32
-            mix = f32_to_bf16(mix32.view(np.uint32))
+            mix = backend.round(mix32)
             cap[f"{prefix}mix"][rows] = mix
             proj = backend.gemm(mix, tw["w_o"], bias_rows(lw.b_o, m))
             cap[f"{prefix}proj"][rows] = proj
-            x1 = f32_add(x, proj)
+            x1 = backend.add(x, proj)
             cap[f"{prefix}x1"][rows] = x1
-            h2 = layer_norm(x1, lw.ln2_g, lw.ln2_b, cap, f"{prefix}ln2", rows)
+            h2 = layer_norm(x1, lw.ln2_g, lw.ln2_b, f"{prefix}ln2", rows)
             fc = backend.gemm(h2, tw["w_fc"], bias_rows(lw.b_fc, m))
             cap[f"{prefix}fc"][rows] = fc
-            g32 = gelu_tanh(fc)
+            g32 = backend.gelu(fc)
             cap[f"{prefix}gelu32"][rows] = g32
-            act = f32_to_bf16(g32.view(np.uint32))
+            act = backend.round(g32)
             cap[f"{prefix}gelu"][rows] = act
             mlp = backend.gemm(act, tw["w_proj"], bias_rows(lw.b_proj, m))
             cap[f"{prefix}mlp"][rows] = mlp
-            x = f32_add(x1, mlp)
+            x = backend.add(x1, mlp)
             cap[f"{prefix}x2"][rows] = x
         # the head at the last position of this forward
-        last = x[m - 1 : m]
+        last = np.ascontiguousarray(x[m - 1 : m])
         hf = layer_norm(
-            last, weights.lnf_g, weights.lnf_b, cap, "lnf", slice(step, step + 1)
+            last, weights.lnf_g, weights.lnf_b, "lnf", slice(step, step + 1)
         )
-        logits = backend.gemm(hf, weights.wte, None)[0]
+        logits = np.ascontiguousarray(backend.gemm(hf, weights.wte, None)[0])
         logits_all[step] = logits
-        table = weights.tokens
-        bests: list[np.float32] = []
-        indices: list[np.uint16] = []
-        start = 0
-        for size in blocks:
-            best, index = tournament(
-                logits[start : start + size], table[start : start + size]
-            )
-            bests.append(best)
-            indices.append(index)
-            start += size
-        best_all[step] = np.array(bests, dtype=np.float32)
-        idx_all[step] = np.array(indices, dtype=np.uint16)
-        if start < vocab:  # a single trailing logit joins the top tournament unblocked
-            bests.append(np.float32(logits[start]))
-            indices.append(np.uint16(table[start]))
-        if len(bests) == 1:
-            token = int(indices[0])
-        else:
-            token = int(
-                tournament(
-                    np.array(bests, dtype=np.float32),
-                    np.array(indices, dtype=np.uint16),
-                )[1]
-            )
+        bests, indices, token = backend.argmax(logits, weights.tokens, blocks)
+        best_all[step] = bests
+        idx_all[step] = indices
         token_all[step] = token
-        generated.append(token)
+        generated.append(int(token))
         p0 += m
     return Run(shape, prompt, max_new, tuple(generated), cap)
 
@@ -620,10 +711,15 @@ def address_map(
     """The circuit address of every word :func:`forward` records, by the same names and shapes.
 
     ``-1`` marks entries that are no gate (the upper triangle of the
-    attention tensors, the softmax statistics of a one-key query).
+    attention tensors, the softmax statistics of a one-key query).  The
+    map tells kinds apart by digest, so ``d_ff`` must differ from
+    ``d_model`` (else the output projection and the MLP share one
+    ``matvec`` kind); GPT-2's shapes do.
     """
 
     shape = model.shape
+    if shape.d_ff == shape.d_model:
+        raise ValueError("address_map needs d_ff != d_model: the projections would share a kind")
     d, dh, heads, f, vocab = (
         shape.d_model,
         shape.d_head,
@@ -804,7 +900,7 @@ def address_map(
             best[step, b] = block_frame.base + block_frame.definition.size - 2
             idx[step, b] = block_frame.base + block_frame.definition.size - 1
         if len(blocks) == 1 and shape.vocab <= shape.argmax_block:
-            token[step] = idx[step, 0]
+            token[step] = -1  # the block's index gate *is* the token: recorded once, as ``argmax.idx``
         else:
             tops = _copies(
                 forward_frame,
