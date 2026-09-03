@@ -322,7 +322,7 @@ def describe_batch(statement: Statement) -> dict[str, int]:
 
     obligations = statement.obligations
     positions = sum(len(item.positions) for item in obligations)
-    gates = sum(len(item.gates) for item in obligations)
+    gates = sum(statement.program(item.kind).size for item in obligations)
     levels = sum(
         _depth(item.commitments[ref.commitment].count)
         for item in obligations

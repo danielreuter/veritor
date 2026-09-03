@@ -4,11 +4,13 @@ An :class:`Obligation` is what the verifier demands for one sampled
 verification unit (VU): *this* copy of *this* kind, under *these* commitment
 roots, has every input and output value it touches authenticated at *these*
 ``(rank, position, schema)`` coordinates, and the kind's relation holds over
-them.  It names no value: the values are the witness.  A :class:`KindProgram`
-is the relation of one kind in coordinates relative to the copy (its ports and
-its own gate offsets), so one program serves every copy of the kind.  A
-:class:`Statement` is a batch: one gate set, the programs of every kind that
-occurs, and the obligations, all sorted so the encoding of a set is unique.
+them: the copy's gates, recomputed from the opened inputs, produce the opened
+outputs.  It names no value: the values are the witness.  A
+:class:`KindProgram` is the relation of one kind in coordinates relative to
+the copy (its ports, its own gate offsets and which of those are opened), so
+one program serves every copy of the kind.  A :class:`Statement` is a batch:
+one gate set, the programs of every kind that occurs, and the obligations, all
+sorted so the encoding of a set is unique.
 
 Everything here is plain data with strict validation; the canonical bytes are
 in :mod:`veritor.protocol.proofs.wire`.
@@ -77,13 +79,19 @@ class KindProgram:
     gates read, transitively; a ``("port", k)`` argument means the port
     ``ports[k]``.  ``gates[j]`` is the copy's gate at offset ``j``, and every
     ``("local", i)`` argument of it has ``i < j``: the kind is a program that
-    reads only what it has already produced.
+    reads only what it has already produced.  ``outputs`` lists (ascending)
+    the gate offsets whose values a copy opens: the kind's declared outputs
+    (``Out``, what other units read and the check compares against the
+    recomputation) and its source gates (``in`` and ``weight`` gates have no
+    relation; their opened value is their value, pinned by the boundary or by
+    ``kappa_W``).  Every other gate is internal: recomputed, never committed.
     """
 
     kind: bytes
     size: int
     ports: tuple[int, ...]
     gates: tuple[GateOp, ...]
+    outputs: tuple[int, ...]
 
     def __post_init__(self) -> None:
         _check_digest(self.kind, "kind digest")
@@ -98,6 +106,12 @@ class KindProgram:
             raise ProtocolError(
                 f"kind declares {self.size} gates but lists {len(self.gates)}"
             )
+        if type(self.outputs) is not tuple or any(
+            type(item) is not int or not 0 <= item < self.size for item in self.outputs
+        ):
+            raise ProtocolError("kind outputs must be a tuple of gate offsets")
+        if tuple(sorted(set(self.outputs))) != self.outputs:
+            raise ProtocolError("kind outputs must be strictly increasing")
         for offset, gate in enumerate(self.gates):
             if not isinstance(gate, GateOp):
                 raise ProtocolError("kind gates must be GateOp values")
@@ -163,9 +177,10 @@ class Obligation:
     compiled circuit, the policy, the public I/O and ``kappa_W``);
     ``compiled`` repeats ``H(C, I)`` explicitly.  ``unit`` is the VU index and
     ``replay_unit`` the RU it lies in.  ``positions`` are every coordinate the
-    relation touches, in ascending address order; ``inputs[k]`` is the slot
-    of the ``k``-th read port of the kind and ``gates[j]`` the slot of the
-    copy's gate at offset ``j``.
+    relation touches -- the copy's inputs and its opened outputs, nothing
+    else -- in ascending address order; ``inputs[k]`` is the slot of the
+    ``k``-th read port of the kind and ``outputs[m]`` the slot of the copy's
+    gate at the kind's ``m``-th opened offset (:attr:`KindProgram.outputs`).
     """
 
     session: bytes
@@ -176,7 +191,7 @@ class Obligation:
     commitments: tuple[CommitmentRef, ...]
     positions: tuple[PositionRef, ...]
     inputs: tuple[int, ...]
-    gates: tuple[int, ...]
+    outputs: tuple[int, ...]
 
     def __post_init__(self) -> None:
         _check_digest(self.session, "session digest")
@@ -197,12 +212,14 @@ class Obligation:
         for item in self.positions:
             if item.commitment >= len(self.commitments):
                 raise ProtocolError("position names a commitment the obligation lacks")
-        for name, slots in (("inputs", self.inputs), ("gates", self.gates)):
+        for name, slots in (("inputs", self.inputs), ("outputs", self.outputs)):
             if type(slots) is not tuple or any(
                 type(slot) is not int or not 0 <= slot < len(self.positions)
                 for slot in slots
             ):
                 raise ProtocolError(f"obligation {name} must index its positions")
+        if len(set(self.outputs)) != len(self.outputs):
+            raise ProtocolError("obligation outputs must be distinct positions")
 
     @property
     def key(self) -> tuple[bytes, bytes, int]:
@@ -220,9 +237,10 @@ class Obligation:
                 f"obligation binds {len(self.inputs)} inputs but its kind reads "
                 f"{len(program.ports)} ports"
             )
-        if len(self.gates) != program.size:
+        if len(self.outputs) != len(program.outputs):
             raise ProtocolError(
-                f"obligation binds {len(self.gates)} gates but its kind has {program.size}"
+                f"obligation binds {len(self.outputs)} outputs but its kind opens "
+                f"{len(program.outputs)}"
             )
 
 

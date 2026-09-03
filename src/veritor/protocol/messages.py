@@ -43,7 +43,7 @@ from veritor.core import (
     validate_digest,
 )
 
-PROTOCOL_VERSION = "veritor/protocol/v6"
+PROTOCOL_VERSION = "veritor/protocol/v7"
 TRANSPARENT_BACKEND = "transparent"
 """The default proof backend: openings as the proof, relations recomputed by the verifier."""
 
@@ -269,7 +269,7 @@ class Header:
             manifest["backend"] = self.backend
         if self.max_faults:
             manifest["max_faults"] = self.max_faults
-        object.__setattr__(self, "digest", raw_digest("veritor/protocol/header/v6", manifest))
+        object.__setattr__(self, "digest", raw_digest("veritor/protocol/header/v7", manifest))
 
 
 @dataclass(frozen=True, slots=True)

@@ -14,10 +14,10 @@ The Rust mirror is ``zk/sp1/common/src/codec.rs``; the layout is::
 
     Statement   = MAGIC str gate_set_id digest gate_set_digest u32 width
                   list<KindProgram> kinds  list<Obligation> obligations
-    KindProgram = digest kind u32 size list<u32> ports list<GateOp> gates
+    KindProgram = digest kind u32 size list<u32> ports list<GateOp> gates list<u32> outputs
     GateOp      = str op list<Arg> args ;  Arg = u8 space (0 port, 1 local) u32 value
     Obligation  = digest session digest compiled u64 unit u64 replay_unit digest kind
-                  list<CommitmentRef> list<PositionRef> list<u32> inputs list<u32> gates
+                  list<CommitmentRef> list<PositionRef> list<u32> inputs list<u32> outputs
     CommitmentRef = u64 owner+2 digest domain_id digest root u64 count
     PositionRef   = u32 commitment u64 rank u64 position str schema
                     u8 has_expected [bytes expected]
@@ -45,8 +45,9 @@ from .statement import (
     Witness,
 )
 
-STATEMENT_MAGIC = b"veritor/proofs/statement/v1\0"
-WITNESS_MAGIC = b"veritor/proofs/witness/v1\0"
+STATEMENT_MAGIC = b"veritor/proofs/statement/v2\0"
+"""v2: obligations open a unit's inputs and outputs and the checker recomputes its gates."""
+WITNESS_MAGIC = b"veritor/proofs/witness/v2\0"
 
 _SPACE_CODE: dict[ArgSpace, int] = {PORT: 0, LOCAL: 1}
 _SPACE_NAME: dict[int, ArgSpace] = {0: PORT, 1: LOCAL}
@@ -155,6 +156,9 @@ def _write_program(writer: _Writer, program: KindProgram) -> None:
         for space, value in gate.args:
             writer.u8(_SPACE_CODE[space])
             writer.u32(value)
+    writer.u32(len(program.outputs))
+    for offset in program.outputs:
+        writer.u32(offset)
 
 
 def _write_obligation(writer: _Writer, obligation: Obligation) -> None:
@@ -180,7 +184,7 @@ def _write_obligation(writer: _Writer, obligation: Obligation) -> None:
         else:
             writer.u8(1)
             writer.blob(position.expected)
-    for slots in (obligation.inputs, obligation.gates):
+    for slots in (obligation.inputs, obligation.outputs):
         writer.u32(len(slots))
         for slot in slots:
             writer.u32(slot)
@@ -236,7 +240,8 @@ def _read_program(reader: _Reader) -> KindProgram:
                 raise ProtocolError(f"unknown argument space {space}")
             args.append((_SPACE_NAME[space], value))
         gates.append(GateOp(op, tuple(args)))
-    return KindProgram(kind, size, ports, tuple(gates))
+    outputs = tuple(reader.u32("output offset") for _ in range(reader.count("outputs")))
+    return KindProgram(kind, size, ports, tuple(gates), outputs)
 
 
 def _read_obligation(reader: _Reader) -> Obligation:
@@ -271,7 +276,7 @@ def _read_obligation(reader: _Reader) -> Obligation:
             raise ProtocolError(f"bad expected flag {flag}")
         positions.append(PositionRef(commitment, rank, position, schema, expected))
     inputs = tuple(reader.u32("inputs") for _ in range(reader.count("inputs")))
-    gates = tuple(reader.u32("gates") for _ in range(reader.count("gates")))
+    outputs = tuple(reader.u32("outputs") for _ in range(reader.count("outputs")))
     return Obligation(
         session,
         compiled,
@@ -281,7 +286,7 @@ def _read_obligation(reader: _Reader) -> Obligation:
         tuple(commitments),
         tuple(positions),
         inputs,
-        gates,
+        outputs,
     )
 
 

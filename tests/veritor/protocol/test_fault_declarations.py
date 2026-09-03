@@ -250,9 +250,9 @@ def test_declared_unit_is_obliged_under_the_vacuous_program(compiled, honest_val
         if plain.unit != FAULTY_UNIT:
             assert plain == declared
             continue
-        assert declared.kind == DECLARED_KIND and declared.gates == () and declared.inputs == ()
+        assert declared.kind == DECLARED_KIND and declared.outputs == () and declared.inputs == ()
         assert declared.positions == plain.positions and declared.commitments == plain.commitments
-        assert plain.gates and plain.kind != DECLARED_KIND
+        assert plain.outputs and plain.kind != DECLARED_KIND
     assert verifier.receive_evidence(prover.evidence(sample_challenge)).accepted
 
 
@@ -321,7 +321,11 @@ def test_a_declaration_outside_the_opened_rus_is_rejected(compiled, honest_value
     replay_challenge = verifier.receive_boundary(prover.boundary())
     opened = set(replay_challenge.selected)
     index = compiled.index
-    compute = [unit for unit in range(index.replay_units.count) if index.interior(unit).count]
+    compute = [
+        unit
+        for unit in range(index.replay_units.count)
+        if not compiled.circuit[index.replay_units.unit(unit).interval.start].is_source
+    ]
     assert opened & set(compute) and set(compute) - opened, "the seeds open some compute RUs, not all"
     outside = index.verification_units(next(u for u in compute if u not in opened)).first
     interiors = prover.interiors(replay_challenge)

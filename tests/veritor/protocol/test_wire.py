@@ -56,7 +56,7 @@ def test_encoding_is_canonical_json_and_round_trips(recorded) -> None:
     assert data == canonical(json.loads(data))
     assert decode_transcript(data) == transcript
     assert encode_transcript(decode_transcript(data)) == data
-    assert PROTOCOL_VERSION == "veritor/protocol/v6" == json.loads(data)["version"]
+    assert PROTOCOL_VERSION == "veritor/protocol/v7" == json.loads(data)["version"]
 
 
 def test_the_header_carries_the_constructor_and_the_advice_as_hex(recorded_with_advice) -> None:
@@ -176,7 +176,7 @@ def test_noncanonical_bytes_are_rejected(compiled, recorded, rewrite) -> None:
         pytest.param(lambda data: b"[]", id="not-an-object"),
         pytest.param(lambda data: data.replace(b'"version"', b'"verzion"'), id="unknown-key"),
         pytest.param(
-            lambda data: data.replace(b"veritor/protocol/v6", b"veritor/protocol/v5"),
+            lambda data: data.replace(b"veritor/protocol/v7", b"veritor/protocol/v6"),
             id="version",
         ),
         pytest.param(lambda data: data.replace(b'"count":', b'"count":1.0,"c":', 1), id="float"),

@@ -63,7 +63,7 @@ class TestCosts:
         assert estimate.positions == sum(
             len(item.positions) for item in statement.obligations
         )
-        assert estimate.gates == sum(len(item.gates) for item in statement.obligations)
+        assert estimate.gates == sum(statement.program(item.kind).size for item in statement.obligations)
         assert estimate.statement_bytes == len(encode_statement(statement))
         # the implied witness size is within a few bytes of the real one
         assert abs(estimate.witness_bytes - len(encode_witness(witness))) < 64
