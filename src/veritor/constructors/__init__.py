@@ -15,6 +15,7 @@ from .demo_g import (
     expected_dot_outputs,
     make_demo_request,
 )
+from .gpt2 import GPT2, GPT2G, GPT2Shape, gate_budget
 from .lm import (
     LayerParameters,
     LMShape,
@@ -51,11 +52,13 @@ from .tracer import (
 )
 
 __all__ = [
+    "GPT2", "GPT2G",
     "BatchInput",
     "ClusterG",
     "DemoG",
     "DemoGCompileRequest",
     "DotRequest",
+    "GPT2Shape",
     "Join",
     "LMShape",
     "LayerParameters",
@@ -80,6 +83,7 @@ __all__ = [
     "compile_matmul",
     "expected_dot_outputs",
     "expected_matmul_outputs",
+    "gate_budget",
     "make_demo_request",
     "matmul_expected_matrices",
     "random_parameters",
