@@ -20,7 +20,92 @@ declaration (`docs/stress-tests.md`, M6).
 
 ## 1. Findings
 
-*Filled in by the decision memo once every section below has its rows.*
+The decision memo. Each item names the section that carries the rows or the
+proof; numbers are at the headline operating point of `docs/global-estimate.md`
+(`q = 1.57e-8`, `s = 8.9e-3`, `u(1) = 94.7`, `u_post(1) = 6.12e9`, `U_0 =
+1.90e13`) unless a toy figure is marked.
+
+**Decisions.**
+
+1. *Run with `f_max = 0` and tokens-only recording.* A post-J declaration
+   budget costs `f_max u_post(1) = 3.2e-4 U_0` per unit per round whether or
+   not a fault occurs, and at every realistic fault density (`2.8e-7` silent
+   faults per device-hour: `4.6e-3` per round for 16k GPUs for an hour, `2.5e3`
+   for a million GPUs for a year) the budget is 1 and this floor is the whole
+   charge. Declaring nothing loses a round with probability `1 - exp(-q s D)`,
+   `6.5e-13` to `3.5e-7` per round across that range, and in expected certified
+   bits P0 beats P1 while `q D L < 0.036` (`L` the rounds a rejection
+   forfeits): at every density in the table if a rejected round is retried
+   alone, and up to a million GPUs for a day at `L = 1000`. The case for
+   `f_max >= 1` is completeness alone: an honest server is never rejected
+   (section 5). Tokens-only is what fleets keep, and it pins fewer VUs than a
+   full record for silent and many-consumer faults, more for a stored
+   corruption that reached the tokens; neither policy dominates (section 3).
+2. *Do not build pre-J detection for capacity.* The expected charge of a
+   fault is `u(1)` at every stage (`q u_post(1) = 1.015 u(1)`), so detecting a
+   fault before `J` saves `1.4` bits of it; what detection buys is a certain
+   charge instead of a `q`-probability one and headroom under `f_max`, and at
+   realistic densities the headroom is not needed (`P[Poisson(q D) > 1] <
+   1e-9`) (section 7).
+3. *Systematic faults get their own declaration kinds, or a re-serve.* A pod
+   that reads a corrupted weight cell for an hour, a stale weight version, a
+   wrong kernel path: under M6 their declaration count is a wiring or an
+   output count, far above any `f_max`, at either recording policy. The
+   right statement is about the public object (a cell value, a version) and
+   costs tens of bits: `51.9` for a run-wide source-cell pardon before `J`,
+   and, by the new product bound of `docs/notes/late-advice.md`, about `3e5`
+   bits per round even after `J` when the scope is the pod-hour run (the
+   message itself, `52` bits, for a fleet-scale run). Kind-level and
+   per-pod public roots for versions and kernel paths are free under M3. None
+   of this is built; until it is, the honest prover re-serves the pod-hour
+   (section 6, `docs/notes/declaration-kinds.md`).
+4. *Structure may be late, values may not.* Per-RU structural choices after
+   `J` cost exactly their compile-time price (locality), so late lowering is
+   secure, but one free bit per request is `1.55 U_0`, so the compiler must
+   not leave per-request freedom; shared choices (a pod's kernel path) go
+   into the boundary message before `J` at `log2 |V|` bits or are derived
+   from public configuration for free. Every value statement after `J` pays
+   its stage leverage, and after the VU sample nothing is admissible: the
+   first post-s pardon is worth `0.125 U_0` (section 2).
+5. *The fault budget is the round's.* Per-run budgets leak `n_RU log2 |M|`
+   for free; a per-epoch budget priced under the current union-over-rounds
+   bound costs `R rho log2 (f + 1)`, `25 U_0` at `R = 1000`. `EpochVerifier`
+   stands as built (section 2, `docs/epoch.md`).
+6. *Admit a run only with its boundary in hand.* Crashes, restarts, lost KV
+   transfers and abandoned requests are schedule, not declarations, and cost
+   0 bits; a request that will cross a round boundary is continued, not
+   split; the one trap is a run admitted whose boundary never arrives, which
+   rejects the epoch. Per-pod runs isolate stragglers; a fleet run needs
+   every pod before admission (section 8).
+
+**Two encodings need work before any of this is operated.** `TruncatedRequestsG`
+charges every request `ceil(log2 max_new)` bits whether or not it is
+truncated, `2.6e14` bits or `13.9 U_0` for the year's `2.93e13` requests,
+against a sparse floor of `53.7` bits for one truncated request; so a run in
+which any request may stop early is today dearer than the bound it protects,
+and a sparse length advice is the missing constructor. And the default fold's
+error truncation moves with the grid so that `bound(max_faults = f)` is not
+monotone in `eta` on a saturated table (`1895.8` vs `1887.1` toy bits;
+`1894.5` at both on a fine grid), so declaration prices are read off the rate
+(sections 2, 7.5).
+
+**The first-order open item is not a fault at all.** Under the current epoch
+bound an hourly round certifies `1.14 U_0` and a year of them `1.0e4 U_0`, a
+third of every output bit the fleet emits, because the bound is a union over
+rounds while acceptance multiplies across them. Against that, the whole M6
+premium is `3.2e-4` per round. A shared-threshold theorem (`U_0 + rho + O(R
+log R)` for the epoch) is conjectured in `docs/notes/late-advice.md` section
+4 and would make hourly rounds meaningful; nothing about the fault story
+changes if it holds except that the summed premium becomes visible (`0.32
+U_0` at `R = 1000`, `f = 1`) and a per-epoch budget at `f u_post(1)` once
+becomes the natural object.
+
+**What was measured and what was priced.** H1-H3, H4a-H4g, H5, H6 are rows of
+the built protocol on the toy datacenter (`docs/data/stress-honest.json`);
+the fleet-scale statements are the closed-form rate at the headline, pinned by
+`tests/veritor/analysis/test_late_advice.py`, `tests/veritor/stress/test_honest_detection.py`
+and `test_honest_systematic.py`. Pre-J declarations, source-cell and port
+pardons, and the sparse truncation constructor are priced, not built.
 
 ## 2. Where advice may enter, and at what price
 
