@@ -24,8 +24,64 @@ declaration (`docs/stress-tests.md`, M6).
 
 ## 2. Where advice may enter, and at what price
 
-*Summary of `docs/notes/late-advice.md`; the note carries the adversary model
-and the proofs.*
+Summary of `docs/notes/late-advice.md`, which carries the adversary model and
+the proofs; the numbers are pinned by `tests/veritor/analysis/test_late_advice.py`
+at the headline operating point (`q = 1.57e-8`, `s = 8.9e-3`, `u(1) = 94.7`,
+`rho = 4.7e11`, `U_0 = 1.9e13`).
+
+The prover learns two things during a run and nothing else: the opened set
+`J` after the boundary commitment, and the VU sample `T` after the interior
+commitment. Both challenges are PRFs of the phase digest under a seed the
+verifier keeps (in the epoch layer, an HMAC under the verifier-private round
+seed), so nothing can be ground and every declaration is bound into the
+sample that follows it. A statement made before `J` costs its length in
+bits, whatever it says (`|Y| <= 2^b |Y_0|`). A statement made after `J`
+costs what knowing `J` is worth, and that depends on the kind:
+
+- *VU value pardon (M6).* `u(1)` before `J`; `rho log2 (1 / (1 - s)) ~ (u(1) +
+  1) / q = 6.1e9` bits after it (`3.2e-4 U_0` per unit of `f_max` per round),
+  because the adversary plants everywhere and pardons the caught fraction
+  `q`. After `T`: prohibited; the first pardon alone would be worth `0.125
+  U_0`, 390 times the post-J price.
+- *RU-scope pardon.* `W_R + log2 n_RU` before `J`; prohibited after it
+  (`0.095` to `0.47 U_0` per pardon). An honest RU-wide fault is a
+  truncation or a re-serve, both pre-J.
+- *Source-cell pardon* ("cell `w` read as `v'` throughout scope `X`).
+  `log2 |M| = 51.9` bits before `J`. After `J` the price is `c_max log2 (1 +
+  |M|)` with `c_max ~ mu_f / q_X`, where `q_X` is the probability that some
+  non-silent reader in the scope is opened and sampled: the message itself
+  for a dense scope (a fleet-year run, `52` bits), about `3e5` bits per round
+  for pod-hour scopes, `1.0% U_0` per pardon at RU scope. Scope pardons to
+  the run, never to the RU. This settles the open question in
+  `docs/notes/declaration-kinds.md`: the run-wide kind is admissible after
+  `J`.
+- *Port pardon.* Either a source-cell pardon of the broadcast cell or a
+  bundle of VU pardons; not a third kind.
+- *Structural choices (kernel path, tile schedule, rounding order).* A
+  per-RU family chosen after `J` costs exactly its compile-time price `sum_R
+  log2 |V_R|` (locality: the post-J optimum factors per RU and does not
+  depend on `J`), under seven conditions the note lists, the two that bite
+  being that a variant carries no value and is fixed before `T`. That price
+  is `1.55 U_0` for one bit per request, so per-request freedom is secure
+  and unaffordable. A choice shared across a run loses locality and costs
+  `2.5% U_0` per binary choice if made after `J`, but the honest prover
+  knows it at production time and declares it before `J` at `log2 |V|`
+  bits, or derives it from public configuration at no cost.
+
+Conservation: the expected charge for a fault is `u(1)` at every stage
+(`q u_post(1) = 1.015 u(1)`); the stages differ in the option premium the
+verifier reserves (`f_max` times the stage price) and in variance, which is
+why pre-J detection (section 7) buys headroom rather than bits.
+
+Epoch: the fault budget is the round's, never the run's (a per-run budget
+leaks `n_RU log2 |M|` for free). Under the current epoch bound, a union over
+rounds, a per-epoch budget priced by the allocation union would cost `R rho
+log2 (f + 1)`, dearer than charging every round, so `EpochVerifier` stands.
+The same union makes an epoch of `R` rounds certify about `R U_0 (1 + log2 R
+/ 40)`: `1.14 U_0` per hourly round, `1.0e4 U_0` per year, next to which the
+M6 premium is a rounding error. The note conjectures a shared-threshold
+theorem (`U_0 + rho + O(R log R)` for the epoch) and does not prove it; it is
+the epoch layer's most valuable open item.
 
 ## 3. Honest replay: what the prover holds and how it replays
 
@@ -913,8 +969,27 @@ can be admitted.
 
 ## 9. Recording policies
 
-*Tokens only, KV boundary, all VU outputs, kernel-path logs: which strategies
-and declaration kinds each policy enables and what it costs.*
+What each policy costs to keep and what it lets the prover say, per request
+of the two shapes (`evaluation.serving`; `docs/notes/late-advice.md` section
+7 pins the numbers). Section 3 has the replay mechanics and the H1/H3 rows.
+
+| policy | 70B (`1.34e14` flop) | GPT-2 Small (`5.77e10` flop) | enables |
+|---|---|---|---|
+| tokens only | 2 KB | 2 KB | pinned replay of the request from its committed boundary (P0-P2): the flipped outputs are declared, not the faulty kernel |
+| KV boundary | 2.68 GB | 7.4 MB | RU = decode step; pinned replay of one step; sparse truncation |
+| all VU outputs | 33.9 GB (`2.5e-4` B/flop); hashing it is 79% of serving at `1e5` MACs per chunk | 175 MB (`3.0e-3` B/flop); 9.5x the compute | naming the faulty VU at `u(1)` before `J` (P3), or exact declarations at any stage |
+| kernel-path log | ~1 KB | ~1 KB | shared structural choices declared before `J`, or derived from public configuration for free |
+| ECC / machine-check log | bytes per event | bytes per event | source-cell pardons before `J`; the diagnosis behind the run-wide kind |
+
+Tokens-only is the only policy a serving fleet keeps today. Section 3 shows
+it declares fewer VUs than a full record for silent faults and for read
+faults with many consumers (it pins what reached the recording, not the
+kernel that faulted) and more for a stored corruption that cascaded into the
+tokens; over the random flips of H3 it pins 7 to every-VU-output's 10. Full
+recording buys `u(1)`-priced pardons at every stage but costs the interior
+commitment of every request, which the conservation law says is the same
+trade as P3 paid in hashing rather than premium. Neither policy dominates;
+the operating choice is tokens-only with `f_max = 0` (section 5).
 
 ## 10. Row identifiers
 

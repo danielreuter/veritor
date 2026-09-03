@@ -163,6 +163,54 @@ def test_headline_source_and_late_lowering_prices(headline: Point) -> None:
     assert one_bit_per_ru / headline.capacity == pytest.approx(1.55, abs=0.02)
 
 
+def test_headline_source_cell_pardons_after_j(headline: Point) -> None:
+    """Section 2.3: the product bound ``c_max(q_min, f) log2 (1 + |M|)`` in its
+    three regimes, against the readers' bound (i) it replaces."""
+
+    shape = replace(Inputs().shape, requests=Inputs().requests)
+    message = math.log2(1 + shape.weight_count * 2**16)  # one scope
+    assert message == pytest.approx(51.9, abs=0.05)
+    mu_1 = poisson_quantile(1, 2.0**-40)
+    n = headline.rate.replay_units
+    # dense scope: every opened request reads the cell, so no other pardon survives
+    assert math.exp(-headline.q * n) < 1e-100
+    # pod-hour scopes: q_X = 6e-3, m = 1e4 scopes in the round
+    pod_hour = (mu_1 / 6e-3) * math.log2(1 + 1e4 * shape.weight_count * 2**16)
+    assert pod_hour == pytest.approx(3.4e5, rel=0.03)
+    # RU scope: q_X = q
+    c_max = mu_1 / headline.q
+    assert c_max == pytest.approx(1.99e9, rel=0.01)
+    ru_scope = c_max * (message + math.log2(n))
+    assert ru_scope == pytest.approx(1.92e11, rel=0.01)
+    assert ru_scope / headline.capacity == pytest.approx(0.0101, abs=0.0005)
+    assert ru_scope < 1024 * headline.post_j_unit()  # beats bound (i) over the readers
+
+
+def test_headline_epoch_accounting(headline: Point) -> None:
+    """Section 4: rounds multiply the union-over-rounds bound, and a shared
+    budget priced by the allocation union is dearer than per-round budgets."""
+
+    per_threshold_bit = math.log2(1 / (1 - headline.q * headline.s))
+    unit = unit_fault_bits(headline.table)
+    assert (unit + 1) / per_threshold_bit == pytest.approx(headline.rho, rel=0.01)
+    # the conservation identity q u_post(1) = (u(1) + 1)(1 + s / 2 + ...)
+    assert headline.q * headline.post_j_unit() == pytest.approx(
+        (unit + 1) * (1 + headline.s / 2), rel=1e-3
+    )
+    rounds = 8760
+    rho_round = (unit - math.log2(rounds) + 1) / per_threshold_bit
+    u_round = rho_round * (LAMBDA + math.log2(rounds))
+    assert u_round / headline.capacity == pytest.approx(1.14, abs=0.01)
+    assert rounds * u_round / headline.capacity == pytest.approx(1.0e4, rel=0.02)
+    rounds, budget = 1000, 1
+    allocation_union = rounds * headline.rho * math.log2(budget + 1)
+    per_round = rounds * budget * headline.post_j_unit()
+    assert allocation_union == pytest.approx(4.74e14, rel=0.01)
+    assert per_round == pytest.approx(6.12e12, rel=0.01)
+    assert allocation_union / headline.capacity == pytest.approx(25, rel=0.02)
+    assert per_round / headline.capacity == pytest.approx(0.32, abs=0.01)
+
+
 def test_recording_costs_at_the_two_shapes() -> None:
     inputs = Inputs()
     shape = replace(inputs.shape, requests=inputs.requests)
