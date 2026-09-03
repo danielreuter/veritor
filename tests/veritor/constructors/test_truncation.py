@@ -167,6 +167,36 @@ def test_the_verifier_rejects_a_token_streamed_into_a_blank_slot() -> None:
     assert run(moved, tuple(claimed)).report.code is VerificationCode.CHECK_MISMATCH
 
 
+def test_requests_of_one_truncated_kind_are_one_repeat_with_a_check_run_per_copy() -> (
+    None
+):
+    parameters = random_parameters(SHAPE, 5)
+    weights = parameters.flatten()
+    g = TruncatedRequestsG(SHAPE)
+    requests = (
+        Request((1, 2, 3), 4),
+        Request((5, 6, 7), 4),
+        Request((2, 2, 2), 4),
+        Request((7,), 3),
+    )
+    lengths = (2, 2, 2, 3)
+    a = g.advice(requests, lengths)
+    assert g.groups(requests, a) == (((3, 2, 0, 4), (0, 1, 2)), ((1, 3, 0, 3), (3,)))
+    compilation = Compile(g, requests, a, GATE_SET, max_advice_bits=8)
+    circuit = compilation.compiled.circuit
+    values = circuit.evaluate(compilation.inputs, weights)
+    outputs = [values[address] for address in circuit.outputs]
+    reference = reference_generate(SHAPE, parameters, requests)
+    for ordinal, (r, position) in enumerate(g.output_layout(requests, a)):
+        assert outputs[ordinal] == (
+            reference[r][position] if position < lengths[r] else SHAPE.vocab
+        )
+    blanks = g.blank_positions(requests, a)
+    assert len(blanks) == 6 and list(compilation.compiled.check_values()) == [
+        (i, SHAPE.vocab) for i in blanks
+    ]
+
+
 def test_the_shape_must_leave_room_for_the_blank_word() -> None:
     with pytest.raises(ValueError, match="vocab"):
         TruncatedRequestsG(
