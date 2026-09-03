@@ -37,6 +37,7 @@ from .messages import (
 )
 from .parameters import VerifierParameters, expected_work
 from .session import (
+    Claim,
     Declare,
     Expectation,
     ProtocolRun,
@@ -65,6 +66,7 @@ __all__ = [
     "TRANSPARENT_BACKEND",
     "WEIGHT_OWNER",
     "BoundaryMessage",
+    "Claim",
     "Commitment",
     "CommitmentDomain",
     "Declare",
