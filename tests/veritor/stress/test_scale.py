@@ -86,6 +86,15 @@ def test_s2_the_default_run_limit_is_exceeded_by_shapes_not_by_requests(
     )
 
 
+def _under(seconds: float) -> str:
+    """``seconds`` rounded up to a decade: ``"< 0.1 s"``, ``"< 1 s"``, ``"< 10 s"`` ..."""
+
+    bucket = 0.001
+    while bucket < seconds:
+        bucket *= 10
+    return f"< {bucket:g} s"
+
+
 @pytest.mark.parametrize("count, letter", ((1_000, "a"), (10_000, "b"), (100_000, "c")))
 def test_s2_scale(scenario: Recorder, model: Model, count: int, letter: str) -> None:
     run_scale(scenario, model, count, f"S2{letter}")
@@ -133,10 +142,10 @@ def run_scale(scenario: Recorder, model: Model, count: int, identifier: str) -> 
         capacity_bits=priced.capacity_bits,
         overhead=priced.overhead,
         description_bytes=measurement.description_bytes,
-        verdict=(
-            f"description {measurement.description_bytes:,} B, trace {measurement.trace_seconds * 1000:.0f} ms, "
-            f"compile {measurement.compile_seconds * 1000:.0f} ms, kind table {table_seconds * 1000:.0f} ms, "
-            f"bound {priced.bound_seconds * 1000:.0f} ms"
+        verdict=(  # decade buckets, so the recorded row does not change with the machine's load
+            f"description {measurement.description_bytes:,} B; trace {_under(measurement.trace_seconds)}, "
+            f"compile {_under(measurement.compile_seconds)}, kind table {_under(table_seconds)}, "
+            f"bound {_under(priced.bound_seconds)}"
         ),
         notes=(
             f"{len(root.out_runs)} root output runs (one per generated position of each shape): exceeds the default 256 "
