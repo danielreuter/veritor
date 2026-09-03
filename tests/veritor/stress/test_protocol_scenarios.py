@@ -561,18 +561,35 @@ def test_s7_client_disconnect_length_as_advice() -> None:
     advice = constructor.advice(x, lengths)
     assert constructor.lengths(x, advice) == lengths
     assert constructor.advice_bits(x) == 6 * field_width(max_new) == 18
-    assert 8 * len(advice) == 24  # charged: padded to whole bytes
+    assert len(advice) == 3  # on the wire: padded to whole bytes, the padding checked zero
     truncated = price(constructor, x, advice, shape, weights)
-    # The truncated run streams exactly the prefixes of the full generations.
+    assert truncated.advice_bits == 18  # charged: the 18 bits the constructor declares, not 24
+    # The run streams exactly the prefixes of the full generations; every request keeps its max_new
+    # output slots, the absent ones blank (the word vocab) and fixed by the root's checks.
     full_reference = reference_generate(shape, parameters, x)
+    blank = constructor.blank
     assert truncated.outputs == tuple(
-        token for tokens, t in zip(full_reference, lengths, strict=True) for token in tokens[:t]
+        token
+        for tokens, t in zip(full_reference, lengths, strict=True)
+        for token in (*tokens[:t], *(blank,) * (max_new - t))
     )
+    blanks = constructor.blank_positions(x, advice)
+    assert len(blanks) == asked_for_total(x) - sum(lengths) == 23
+    assert list(truncated.compiled.check_values()) == [(position, blank) for position in blanks]
     assert truncated.run(label="s7").report.accepted
-    # The same circuit as a run that asked for t tokens: the length advice adds no kind and no capacity.
+    # The steps are those of a run that asked for t tokens: the blanks add one add cell each, no kind
+    # of the model's, and no capacity (a check output carries 0 bits), so U is that run's U.
     asked = price(RequestsG(shape), constructor.truncated(x, advice), b"", shape, weights)
-    assert asked.compiled.digest == truncated.compiled.digest
-    assert truncated.capacity() == asked.capacity() + 8 * len(advice)
+    assert truncated.capacity() == asked.capacity() + 18
+    assert truncated.compiled.circuit.n == asked.compiled.circuit.n + len(blanks)
+    # A server that streams a token where the client saw none is caught at the check: the opened
+    # blank is not vocab (or, claimed as computed, the claim already fails at admission).
+    values = dict(truncated.values)
+    slot = truncated.compiled.circuit.outputs[blanks[0]]
+    values[slot] = 0
+    outputs = tuple(values[a] for a in truncated.compiled.circuit.outputs)
+    assert truncated.run(values, outputs, label="s7").report.code is VerificationCode.CHECK_MISMATCH
+    assert truncated.run(values, label="s7").report.code is VerificationCode.CHECK_MISMATCH  # claimed blank, opened 0
     # Advice that lies about a length names a different circuit; its outputs are not what was streamed.
     lying = constructor.advice(x, (8, 4, 5, 1, 6, 2))
     assert Compile(constructor, x, lying, make_isa_gate_set(shape.width), max_advice_bits=24).compiled.digest != truncated.compiled.digest
@@ -585,24 +602,37 @@ def test_s7_client_disconnect_length_as_advice() -> None:
             id="S7",
             what=(
                 f"client disconnect / abort: 6 requests asked for max_new = {max_new}, the clients received "
-                f"{lengths} tokens ({generated} of {asked_for}); request RUs, the generated length as advice"
+                f"{lengths} tokens ({generated} of {asked_for}); request RUs, the generated length as advice, "
+                "the absent slots blank check outputs"
             ),
-            mechanism="M4 (charged as advice; M3 open)",
-            advice_bits=8 * len(advice),
+            mechanism="M4 charged advice (exact bits) + check outputs for the absent slots; M3 open",
+            advice_bits=truncated.advice_bits,
             capacity_bits=truncated.capacity(),
             overhead=truncated.overhead,
             description_bytes=truncated.description_bytes,
-            verdict="ACCEPTED; the circuit is byte-identical to RequestsG over requests that asked for t tokens",
+            verdict=(
+                "ACCEPTED; the steps are RequestsG's for requests that asked for t tokens, and the max_new - t "
+                "absent slots per request are blank (vocab) check outputs: 0 bits, U unchanged"
+            ),
             notes=(
                 f"t as advice: ceil(log2 max_new) = {field_width(max_new)} bits per request, {constructor.advice_bits(x)} "
-                f"bits, charged {8 * len(advice)} after padding to bytes. Alternative, padding to max_new with the tail "
-                f"masked: 0 advice bits, {extra:.0%} more prover compute for this batch ({padded.honest_cost:.0f} vs "
-                f"{truncated.honest_cost:.0f} honest gate-cost units) and {padded.description_bytes} description bytes. "
-                "Whether output-determined shape (len(y) = t, no EOS rule to check) may be charged 0 like EOS "
-                "termination is an open theory question for the architect; here it is charged."
+                f"bits, charged exactly ({len(advice)} bytes on the wire). Every request keeps {max_new} output slots; "
+                f"the {len(blanks)} absent ones are check outputs the verifier requires to equal {blank}, so U = "
+                f"{asked.capacity()} bits, that of the {generated}-token run, and a token streamed where the client "
+                f"saw none is CHECK_MISMATCH. A presence mask the server sets and the verifier merely honours would "
+                f"carry the same information (which slots are present) uncharged: it is the length, and the length is "
+                f"advice. Alternative, padding to max_new with the tail masked: 0 advice bits, {extra:.0%} more prover "
+                f"compute for this batch ({padded.honest_cost:.0f} vs {truncated.honest_cost:.0f} honest gate-cost "
+                f"units) and {padded.description_bytes} description bytes. Whether output-determined shape (len(y) = t, "
+                "no EOS rule to check) may be charged 0 like EOS termination is an open theory question for the "
+                "architect; here it is charged."
             ),
         )
     )
+
+
+def asked_for_total(x: Sequence[Request]) -> int:
+    return sum(request.max_new for request in x)
 
 
 # -- C5: nondeterministic sampling over published randomness -------------------------
@@ -803,25 +833,27 @@ def test_w3_router_picks_a_model_public_or_advised() -> None:
     by_input = price(public, tuple(zip(choice, requests, strict=True)), b"", shape, weights)
     advice = advised.advice(requests, choice)
     by_advice = price(advised, requests, advice, shape, weights)
-    assert advised.advice_bits(requests) == 6 * field_width(3) == 12 and 8 * len(advice) == 16
+    assert advised.advice_bits(requests) == 6 * field_width(3) == 12 and len(advice) == 2
+    assert by_advice.advice_bits == 12  # charged exactly; the 4 padding bits are checked zero
     assert by_input.compiled.digest == by_advice.compiled.digest
     assert by_input.outputs == by_advice.outputs
     assert by_input.run(label="w3").report.accepted and by_advice.run(label="w3").report.accepted
-    assert by_advice.capacity() == by_input.capacity() + 8 * len(advice)
+    assert by_advice.capacity() == by_input.capacity() + 12
     record(
         Row(
             id="W3",
             what="several models on one cluster: three weight sets of one shape, a router assigns six requests",
-            mechanism="M2 (client chose, model in x: 0 bits) / M4 (server chose: advice)",
-            advice_bits=8 * len(advice),
+            mechanism="M2 (client chose, model in x: 0 bits) / M4 (server chose: advice, exact bits)",
+            advice_bits=by_advice.advice_bits,
             capacity_bits=by_advice.capacity(),
             overhead=by_advice.overhead,
             description_bytes=by_advice.description_bytes,
             verdict="both ACCEPTED on the same circuit (same digest); the advised route costs exactly its bits",
             notes=(
                 f"Server-chosen routing: ceil(log2 3) = {field_width(3)} bits per request, "
-                f"{advised.advice_bits(requests)} bits, charged {8 * len(advice)} after padding; Bound "
-                f"{by_input.capacity()} -> {by_advice.capacity()}. Gap: models of different shapes need one "
+                f"{advised.advice_bits(requests)} bits, charged exactly ({len(advice)} bytes on the wire, the "
+                f"padding checked zero); Bound {by_input.capacity()} -> {by_advice.capacity()}. Gap: models of "
+                "different shapes need one "
                 "description with several kind families (the tracer builds one ToyLM family per shape) and, "
                 "as for W1, a root per model rather than one root over the concatenation."
             ),
