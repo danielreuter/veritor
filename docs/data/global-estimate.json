@@ -1,0 +1,1275 @@
+{
+ "base": {
+  "inputs": {
+   "tokens_per_year": 3e+16,
+   "tokens_per_request": 1024,
+   "requests": 29296875000000,
+   "model": {
+    "batch": 32,
+    "d_model": 8192,
+    "generated": 512,
+    "heads": 64,
+    "hidden_multiplier": 4,
+    "layers": 80,
+    "prompt": 512,
+    "requests": 2048,
+    "vocab": 32768,
+    "width": 16
+   },
+   "alpha": 71431859.56178935,
+   "hash_macs": 100000.0,
+   "values_per_leaf": 32,
+   "interior": "vu",
+   "budget": 0.01,
+   "lambda": 40.0
+  },
+  "q": 1.5707378599042513e-08,
+  "s": 0.008912509381337442,
+  "rho": 473926074715.0016,
+  "channel": {
+   "binding_errors": 1,
+   "scattered": 473926074715.0016,
+   "whole_ru": 448162657419.5624,
+   "W_R": 8192,
+   "W_V": 16,
+   "vus_per_ru": 16936948224
+  },
+  "capacity_bits": 18957042988601.504,
+  "capacity_terabytes": 2.369630373575188,
+  "overhead": {
+   "replay": 1.5707378599042513e-08,
+   "commit_interior": 1.2407237573123432e-08,
+   "proofs": 0.009999900250024748,
+   "boundary": 7.16353590793888e-08,
+   "total": 0.009999999999999998
+  },
+  "ru_cost_units": 201018047303168,
+  "ru_interior_positions": 16936948224,
+  "boundary_positions": 45000000000000000,
+  "verification_units": 496199670000064961413121
+ },
+ "sensitivity": [
+  {
+   "input": "alpha",
+   "value": 71431859.56178935,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 1.5707378599042513e-08,
+   "s": 0.008912509381337442,
+   "rho": 473926074715.0016,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 473926074715.0016,
+    "whole_ru": 448162657419.5624,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 18957042988601.504,
+   "capacity_terabytes": 2.369630373575188,
+   "overhead": {
+    "replay": 1.5707378599042513e-08,
+    "commit_interior": 1.2407237573123432e-08,
+    "proofs": 0.009999900250024748,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.009999999999999998
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "alpha",
+   "value": 150220699.2439726,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 150220699.2439726,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 7.469069990463777e-09,
+   "s": 0.008912509381337442,
+   "rho": 996681077039.13,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 996681077039.13,
+    "whole_ru": 942481736647.7269,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 39867243081566.65,
+   "capacity_terabytes": 4.983405385195831,
+   "overhead": {
+    "replay": 7.469069990463777e-09,
+    "commit_interior": 5.899808503222799e-09,
+    "proofs": 0.00999991499576243,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.010000000000000002
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "alpha",
+   "value": 183287070.3191028,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 183287070.3191028,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 6.121594858434722e-09,
+   "s": 0.008912509381337442,
+   "rho": 1216078736835.2192,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 1216078736835.2192,
+    "whole_ru": 1149939329725.5168,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 48643149473410.21,
+   "capacity_terabytes": 6.0803936841762765,
+   "overhead": {
+    "replay": 6.121594858434722e-09,
+    "commit_interior": 4.835439679262609e-09,
+    "proofs": 0.009999917407606385,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.010000000000000002
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "alpha",
+   "value": 1000000000.0,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 1000000000.0,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 1.122010191349245e-09,
+   "s": 0.008912509381337442,
+   "rho": 6636159800804.956,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 6636159800804.956,
+    "whole_ru": 6273987782461.439,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 265446392032199.7,
+   "capacity_terabytes": 33.18079900402496,
+   "overhead": {
+    "replay": 1.122010191349245e-09,
+    "commit_interior": 8.862743656273976e-10,
+    "proofs": 0.009999926356356366,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.010000000000000002
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "budget",
+   "value": 0.001,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.001,
+    "lambda": 40.0
+   },
+   "q": 1.5706365908452545e-09,
+   "s": 0.008912509381337442,
+   "rho": 4740316852497.345,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 4740316852497.345,
+    "whole_ru": 4481923342921.432,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 189612674099895.22,
+   "capacity_terabytes": 23.701584262486904,
+   "overhead": {
+    "replay": 1.5706365908452545e-09,
+    "commit_interior": 1.2406437650166295e-09,
+    "proofs": 0.0009999255533605649,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.001
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "budget",
+   "value": 0.01,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 1.5707378599042513e-08,
+   "s": 0.008912509381337442,
+   "rho": 473926074715.0016,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 473926074715.0016,
+    "whole_ru": 448162657419.5624,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 18957042988601.504,
+   "capacity_terabytes": 2.369630373575188,
+   "overhead": {
+    "replay": 1.5707378599042513e-08,
+    "commit_interior": 1.2407237573123432e-08,
+    "proofs": 0.009999900250024748,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.009999999999999998
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "budget",
+   "value": 0.1,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.1,
+    "lambda": 40.0
+   },
+   "q": 1.5707479868101513e-07,
+   "s": 0.008912509381337442,
+   "rho": 47391551595.41066,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 47391551595.41066,
+    "whole_ru": 44815966446.69876,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 1895662063817.869,
+   "capacity_terabytes": 0.23695775797723362,
+   "overhead": {
+    "replay": 1.5707479868101513e-07,
+    "commit_interior": 1.2407317565419145e-07,
+    "proofs": 0.0999996472166666,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.1
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "lam",
+   "value": 30.0,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 30.0
+   },
+   "q": 1.5707378599042513e-08,
+   "s": 0.008912509381337442,
+   "rho": 473926074715.0016,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 473926074715.0016,
+    "whole_ru": 448162657419.5624,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 14217782241451.49,
+   "capacity_terabytes": 1.7772227801814362,
+   "overhead": {
+    "replay": 1.5707378599042513e-08,
+    "commit_interior": 1.2407237573123432e-08,
+    "proofs": 0.009999900250024748,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.009999999999999998
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "lam",
+   "value": 40.0,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 1.5707378599042513e-08,
+   "s": 0.008912509381337442,
+   "rho": 473926074715.0016,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 473926074715.0016,
+    "whole_ru": 448162657419.5624,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 18957042988601.504,
+   "capacity_terabytes": 2.369630373575188,
+   "overhead": {
+    "replay": 1.5707378599042513e-08,
+    "commit_interior": 1.2407237573123432e-08,
+    "proofs": 0.009999900250024748,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.009999999999999998
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "lam",
+   "value": 60.0,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 60.0
+   },
+   "q": 1.5707378599042513e-08,
+   "s": 0.008912509381337442,
+   "rho": 473926074715.0016,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 473926074715.0016,
+    "whole_ru": 448162657419.5624,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 28435564482901.535,
+   "capacity_terabytes": 3.554445560362692,
+   "overhead": {
+    "replay": 1.5707378599042513e-08,
+    "commit_interior": 1.2407237573123432e-08,
+    "proofs": 0.009999900250024748,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.009999999999999998
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "hash_macs",
+   "value": 10000.0,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 10000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 1.570749740802584e-08,
+   "s": 0.008912509381337442,
+   "rho": 473922489951.432,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 473922489951.432,
+    "whole_ru": 448159267588.6479,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 18956899598058.723,
+   "capacity_terabytes": 2.3696124497573403,
+   "overhead": {
+    "replay": 1.570749740802584e-08,
+    "commit_interior": 1.2407331420182163e-09,
+    "proofs": 0.00999997588823354,
+    "boundary": 7.163535907938879e-09,
+    "total": 0.009999999999999998
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "hash_macs",
+   "value": 100000.0,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 1.5707378599042513e-08,
+   "s": 0.008912509381337442,
+   "rho": 473926074715.0016,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 473926074715.0016,
+    "whole_ru": 448162657419.5624,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 18957042988601.504,
+   "capacity_terabytes": 2.369630373575188,
+   "overhead": {
+    "replay": 1.5707378599042513e-08,
+    "commit_interior": 1.2407237573123432e-08,
+    "proofs": 0.009999900250024748,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.009999999999999998
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "hash_macs",
+   "value": 1000000.0,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 1000000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 1.5706190523802693e-08,
+   "s": 0.008912509381337442,
+   "rho": 473961924893.8547,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 473961924893.8547,
+    "whole_ru": 448196558132.9165,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 18958476995755.63,
+   "capacity_terabytes": 2.3698096244694535,
+   "overhead": {
+    "replay": 1.5706190523802693e-08,
+    "commit_interior": 1.2406299114063427e-07,
+    "proofs": 0.009999143877227543,
+    "boundary": 7.163535907938878e-07,
+    "total": 0.01
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "values_per_leaf",
+   "value": 1,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 1,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 1.570328645158162e-08,
+   "s": 0.008912509381337442,
+   "rho": 474049578130.1172,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 474049578130.1172,
+    "whole_ru": 448279444950.1174,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 18961983125206.13,
+   "capacity_terabytes": 2.370247890650766,
+   "overhead": {
+    "replay": 1.570328645158162e-08,
+    "commit_interior": 3.9692816612026704e-07,
+    "proofs": 0.009997295037056889,
+    "boundary": 2.2923314905404415e-06,
+    "total": 0.010000000000000002
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "values_per_leaf",
+   "value": 32,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 1.5707378599042513e-08,
+   "s": 0.008912509381337442,
+   "rho": 473926074715.0016,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 473926074715.0016,
+    "whole_ru": 448162657419.5624,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 18957042988601.504,
+   "capacity_terabytes": 2.369630373575188,
+   "overhead": {
+    "replay": 1.5707378599042513e-08,
+    "commit_interior": 1.2407237573123432e-08,
+    "proofs": 0.009999900250024748,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.009999999999999998
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "interior",
+   "value": "vu",
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 1.5707378599042513e-08,
+   "s": 0.008912509381337442,
+   "rho": 473926074715.0016,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 473926074715.0016,
+    "whole_ru": 448162657419.5624,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 18957042988601.504,
+   "capacity_terabytes": 2.369630373575188,
+   "overhead": {
+    "replay": 1.5707378599042513e-08,
+    "commit_interior": 1.2407237573123432e-08,
+    "proofs": 0.009999900250024748,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.009999999999999998
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "interior",
+   "value": "gate",
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "gate",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 1.5554699400079736e-08,
+   "s": 0.008912509381337442,
+   "rho": 478578041104.7751,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 478578041104.7751,
+    "whole_ru": 452561657846.9427,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 19143121644192.445,
+   "capacity_terabytes": 2.3928902055240555,
+   "overhead": {
+    "replay": 1.5554699400079736e-08,
+    "commit_interior": 9.721380519487075e-05,
+    "proofs": 0.009902699004746654,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.010000000000000004
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 134007805022720,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "tokens_per_year",
+   "value": 1e+16,
+   "inputs": {
+    "tokens_per_year": 1e+16,
+    "tokens_per_request": 1024,
+    "requests": 9765625000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 1.5707378599042513e-08,
+   "s": 0.008912509381337442,
+   "rho": 466078266515.2693,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 466078266515.2693,
+    "whole_ru": 448076577073.96027,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 18643130660612.215,
+   "capacity_terabytes": 2.330391332576527,
+   "overhead": {
+    "replay": 1.5707378599042513e-08,
+    "commit_interior": 1.2407237573123432e-08,
+    "proofs": 0.009999900250024748,
+    "boundary": 7.163535907938878e-08,
+    "total": 0.009999999999999998
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 15000000000000000,
+   "verification_units": 165399890000064961413121
+  },
+  {
+   "input": "tokens_per_year",
+   "value": 3e+16,
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 1.5707378599042513e-08,
+   "s": 0.008912509381337442,
+   "rho": 473926074715.0016,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 473926074715.0016,
+    "whole_ru": 448162657419.5624,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 18957042988601.504,
+   "capacity_terabytes": 2.369630373575188,
+   "overhead": {
+    "replay": 1.5707378599042513e-08,
+    "commit_interior": 1.2407237573123432e-08,
+    "proofs": 0.009999900250024748,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.009999999999999998
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "input": "tokens_per_year",
+   "value": 1e+17,
+   "inputs": {
+    "tokens_per_year": 1e+17,
+    "tokens_per_request": 1024,
+    "requests": 97656250000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 1.3999220192224164e-08,
+   "s": 0.01,
+   "rho": 482526365883.7153,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 482526365883.7153,
+    "whole_ru": 482298790134.3668,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 19301054635350.05,
+   "capacity_terabytes": 2.4126318294187565,
+   "overhead": {
+    "replay": 1.3999220192224164e-08,
+    "commit_interior": 1.1057965507623258e-08,
+    "proofs": 0.009999903307455222,
+    "boundary": 7.163535907938878e-08,
+    "total": 0.01
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 150000000000000000,
+   "verification_units": 1653998900000064961413121
+  }
+ ],
+ "shapes": [
+  {
+   "request": "512 + 512 (frontier shape)",
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1024,
+    "requests": 29296875000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 512,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 512,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 1.5707378599042513e-08,
+   "s": 0.008912509381337442,
+   "rho": 473926074715.0016,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 473926074715.0016,
+    "whole_ru": 448162657419.5624,
+    "W_R": 8192,
+    "W_V": 16,
+    "vus_per_ru": 16936948224
+   },
+   "capacity_bits": 18957042988601.504,
+   "capacity_terabytes": 2.369630373575188,
+   "overhead": {
+    "replay": 1.5707378599042513e-08,
+    "commit_interior": 1.2407237573123432e-08,
+    "proofs": 0.009999900250024748,
+    "boundary": 7.16353590793888e-08,
+    "total": 0.009999999999999998
+   },
+   "ru_cost_units": 201018047303168,
+   "ru_interior_positions": 16936948224,
+   "boundary_positions": 45000000000000000,
+   "verification_units": 496199670000064961413121
+  },
+  {
+   "request": "chat: 160 + 340 (ShareGPT means)",
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 500,
+    "requests": 60000000000000,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 340,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 160,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 9.910705550246243e-09,
+   "s": 0.014125375446227554,
+   "rho": 472679282835.8054,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 472679282835.8054,
+    "whole_ru": 460212708103.6538,
+    "W_R": 5440,
+    "W_V": 16,
+    "vus_per_ru": 6946424500
+   },
+   "capacity_bits": 18907171313433.66,
+   "capacity_terabytes": 2.3633964141792076,
+   "overhead": {
+    "replay": 9.910705550246243e-09,
+    "commit_interior": 6.6121018425612625e-09,
+    "proofs": 0.009999920087656057,
+    "boundary": 6.33895365505324e-08,
+    "total": 0.01
+   },
+   "ru_cost_units": 97610746768396,
+   "ru_interior_positions": 6946424500,
+   "boundary_positions": 39600000000000000,
+   "verification_units": 416785479600064961413121
+  },
+  {
+   "request": "coding: 1500 + 16 (Azure medians)",
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 1516,
+    "requests": 19788918205792,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 16,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 1500,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 6.253222463380467e-10,
+   "s": 0.22387211385683378,
+   "rho": 474891623594.6412,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 474891623594.6412,
+    "whole_ru": 433446706546.91565,
+    "W_R": 256,
+    "W_V": 16,
+    "vus_per_ru": 28704354192
+   },
+   "capacity_bits": 18995664943787.09,
+   "capacity_terabytes": 2.3744581179733864,
+   "overhead": {
+    "replay": 6.253222463380467e-10,
+    "commit_interior": 5.636173065373571e-10,
+    "proofs": 0.009999904108003544,
+    "boundary": 9.470305690354433e-08,
+    "total": 0.01
+   },
+   "ru_cost_units": 298564807985008,
+   "ru_interior_positions": 28704354192,
+   "boundary_positions": 59683377308668672,
+   "verification_units": 568028146939012983981185
+  },
+  {
+   "request": "agent: 8192 + 192 (Mooncake)",
+   "inputs": {
+    "tokens_per_year": 3e+16,
+    "tokens_per_request": 8384,
+    "requests": 3578244274816,
+    "model": {
+     "batch": 32,
+     "d_model": 8192,
+     "generated": 192,
+     "heads": 64,
+     "hidden_multiplier": 4,
+     "layers": 80,
+     "prompt": 8192,
+     "requests": 2048,
+     "vocab": 32768,
+     "width": 16
+    },
+    "alpha": 71431859.56178935,
+    "hash_macs": 100000.0,
+    "values_per_leaf": 32,
+    "interior": "vu",
+    "budget": 0.01,
+    "lambda": 40.0
+   },
+   "q": 6.2532140554250155e-09,
+   "s": 0.022387211385683378,
+   "rho": 482392843771.9735,
+   "channel": {
+    "binding_errors": 1,
+    "scattered": 482392843771.9735,
+    "whole_ru": 459300781189.39374,
+    "W_R": 3072,
+    "W_V": 16,
+    "vus_per_ru": 453639035584
+   },
+   "capacity_bits": 19295713750880.383,
+   "capacity_terabytes": 2.4119642188600476,
+   "overhead": {
+    "replay": 6.2532140554250155e-09,
+    "commit_interior": 1.5063326259975814e-08,
+    "proofs": 0.00999989066233633,
+    "boundary": 8.802112335592759e-08,
+    "total": 0.010000000000000002
+   },
+   "ru_cost_units": 1765485307107648,
+   "ru_interior_positions": 453639035584,
+   "boundary_positions": 59312977099350016,
+   "verification_units": 1623231311224541759758337
+  }
+ ]
+}
