@@ -1,9 +1,9 @@
 """Asymptotic shape tests: ratios between sizes, never absolute constants.
 
-The `slow` marker is registered here (not in `pyproject.toml`); slow tests
-are skipped unless selected with `-m slow`.  The synthetic descriptions come
-from the `benchmarks` package at the repository root, which is put on
-`sys.path` because pytest's importlib mode does not add the root itself.
+Larger sizes carry the suite-wide `slow` marker (see `tests/conftest.py`).
+The synthetic descriptions come from the `benchmarks` package at the
+repository root, which is put on `sys.path` because pytest's importlib mode
+does not add the root itself.
 """
 
 from __future__ import annotations
@@ -18,23 +18,6 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    config.addinivalue_line(
-        "markers", "slow: larger sizes; run with `pytest -m slow tests/veritor/perf`"
-    )
-
-
-def pytest_collection_modifyitems(
-    config: pytest.Config, items: list[pytest.Item]
-) -> None:
-    if "slow" in (config.getoption("-m") or ""):
-        return
-    skip = pytest.mark.skip(reason="slow: select with -m slow")
-    for item in items:
-        if "slow" in item.keywords:
-            item.add_marker(skip)
 
 
 def best_of(fn: Callable[[], object], repeats: int = 3) -> float:

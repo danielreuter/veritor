@@ -28,6 +28,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
+markers = ["slow: long-running or environment-dependent; skipped unless selected with -m slow"]
 
 [build-system]
 requires = ["uv_build>=0.8.22,<0.9.0"]
