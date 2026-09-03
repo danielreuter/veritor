@@ -59,8 +59,10 @@ class Gate:
 
     ``evaluate`` and ``check`` are trusted executable semantics.  They are
     excluded from identity; the enclosing gate set's name and version name the
-    semantics.  Arguments are validated against the gate's own width (every
-    gate in a set has the same width for now).  A gate with a ``source``
+    semantics.  Arguments are validated against ``arg_widths``, one width per
+    argument, which defaults to the gate's own ``width`` for every argument
+    (a mixed-width gate such as a tensor-core step -- one 32-bit accumulator,
+    then 16-bit operand words -- declares its own).  A gate with a ``source``
     (``"input"`` or ``"weight"``) has arity ``0`` and no semantics: its value
     comes from the environment, so ``evaluate`` and ``check`` raise.
     """
@@ -68,6 +70,7 @@ class Gate:
     __slots__ = (
         "_check",
         "_evaluate",
+        "arg_widths",
         "arity",
         "name",
         "proof_cost",
@@ -87,6 +90,7 @@ class Gate:
         evaluate: Callable[[tuple[int, ...]], int] | None = None,
         check: Callable[[tuple[int, ...], int], bool] | None = None,
         source: str | None = None,
+        arg_widths: Sequence[int] | None = None,
     ) -> None:
         if type(name) is not str or not name.strip():
             raise ValueError("gate names must be nonempty strings")
@@ -106,9 +110,20 @@ class Gate:
                 raise TypeError("source gates have no executable relation")
         elif not callable(evaluate) or (check is not None and not callable(check)):
             raise TypeError("gate semantics must be callable")
+        if arg_widths is None:
+            widths = (width,) * arity
+        else:
+            widths = tuple(arg_widths)
+            if len(widths) != arity or any(
+                type(w) is not int or w <= 0 for w in widths
+            ):
+                raise ValueError(
+                    "arg_widths must give one positive bit count per argument"
+                )
         self.name = name
         self.arity = arity
         self.width = width
+        self.arg_widths: tuple[int, ...] = widths
         self.replay_cost = replay_cost
         self.proof_cost = proof_cost
         self.source = source
@@ -120,7 +135,7 @@ class Gate:
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
-        return {
+        manifest: dict[str, JSONValue] = {
             "arity": self.arity,
             "name": self.name,
             "proof_cost": self.proof_cost,
@@ -128,6 +143,11 @@ class Gate:
             "source": self.source,
             "width": self.width,
         }
+        if self.arg_widths != (self.width,) * self.arity:
+            # only a non-default declaration is part of the identity, so every
+            # single-width gate set keeps the digest it had before ``arg_widths``
+            manifest["arg_widths"] = list(self.arg_widths)
+        return manifest
 
     def _checked_args(self, args: Sequence[object]) -> tuple[int, ...]:
         if self.source is not None:
@@ -139,8 +159,10 @@ class Gate:
                 f"gate {self.name} expects {self.arity} arguments, got {len(args)}"
             )
         return tuple(
-            check_value(self.width, value, where=f"gate {self.name} argument {index}")
-            for index, value in enumerate(args)
+            check_value(width, value, where=f"gate {self.name} argument {index}")
+            for index, (width, value) in enumerate(
+                zip(self.arg_widths, args, strict=True)
+            )
         )
 
     def evaluate(self, args: Sequence[object]) -> int:
@@ -330,7 +352,9 @@ def make_isa_gate_set(width: int = 16) -> GateSet:
     mask = (1 << width) - 1
 
     def word(name: str, cost: int, evaluate: Callable[[tuple[int, ...]], int]) -> Gate:
-        return Gate(name, 2, width, replay_cost=cost, proof_cost=cost, evaluate=evaluate)
+        return Gate(
+            name, 2, width, replay_cost=cost, proof_cost=cost, evaluate=evaluate
+        )
 
     return GateSet(
         (

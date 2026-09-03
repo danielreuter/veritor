@@ -1,0 +1,1479 @@
+{
+  "tensors": {
+    "tokens": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "n32": {
+      "elements": 8,
+      "mismatches": 0
+    },
+    "scale32": {
+      "elements": 8,
+      "mismatches": 0
+    },
+    "onehot": {
+      "elements": 1708738,
+      "mismatches": 0
+    },
+    "emb": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "wpe32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "x0": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.ln1.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L0.ln1.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.ln1.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L0.ln1.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.ln2.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L0.ln2.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.ln2.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L0.ln2.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.q32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.q": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.k32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.k": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.v32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.v": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.scores": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L0.u": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L0.m": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L0.e": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L0.S": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L0.p": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L0.mix32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.mix": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.proj": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.x1": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.fc": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L0.gelu32": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L0.gelu": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L0.mlp": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L0.x2": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.ln1.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L1.ln1.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.ln1.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L1.ln1.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.ln2.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L1.ln2.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.ln2.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L1.ln2.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.q32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.q": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.k32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.k": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.v32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.v": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.scores": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L1.u": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L1.m": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L1.e": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L1.S": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L1.p": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L1.mix32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.mix": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.proj": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.x1": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.fc": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L1.gelu32": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L1.gelu": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L1.mlp": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L1.x2": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.ln1.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L2.ln1.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.ln1.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L2.ln1.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.ln2.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L2.ln2.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.ln2.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L2.ln2.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.q32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.q": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.k32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.k": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.v32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.v": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.scores": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L2.u": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L2.m": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L2.e": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L2.S": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L2.p": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L2.mix32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.mix": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.proj": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.x1": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.fc": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L2.gelu32": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L2.gelu": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L2.mlp": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L2.x2": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.ln1.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L3.ln1.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.ln1.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L3.ln1.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.ln2.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L3.ln2.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.ln2.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L3.ln2.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.q32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.q": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.k32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.k": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.v32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.v": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.scores": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L3.u": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L3.m": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L3.e": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L3.S": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L3.p": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L3.mix32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.mix": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.proj": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.x1": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.fc": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L3.gelu32": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L3.gelu": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L3.mlp": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L3.x2": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.ln1.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L4.ln1.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.ln1.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L4.ln1.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.ln2.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L4.ln2.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.ln2.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L4.ln2.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.q32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.q": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.k32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.k": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.v32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.v": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.scores": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L4.u": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L4.m": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L4.e": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L4.S": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L4.p": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L4.mix32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.mix": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.proj": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.x1": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.fc": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L4.gelu32": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L4.gelu": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L4.mlp": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L4.x2": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.ln1.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L5.ln1.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.ln1.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L5.ln1.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.ln2.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L5.ln2.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.ln2.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L5.ln2.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.q32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.q": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.k32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.k": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.v32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.v": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.scores": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L5.u": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L5.m": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L5.e": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L5.S": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L5.p": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L5.mix32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.mix": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.proj": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.x1": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.fc": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L5.gelu32": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L5.gelu": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L5.mlp": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L5.x2": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.ln1.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L6.ln1.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.ln1.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L6.ln1.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.ln2.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L6.ln2.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.ln2.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L6.ln2.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.q32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.q": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.k32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.k": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.v32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.v": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.scores": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L6.u": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L6.m": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L6.e": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L6.S": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L6.p": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L6.mix32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.mix": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.proj": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.x1": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.fc": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L6.gelu32": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L6.gelu": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L6.mlp": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L6.x2": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.ln1.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L7.ln1.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.ln1.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L7.ln1.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.ln2.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L7.ln2.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.ln2.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L7.ln2.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.q32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.q": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.k32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.k": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.v32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.v": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.scores": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L7.u": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L7.m": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L7.e": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L7.S": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L7.p": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L7.mix32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.mix": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.proj": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.x1": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.fc": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L7.gelu32": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L7.gelu": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L7.mlp": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L7.x2": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.ln1.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L8.ln1.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.ln1.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L8.ln1.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.ln2.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L8.ln2.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.ln2.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L8.ln2.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.q32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.q": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.k32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.k": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.v32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.v": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.scores": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L8.u": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L8.m": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L8.e": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L8.S": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L8.p": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L8.mix32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.mix": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.proj": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.x1": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.fc": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L8.gelu32": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L8.gelu": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L8.mlp": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L8.x2": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.ln1.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L9.ln1.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.ln1.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L9.ln1.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.ln2.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L9.ln2.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.ln2.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L9.ln2.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.q32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.q": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.k32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.k": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.v32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.v": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.scores": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L9.u": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L9.m": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L9.e": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L9.S": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L9.p": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L9.mix32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.mix": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.proj": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.x1": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.fc": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L9.gelu32": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L9.gelu": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L9.mlp": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L9.x2": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.ln1.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L10.ln1.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.ln1.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L10.ln1.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.ln2.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L10.ln2.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.ln2.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L10.ln2.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.q32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.q": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.k32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.k": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.v32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.v": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.scores": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L10.u": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L10.m": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L10.e": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L10.S": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L10.p": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L10.mix32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.mix": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.proj": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.x1": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.fc": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L10.gelu32": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L10.gelu": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L10.mlp": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L10.x2": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.ln1.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L11.ln1.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.ln1.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L11.ln1.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.ln2.mean": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L11.ln2.center": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.ln2.rstd": {
+      "elements": 34,
+      "mismatches": 0
+    },
+    "L11.ln2.out": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.q32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.q": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.k32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.k": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.v32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.v": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.scores": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L11.u": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L11.m": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L11.e": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L11.S": {
+      "elements": 408,
+      "mismatches": 0
+    },
+    "L11.p": {
+      "elements": 13872,
+      "mismatches": 0
+    },
+    "L11.mix32": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.mix": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.proj": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.x1": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.fc": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L11.gelu32": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L11.gelu": {
+      "elements": 104448,
+      "mismatches": 0
+    },
+    "L11.mlp": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "L11.x2": {
+      "elements": 26112,
+      "mismatches": 0
+    },
+    "lnf.mean": {
+      "elements": 8,
+      "mismatches": 0
+    },
+    "lnf.center": {
+      "elements": 6144,
+      "mismatches": 0
+    },
+    "lnf.rstd": {
+      "elements": 8,
+      "mismatches": 0
+    },
+    "lnf.out": {
+      "elements": 6144,
+      "mismatches": 0
+    },
+    "logits": {
+      "elements": 402056,
+      "mismatches": 0
+    },
+    "argmax.best": {
+      "elements": 6288,
+      "mismatches": 0
+    },
+    "argmax.idx": {
+      "elements": 6288,
+      "mismatches": 0
+    },
+    "argmax.token": {
+      "elements": 8,
+      "mismatches": 0
+    }
+  },
+  "elements": 11664980,
+  "mismatches": 0,
+  "tokens_gpu": [
+    318,
+    262,
+    38760,
+    2615,
+    287,
+    262,
+    995,
+    13
+  ],
+  "tokens_cpu": [
+    318,
+    262,
+    38760,
+    2615,
+    287,
+    262,
+    995,
+    13
+  ],
+  "cpu_forward_seconds": 9.75315950019285
+}
