@@ -10,7 +10,7 @@ is not fixed by the public requests -- which pod, which slot, which step, how
 many steps -- is therefore captured by the list of joins, and that list is
 what the cluster constructor takes as its advice ``a``.  The scheduler that
 produces it (:func:`schedule_fcfs`, or the simulated datacenter of
-:mod:`veritor.demo`) is the client's choice and outside the trust boundary;
+:mod:`veritor.simulation`) is the client's choice and outside the trust boundary;
 the compiler only needs the schedule to be well formed, and the protocol
 charges its encoded length.
 
