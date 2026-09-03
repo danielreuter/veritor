@@ -12,6 +12,7 @@ from veritor.analysis.probability import (
     unit_cost,
 )
 from veritor.analysis.rate import RateResult, capacity_from_rate, rate
+from veritor.analysis.union import union
 
 __all__ = [
     "BoundOptions",
@@ -31,5 +32,6 @@ __all__ = [
     "saturation_cost",
     "survival",
     "survival_factor",
+    "union",
     "unit_cost",
 ]
