@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.13"
+          python-version-file: ".python-version"
           enable-cache: true
       - run: uv sync --locked
       - run: uv run pytest -q
@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.13"
+          python-version-file: ".python-version"
           enable-cache: true
       - run: uv sync --locked
       - run: uv run ruff check src/veritor tests/veritor
@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.13"
+          python-version-file: ".python-version"
           enable-cache: true
       - run: uv sync --locked
       - run: uv run mypy src/veritor
