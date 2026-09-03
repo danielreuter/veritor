@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from veritor.constructors import LMShape, random_parameters, reference_generate
-from veritor.demo.workload import (
+from veritor.simulation.workload import (
     COMPLETE,
     EOS,
     FAILED,

@@ -1,4 +1,4 @@
-"""The numbers the demo produces, as plain dataclasses (JSON-dumpable, testable)."""
+"""The numbers a simulation run produces, as plain dataclasses (JSON-dumpable, testable)."""
 
 from __future__ import annotations
 

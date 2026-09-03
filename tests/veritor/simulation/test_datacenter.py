@@ -1,4 +1,4 @@
-"""The datacenter demo at small scale: every claim the report makes, checked.
+"""The datacenter simulation at small scale: every claim the report makes, checked.
 
 The default ``small`` configuration is run once (about 15 s on the reference
 machine, most of it the adversary's trials): the honest run is accepted;
@@ -28,17 +28,6 @@ from veritor.constructors import (
     reference_generate,
 )
 from veritor.core import VerificationPolicy, make_isa_gate_set
-from veritor.demo.datacenter import (
-    POLICY,
-    TOLERANCE_SIGMAS,
-    DemoConfig,
-    attack_sizes,
-    main,
-    render,
-    run,
-    small_config,
-)
-from veritor.demo.workload import EOS, FAILED, simulate
 from veritor.protocol import (
     Reject,
     VerificationCode,
@@ -48,6 +37,17 @@ from veritor.protocol import (
     make_expectation,
 )
 from veritor.research import Compile
+from veritor.simulation.datacenter import (
+    POLICY,
+    TOLERANCE_SIGMAS,
+    DemoConfig,
+    attack_sizes,
+    main,
+    render,
+    run,
+    small_config,
+)
+from veritor.simulation.workload import EOS, FAILED, simulate
 
 
 @pytest.fixture(scope="module")

@@ -18,7 +18,7 @@ def render(summary: Summary) -> str:
     )
     lines: list[str] = []
     out = lines.append
-    out(f"Veritor datacenter demo -- scale {summary.scale}, seed {summary.seed}")
+    out(f"Veritor datacenter simulation -- scale {summary.scale}, seed {summary.seed}")
     out("=" * 78)
 
     out("")

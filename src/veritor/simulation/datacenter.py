@@ -1,11 +1,11 @@
-"""``python -m veritor.demo.datacenter``: a simulated inference datacenter through Verity.
+"""``python -m veritor.simulation.datacenter``: a simulated inference datacenter through Verity.
 
 :func:`run` takes a :class:`DemoConfig` and returns a
-:class:`~veritor.demo.summary.Summary` with every number the report prints;
-:func:`~veritor.demo.report.render` turns it into the narrative report.  The
+:class:`~veritor.simulation.summary.Summary` with every number the report prints;
+:func:`~veritor.simulation.report.render` turns it into the narrative report.  The
 stages, in order:
 
-1. **Workload.** :mod:`veritor.demo.workload` simulates the server: Poisson
+1. **Workload.** :mod:`veritor.simulation.workload` simulates the server: Poisson
    arrivals over wall-clock time, first-come first-served continual
    batching over ``pods x slots``, one synchronous decode step at a time.
    Timing reaches the verifier only through the :class:`Schedule` -- the
@@ -22,7 +22,7 @@ stages, in order:
 6. **Honest run.** The full three-message protocol with timings and message
    sizes, under a fixed policy; ``Optimize`` is run alongside to show why it
    cannot separate policies at this scale.
-7. **Adversary.** :mod:`veritor.demo.adversary` exfiltrates a secret through
+7. **Adversary.** :mod:`veritor.simulation.adversary` exfiltrates a secret through
    the head VUs and the verifier's detection rate is measured against the
    analysis' prediction.
 8. **Bound and cost.** ``Bound(C, I, theta)`` at ``eta`` and ``Cost``.
@@ -115,7 +115,7 @@ TOLERANCE_SIGMAS = 4.0
 
 @dataclass(frozen=True, slots=True)
 class DemoConfig:
-    """Everything a run of the demo depends on."""
+    """Everything a simulation run depends on."""
 
     scale: str
     shape: LMShape
@@ -476,10 +476,10 @@ def _policy_summary(
 ) -> PolicySummary:
     """The run's fixed ``theta`` and, for the record, what ``Optimize`` would pick.
 
-    ``Optimize`` ranks policies by the certified capacity; at demo scale
+    ``Optimize`` ranks policies by the certified capacity; at toy scale
     every affordable policy is capped by the output interface itself (see
     :func:`_notes`), so it returns the cheapest grid point and would sample
-    almost nothing.  The demo therefore fixes ``theta`` and shows both.
+    almost nothing.  The simulation therefore fixes ``theta`` and shows both.
     """
 
     compiled = compilation.compiled
@@ -553,7 +553,7 @@ def _honest_run(
 ) -> HonestRunSummary:
     """The three-message protocol, prover and verifier timed separately."""
 
-    seed = f"veritor/demo/{config.scale}/{config.workload.seed}"
+    seed = f"veritor/simulation/{config.scale}/{config.workload.seed}"
     expectation = make_expectation(
         compilation,
         policy,
@@ -762,7 +762,7 @@ def build_config(args: argparse.Namespace) -> DemoConfig:
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="python -m veritor.demo.datacenter",
+        prog="python -m veritor.simulation.datacenter",
         description="Simulate an inference datacenter and run it through Verity.",
     )
     p.add_argument("--scale", choices=("small", "medium"), default="small")

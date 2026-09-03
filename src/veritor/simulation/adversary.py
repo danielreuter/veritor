@@ -107,7 +107,7 @@ def carriers(layout: Sequence[tuple[int, int]], count: int) -> tuple[int, ...]:
 
 
 def random_secret(bits: int, seed: object) -> str:
-    rng = random.Random(f"veritor/demo/secret/{seed}")
+    rng = random.Random(f"veritor/simulation/secret/{seed}")
     return "".join(rng.choice("01") for _ in range(bits))
 
 
@@ -193,7 +193,7 @@ def predicted_survival(policy: VerificationPolicy, attack: Attack) -> Fraction:
 
 
 def _seed(label: str, trial: int) -> bytes:
-    return hashlib.sha256(f"veritor/demo/{label}/{trial}".encode()).digest()
+    return hashlib.sha256(f"veritor/simulation/{label}/{trial}".encode()).digest()
 
 
 def survival_trials(
@@ -216,7 +216,7 @@ def survival_trials(
 
     limits = VerificationLimits() if limits is None else limits
     errors = set(attack.verification_units)
-    phase = hashlib.sha256(b"veritor/demo/phase").digest()
+    phase = hashlib.sha256(b"veritor/simulation/phase").digest()
     escaped = 0
     for trial in range(trials):
         selected = derive_replay_selection(

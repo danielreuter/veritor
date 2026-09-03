@@ -9,7 +9,9 @@ import pytest
 from veritor.analysis.probability import survival
 from veritor.constructors import ClusterG, LMShape, random_parameters
 from veritor.core import VerificationPolicy, make_isa_gate_set
-from veritor.demo.adversary import (
+from veritor.protocol import VerifierParameters, commit_weights
+from veritor.research import Compile
+from veritor.simulation.adversary import (
     carriers,
     decode_secret,
     evaluate_with_overrides,
@@ -19,9 +21,7 @@ from veritor.demo.adversary import (
     random_secret,
     survival_trials,
 )
-from veritor.demo.workload import WorkloadConfig, simulate
-from veritor.protocol import VerifierParameters, commit_weights
-from veritor.research import Compile
+from veritor.simulation.workload import WorkloadConfig, simulate
 
 SHAPE = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=16, width=16, sampling=True)
 GATE_SET = make_isa_gate_set(16)
