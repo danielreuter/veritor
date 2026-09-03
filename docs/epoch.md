@@ -182,13 +182,16 @@ storage; `Run.values` stands in for it.
 - **Which run index enters the seed.** `run_index` is the run's admission
   index within its round (not its position among received boundaries), so a
   run's seed does not move when an earlier run's boundary never arrives.
-- **Out-of-phase boundaries refuse the message, not the run.** A second
-  boundary for a run, or a boundary for a run whose round has closed, raises
+- **Out-of-phase messages are refused, not judged.** A second boundary for a
+  run, a boundary for a run whose round has closed, interiors before the round
+  closes, or any message to a run that already has its verdict raises
   `Reject(INVALID_PHASE)` without judging the run -- the semantics of
-  `VerifierSession._expect`. A boundary that fails its checks (bad opening,
-  I/O mismatch) judges the run, as today. A run admitted whose boundary never
-  arrives is judged at round close ("the boundary never arrived") and rejects
-  the epoch.
+  `VerifierSession._expect` (which leaves the session's phase alone). A
+  message that fails its checks (bad opening, I/O mismatch, a relation, the
+  round's budget) judges the run, as today, and the verdict is final: a
+  smaller declaration list cannot revive a run rejected for the budget
+  (tested). A run admitted whose boundary never arrives is judged at round
+  close ("the boundary never arrived") and rejects the epoch.
 - **The header enters the chain with its boundary.** `link_i` covers
   `Header_i.digest` and `boundary_phase_i` as specified; admission alone does
   not move the chain (the header is in `stream` for inspection). An admitted

@@ -305,11 +305,26 @@ class _Run:
     report: VerificationReport | None = None
 
     def fail(self, rejection: Reject) -> Reject:
-        """Record the run's first verdict (a later message to a failed run changes nothing)."""
+        """Record ``rejection`` as the run's verdict."""
 
-        if self.report is None:
-            self.report = rejection_report(rejection, self.session)
+        self.report = rejection_report(rejection, self.session)
         return rejection
+
+    def judged(self, rejection: Reject) -> Reject:
+        """A rejection out of the session: the run's verdict if the session rejected
+        (its phase is ``rejected``), else a message refused out of phase, as
+        :class:`VerifierSession` refuses it, with the run still live."""
+
+        if self.session.phase == "rejected":
+            self.fail(rejection)
+        return rejection
+
+    def live(self) -> None:
+        if self.report is not None:
+            raise Reject(
+                VerificationCode.INVALID_PHASE,
+                f"the run has its verdict: {self.report.code.value}",
+            )
 
 
 @dataclass(slots=True)
@@ -330,8 +345,11 @@ class EpochVerifier:
     the run-time steps; :meth:`close_round` seals the round and releases its
     challenges; :meth:`receive_interiors` and :meth:`receive_evidence` finish
     each run as :class:`VerifierSession` does; :meth:`report` is the verdict
-    so far.  Every rejection is raised as a :class:`Reject` and recorded
-    against the run, so the report reflects it.
+    so far.  Every rejection is raised as a :class:`Reject`; one that judges
+    the run (the session rejected, the budget is exceeded, the boundary never
+    came) is recorded against it, so the report reflects it, while a message
+    out of phase -- a second boundary, a boundary after the round closed, a
+    message to a run with its verdict -- is refused and changes nothing.
     """
 
     def __init__(
@@ -478,6 +496,7 @@ class EpochVerifier:
                 VerificationCode.INVALID_PHASE,
                 f"the run was admitted in round {run.round}, which is closed",
             )
+        run.live()
         if run.boundary is not None:
             raise Reject(
                 VerificationCode.INVALID_PHASE,
@@ -486,7 +505,7 @@ class EpochVerifier:
         try:
             run.session.accept_boundary(message)
         except Reject as rejection:
-            raise run.fail(rejection) from None
+            raise run.judged(rejection) from None
         run.boundary = message
         self._link = stream_link(self._link, run.header, run.session.boundary_phase)
         self.stream.append(message)
@@ -536,9 +555,13 @@ class EpochVerifier:
         """A run's interiors after its round closed; the round's fault budget is enforced first."""
 
         run = self._run(header)
+        run.live()
         round = self._rounds[run.round]
         budget = self.parameters.max_faults
-        if round.declarations + len(message.declarations) > budget:
+        if (
+            run.session.phase == "interiors"
+            and round.declarations + len(message.declarations) > budget
+        ):
             raise run.fail(
                 Reject(
                     VerificationCode.FAULTS_EXCEEDED,
@@ -549,7 +572,7 @@ class EpochVerifier:
         try:
             challenge = run.session.receive_interiors(message)
         except Reject as rejection:
-            raise run.fail(rejection) from None
+            raise run.judged(rejection) from None
         round.declarations += len(message.declarations)
         return challenge
 
@@ -559,10 +582,11 @@ class EpochVerifier:
         """A run's evidence: its verdict, recorded for the epoch."""
 
         run = self._run(header)
+        run.live()
         try:
             run.report = run.session.receive_evidence(message)
         except Reject as rejection:
-            raise run.fail(rejection) from None
+            raise run.judged(rejection) from None
         return run.report
 
     def transcript(self, header: Header) -> Transcript:

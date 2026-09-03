@@ -17,6 +17,7 @@ from veritor.protocol import (
     BoundaryMessage,
     Claim,
     Header,
+    InteriorMessage,
     Opening,
     ProtocolError,
     ProverSession,
@@ -683,6 +684,64 @@ def test_the_fault_budget_is_the_rounds_to_share(
         [seed("budget/silent")],
     )
     assert silent.code is VerificationCode.RELATION_REJECTED
+
+
+def test_a_judged_run_takes_no_more_messages_and_an_early_message_judges_nothing(
+    compiled, honest_values, make_run
+) -> None:
+    units = relation_units(compiled)
+    first, first_outputs = flipped(compiled, honest_values, units[0])
+    second, second_outputs = flipped(compiled, honest_values, units[1])
+    declaring = [
+        make_run(
+            first,
+            first_outputs,
+            replay=assignment_replay(first),
+            declare=honest_declare(compiled),
+        ),
+        make_run(
+            second,
+            second_outputs,
+            replay=assignment_replay(second),
+            declare=honest_declare(compiled),
+        ),
+    ]
+    verifier, prover = (
+        EpochVerifier(parameters(EVERYTHING, max_faults=1)),
+        EpochProver(),
+    )
+    headers = [
+        committed(verifier, prover, run, f"judged/{i}")
+        for i, run in enumerate(declaring)
+    ]
+    # interiors before the round closes: refused out of phase, the run stays live
+    with pytest.raises(Reject) as early:
+        verifier.receive_interiors(headers[0], InteriorMessage((), ()))
+    assert early.value.code is VerificationCode.INVALID_PHASE
+    assert verifier.report().rounds[0].runs[0].report is None
+
+    (h1, c1), (h2, c2) = verifier.close_round(seed("judged")).challenges
+    sample = verifier.receive_interiors(
+        h1, prover.interiors(h1, c1)
+    )  # one declaration: the budget
+    interiors = prover.interiors(h2, c2)
+    with pytest.raises(Reject) as over:
+        verifier.receive_interiors(h2, interiors)
+    assert over.value.code is VerificationCode.FAULTS_EXCEEDED
+    # a smaller declaration list cannot revive the judged run
+    with pytest.raises(Reject) as dead:
+        verifier.receive_interiors(h2, replace(interiors, declarations=()))
+    assert (
+        dead.value.code is VerificationCode.INVALID_PHASE
+        and "has its verdict" in str(dead.value)
+    )
+    assert verifier.receive_evidence(h1, prover.evidence(h1, sample)).accepted
+    report = verifier.report()
+    assert (
+        report.code is VerificationCode.FAULTS_EXCEEDED
+        and report.rounds[0].declarations == 1
+    )
+    assert report.rounds[0].runs[0].accepted and not report.rounds[0].runs[1].accepted
 
 
 def test_admission_enforces_u_max_against_the_running_union(compiled, make_run) -> None:

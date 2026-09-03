@@ -672,6 +672,13 @@ class VerifierSession:
 
         return self._seeds is not None
 
+    @property
+    def phase(self) -> str:
+        """Where the session is: ``boundary``, ``replay`` (boundary accepted, no
+        challenge yet), ``interiors``, ``evidence``, ``done`` or ``rejected``."""
+
+        return self._phase
+
     def _seed(self, index: int) -> bytes:
         if self._seeds is None:
             raise ProtocolError("the verifier's seeds have not been released")
