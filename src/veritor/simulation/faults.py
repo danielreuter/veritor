@@ -26,6 +26,7 @@ an honest server, a retry, not a soundness event.
 
 from __future__ import annotations
 
+import heapq
 import math
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -151,19 +152,8 @@ class Fault:
         return sum(a != b for a, b in zip(self.outputs, self.honest_outputs, strict=True))
 
 
-def inject_fault(
-    compiled: Compiled,
-    inputs: Iterable[int],
-    weights: Iterable[int],
-    verification_unit: int,
-    bit: int = 0,
-) -> Fault:
-    """A run in which bit ``bit`` of VU ``verification_unit``'s output word flipped.
-
-    The output word is the VU's last gate (a dot product's final sum).  The
-    honest assignment is computed alongside so the fault's effect on the
-    streamed tokens is known.
-    """
+def _fault_site(compiled: Compiled, verification_unit: int, bit: int) -> tuple[int, int]:
+    """``(address, replay_unit)`` of VU ``verification_unit``'s output word, checked for ``bit``."""
 
     circuit, index = compiled.circuit, compiled.index
     node = index.verification_unit(verification_unit)
@@ -176,8 +166,30 @@ def inject_fault(
     replay_unit = node.replay_unit
     if replay_unit is None:
         raise ValueError(f"VU {verification_unit} lies in no replay unit")
+    return address, replay_unit
+
+
+def inject_fault(
+    compiled: Compiled,
+    inputs: Iterable[int],
+    weights: Iterable[int],
+    verification_unit: int,
+    bit: int = 0,
+    *,
+    honest: Mapping[int, int] | None = None,
+) -> Fault:
+    """A run in which bit ``bit`` of VU ``verification_unit``'s output word flipped.
+
+    The output word is the VU's last gate (a dot product's final sum).  The
+    honest assignment is computed alongside (or taken from ``honest``) so the
+    fault's effect on the streamed tokens is known.
+    """
+
+    circuit = compiled.circuit
+    address, replay_unit = _fault_site(compiled, verification_unit, bit)
     inputs, weights = tuple(inputs), tuple(weights)
-    honest = dict(enumerate(circuit.evaluate(inputs, weights)))
+    if honest is None:
+        honest = dict(enumerate(circuit.evaluate(inputs, weights)))
     values = evaluate_with_flips(compiled, inputs, weights, {address: 1 << bit})
     return Fault(
         verification_unit=verification_unit,
@@ -190,3 +202,86 @@ def inject_fault(
         outputs=tuple(values[a] for a in circuit.outputs),
         honest_outputs=tuple(honest[a] for a in circuit.outputs),
     )
+
+
+class FaultInjector:
+    """Many faults in one run: the honest assignment and the readers of every gate, computed once.
+
+    :meth:`inject` recomputes only the cone downstream of the flipped word,
+    so trying a fault costs milliseconds instead of a full evaluation; the
+    result equals :func:`inject_fault`'s.
+    """
+
+    def __init__(self, compiled: Compiled, inputs: Iterable[int], weights: Iterable[int]) -> None:
+        circuit = compiled.circuit
+        self.compiled = compiled
+        self.honest: dict[int, int] = dict(enumerate(circuit.evaluate(tuple(inputs), tuple(weights))))
+        readers: list[list[int]] = [[] for _ in range(circuit.n)]
+        for address in range(circuit.n):
+            for argument in circuit[address].args:
+                readers[argument].append(address)
+        self.readers: tuple[tuple[int, ...], ...] = tuple(tuple(r) for r in readers)
+
+    def propagate(self, flips: Mapping[int, int]) -> dict[int, int]:
+        """The honest assignment with ``flips`` applied and their downstream cones recomputed."""
+
+        circuit = self.compiled.circuit
+        values = dict(self.honest)
+        queued = set(flips)
+        pending = list(queued)
+        heapq.heapify(pending)
+        while pending:  # gates read only earlier gates, so address order is evaluation order
+            address = heapq.heappop(pending)
+            ref = circuit[address]
+            value = (
+                values[address]
+                if ref.is_source
+                else circuit.evaluate_gate(address, tuple(values[a] for a in ref.args))
+            )
+            mask = flips.get(address)
+            if mask is not None:
+                if mask & ~((1 << ref.width) - 1) or not mask:
+                    raise ValueError(f"flip mask {mask:#x} is not a nonzero {ref.width}-bit mask")
+                value ^= mask
+            if value != values[address]:
+                values[address] = value
+                for reader in self.readers[address]:
+                    if reader not in queued:
+                        queued.add(reader)
+                        heapq.heappush(pending, reader)
+        return values
+
+    def inject(self, verification_unit: int, bit: int = 0) -> Fault:
+        """:func:`inject_fault` for this run."""
+
+        circuit = self.compiled.circuit
+        address, replay_unit = _fault_site(self.compiled, verification_unit, bit)
+        values = self.propagate({address: 1 << bit})
+        return Fault(
+            verification_unit=verification_unit,
+            replay_unit=replay_unit,
+            address=address,
+            bit=bit,
+            honest=self.honest[address],
+            faulty=values[address],
+            values=values,
+            outputs=tuple(values[a] for a in circuit.outputs),
+            honest_outputs=tuple(self.honest[a] for a in circuit.outputs),
+        )
+
+
+__all__ = [
+    "DOT_OPS",
+    "LLAMA3_DAYS",
+    "LLAMA3_GPUS",
+    "LLAMA3_SDC_EVENTS",
+    "SDC_RATE_PER_DEVICE_HOUR",
+    "Fault",
+    "FaultInjector",
+    "dot_units",
+    "evaluate_with_flips",
+    "expected_faults",
+    "fault_budget",
+    "inject_fault",
+    "is_dot_unit",
+]
