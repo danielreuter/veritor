@@ -43,9 +43,15 @@ Files: `protocol/merkle.py`, `protocol/domains.py`, `protocol/session.py`
 
 **Claim.**
 
-1. Every address has exactly one owner: kappa_W for a `weight` gate, the
-   boundary for an `in` gate or a declared replay-unit output, otherwise the
-   replay unit `r` whose interior contains it.
+1. Every *committed* address has exactly one owner: kappa_W for a `weight`
+   gate, the boundary for an `in` gate or a declared replay-unit output,
+   otherwise the replay unit `r` whose interior contains it.  The interior of
+   `r` is committed at verification-unit-output granularity: the declared
+   outputs of the verification units inside `r` that are not `r`'s own
+   outputs (nor source gates).  A gate internal to a verification unit -- one
+   the unit does not declare -- is committed nowhere; the three families of
+   domains are disjoint and cover exactly the positions the local checks
+   touch (a unit's inputs, declared outputs and source gates).
 2. A leaf hash binds `(domain_id, rank, position, schema, value)`; a node hash
    binds `(domain_id, level, index, left, right)`; padding leaves are
    `H(pad, domain_id, rank)`; the empty root is `H(empty, domain_id)`.
@@ -60,13 +66,24 @@ Files: `protocol/merkle.py`, `protocol/domains.py`, `protocol/session.py`
 
 **Argument.**
 
-- Ownership is the three-way rule in `_Layout.owner` (`session.py`, lines
-  172-180): weights first, then the boundary, then
-  `index.replay_units.owner(address)`.  The three position sets are disjoint
-  by construction of the index (`domains.py` module docstring; `weight` gates
-  are never boundary positions, and interiors are `R_r` minus its declared
-  outputs, `Index.interior`).  Both parties use the same rule, so a value has
-  one committing root.
+- Ownership is the three-way rule in `_Layout.owner` (`session.py`):
+  weights first, then the boundary, then `index.replay_units.owner(address)`.
+  The three position sets are disjoint by construction of the index
+  (`domains.py` module docstring; `weight` gates are never boundary
+  positions, and `Index.interior(r)` is the union over the verification
+  units `V ⊆ R_r` of `Out(V)` minus `Out(R_r)` minus source gates, computed
+  in `O(depth)` per position from the definitions' out runs; its domain tag
+  is `veritor/indexed-domain/interior/v2`, so a transcript recorded under the
+  every-gate interior is distinguishable).  The subtraction relies on the
+  refinement invariant `Out(R_r) ⊆ ⋃_V Out(V)`: a replay unit's output is a
+  gate of exactly one verification unit inside it (tiling, section 8), and a
+  unit's output that another unit or the parent reads must be declared by the
+  unit that computes it, since `_Layout.required` refuses a unit that reads
+  or declares an address committed nowhere (`INVALID_COMPILED_RESULT`) and
+  `Definition.interior_total` refuses a negative count.  Both parties use the
+  same rule, so a value has one committing root, and a replay-unit output
+  lives in the boundary alone: there is no interior copy of it to disagree
+  with.
 - `CommitmentDomain.__post_init__` (`merkle.py`, lines 63-78) computes
   `domain_id = H("domain", binding, owner + 2, positions.identity_digest,
   count)`.  `leaf` (84-92), `node` (94-95), `empty_root` (97-98) and the
@@ -108,7 +125,11 @@ Files: `protocol/merkle.py`, `protocol/domains.py`, `protocol/session.py`
 - `test_equivocating_on_a_boundary_value_between_phases_is_invalid_opening`:
   `v` at the boundary, `v'` in the evidence for the same address.
 - `test_two_units_reading_one_address_cannot_be_shown_different_values` and
-  `test_every_address_has_exactly_one_owner`: single owner.
+  `test_every_committed_address_has_exactly_one_owner`: single owner; under
+  split, whole and wide cells the three domain families are pairwise
+  disjoint, cover exactly the inputs, declared outputs and source gates the
+  checks touch, leave internal gates in no domain, and their per-kind counts
+  (`KindSummary.interior_count`) match the enumeration.
 - `test_the_wire_carries_no_prover_described_domain`.
 - `test_kappa_w_is_bound_to_the_gate_set_and_the_vector_not_the_description`,
   `test_kappa_w_with_another_count_is_rejected_before_any_commitment`,
@@ -269,27 +290,43 @@ Files: `protocol/session.py` (`_check_unit`, `receive_boundary`),
 `core/circuit.py` (`check_gate`, `decode`).
 
 **Claim.**  For every sampled verification unit the verifier opens exactly the
-addresses the unit reads or writes, each under its owner, decodes each value
-canonically, compares every `in` gate with the header's public input, accepts
-a `weight` gate only as kappa_W's leaf, and checks every other gate's relation
-against the opened argument values.  At the boundary, before any sampling,
-the public inputs and the claimed outputs are opened and compared with the
-header, exhaustively.
+addresses the unit reads from outside (its inputs) and the addresses it
+declares (its outputs), plus its source gates, each under its owner, decodes
+each value canonically, compares every `in` gate with the header's public
+input, accepts a `weight` gate only as kappa_W's leaf, recomputes every other
+gate of the unit from the opened inputs and the gates before it, and requires
+every opened output to equal what was recomputed.  A gate the unit does not
+declare is never opened: its value in the check is the recomputed one, so a
+corruption of it is caught at the first declared output it reaches.  At the
+boundary, before any sampling, the public inputs and the claimed outputs are
+opened and compared with the header, exhaustively.
 
 **Argument.**
 
-- `_Layout.required(unit)` (182-199) is the sorted set of the unit's gates
-  plus `In(unit)`, each with its owner; `_check_unit` (607-658) demands the
-  evidence open exactly those positions in that order (`COVERAGE_MISMATCH`),
-  opens each under its owner through `_open` (492-510, `INVALID_OPENING`),
-  decodes it with the circuit's codec (`INVALID_VALUE` for anything that does
-  not round-trip, including a value outside the gate's width), then walks the
-  unit's gates: an `in` gate's payload must equal the header's public input
-  of its rank (`PUBLIC_IO_MISMATCH`); a `weight` gate has nothing to check
-  beyond its opening under kappa_W; any other gate goes through
-  `circuit.check_gate(args, out)` (`RELATION_REJECTED`).  Arguments are the
-  owners' committed values -- the prover never states an argument, only
-  opens positions.
+- `_Layout.required(unit)` is the sorted set `In(unit) ∪ Out(unit) ∪
+  sources(unit)`, each with its owner (the boundary or kappa_W for inputs and
+  sources, the boundary for an output that is the replay unit's own, the
+  replay unit's interior otherwise); it refuses, as `INVALID_COMPILED_RESULT`,
+  a unit that reads its own gates from outside, reads or declares an address
+  committed nowhere, or reads another replay unit's non-boundary address.
+  `_check_unit` demands the evidence open exactly those positions in that
+  order (`COVERAGE_MISMATCH`), opens each under its owner through `_open`
+  (`INVALID_OPENING`), decodes it with the circuit's codec (`INVALID_VALUE`
+  for anything that does not round-trip, including a value outside the
+  gate's width), then hands the obligation to the proof backend.  The
+  transparent backend (`proofs/transparent.py::_check_relations`) walks the
+  kind's program (`KindProgram`, one per kind, in copy-relative coordinates):
+  an `in` gate's payload must equal the header's public input of its rank
+  (`PUBLIC_IO_MISMATCH`); a `weight` gate has nothing to check beyond its
+  opening under kappa_W; a source gate must be opened
+  (`INVALID_COMPILED_RESULT` otherwise); every other gate is evaluated from
+  what it reads -- an opened input or an earlier gate of the copy -- and,
+  when the kind opens it, must equal the opened value (`RELATION_REJECTED`).
+  Arguments are the owners' committed values or the recomputation of them --
+  the prover never states an argument, only opens positions.  The SP1 guest
+  (`zk/sp1/common/src/check.rs`) performs the same two passes; declared VUs
+  (M6) authenticate their openings under `DECLARED_PROGRAM` and skip the
+  recomputation.
 - `receive_boundary` (512-552) demands the boundary openings cover exactly
   the public I/O addresses in boundary order, opens each and compares inputs
   and claimed outputs with the header (`PUBLIC_IO_MISMATCH`).  Because every
@@ -299,9 +336,22 @@ header, exhaustively.
 - A gate whose semantics raise is `TRUSTED_SERVICE_FAILURE`: the verifier
   fails closed.
 
-**Attack tests** (`test_local_checks.py`).
+**Attack tests** (`test_local_checks.py`; the fixture's cells are two units,
+`prod` whose `mul` is an interior position and `sum` whose `add` is a
+boundary position; `split_cells=False` makes the cell one unit with the
+`mul` internal, `wide_units` one unit per stage).
 
 - `test_every_non_source_gate_of_a_sampled_unit_is_checked`.
+- `test_corrupting_an_internal_gate_is_caught_at_the_output_that_reads_it`:
+  a wrong internal `mul` with the consistent `add` is `RELATION_REJECTED` at
+  the `add`, under whole and wide cells; with the `mul` declared, at the
+  `mul`.
+- `test_a_recomputation_disagreeing_with_an_opened_output_is_relation_rejected`:
+  honest inputs, a forged declared output, interior or boundary.
+- `test_evidence_opening_an_internal_gate_instead_of_an_output_is_rejected`:
+  an opening at an internal gate's address, swapped in or appended, is
+  `COVERAGE_MISMATCH`; its value under the output's address is
+  `INVALID_OPENING`.
 - `test_wrong_input_value_is_caught_at_the_boundary_before_any_sampling`: a
   prover that satisfies every gate relation from a wrong input.
 - `test_wrong_claimed_output_with_honest_values_is_caught_at_the_boundary`.
@@ -318,6 +368,15 @@ header, exhaustively.
 
 - Only sampled units are checked; that is the design, and section 5 bounds
   what survives.
+- What a sampled check establishes is that the unit's declared outputs are
+  the function of its opened inputs the kind defines.  It no longer pins the
+  value of every gate: an internal gate has no committed value, so the check
+  is exactly as strong as before on every committed position and says
+  nothing about positions nothing reads.  The error set of a transcript is
+  therefore defined on committed values (section 5): a unit is in error iff
+  some declared output differs from the recomputation, which is what the
+  old gate-by-gate check detected as well (a wrong internal gate either
+  changes an output or is unobservable).
 - Canonicity of values is the gate set's codec (`encode`/`decode`).  A gate
   set whose `decode` accepts two encodings of one value would let a prover
   commit the same value twice; the built-in codec is strict.
@@ -345,8 +404,9 @@ transcript with error set `E*`.
 
 1. `B` is fixed before `J` (section 2).  Given `B`, each replay unit `r` has a
    fixed family `F_r(B)` of error sets `E ⊆ R_r` that some interior of `r`
-   can realize (verification units holding a gate whose relation fails on the
-   committed values).  `∅ ∈ F_r(B)` iff `Out(R_r)` in `B` is what `R_r`
+   can realize (verification units whose declared outputs, committed in the
+   interior or the boundary, are not what their kind computes from the
+   committed values they read).  `∅ ∈ F_r(B)` iff `Out(R_r)` in `B` is what `R_r`
    computes from its inputs in `B` and kappa_W.  If the claimed output is not
    `C(x, W)`, then by induction along the address order some `r` has
    `∅ ∉ F_r(B)`: otherwise every boundary value would be the honest one.
@@ -622,7 +682,7 @@ either role; the root is tiled by replay marks; a marked definition has gates.
 Tiling means every step above a mark is a call into a tiled definition, so no
 gate is left uncovered, no two marks overlap, and a verification mark cannot
 straddle two replay units (it would have to contain a replay mark).
-`_Layout.required` (182-199) independently refuses a unit that reads an
+`_Layout.required` independently refuses a unit that reads an
 address owned by another replay unit that is not a boundary position
 (`INVALID_COMPILED_RESULT`); the compiler makes this unconstructible, because
 a replay unit's declared outputs are exactly what may be read from outside
