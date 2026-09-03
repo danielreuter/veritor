@@ -228,10 +228,13 @@ def test_gate_set_reproduces_golden_vectors(arch: str, dtype: str, name: str) ->
         assert gate.evaluate(args) == d
         assert gate.check(args, d)
         assert not gate.check(args, d ^ 1)
-    # operand words wider than the operand type are outside the relation
+    # operand words wider than the operand type are malformed artifacts: the
+    # gate declares ``arg_widths`` and rejects them before the relation is asked
+    assert gate.arg_widths == (32, *([pipeline.operand_bits] * (2 * pipeline.k)))
     bad = (0, 1 << pipeline.operand_bits, *([0] * (2 * pipeline.k - 1)))
-    assert not gate.check(bad, 0)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(InvalidArtifact):
+        gate.check(bad, 0)
+    with pytest.raises(InvalidArtifact):
         gate.evaluate(bad)
     with pytest.raises(InvalidArtifact):
         make_tensor_core_gate_set("sm_89", "fp16")

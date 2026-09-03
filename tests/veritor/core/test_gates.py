@@ -118,6 +118,38 @@ def test_gate_validates_arity_and_value_widths():
         add.check((1, 2), 16)
 
 
+def test_gate_arg_widths_default_to_the_output_width_and_may_differ_per_argument():
+    """``arg_widths`` is ``(width,) * arity`` unless declared; a declaration is validated per argument and enters the manifest."""
+
+    add = make_word_gate_set(4)["add"]
+    assert add.arg_widths == (4, 4) and "arg_widths" not in add.manifest
+
+    widen = Gate(
+        "widen_add",
+        2,
+        32,
+        replay_cost=1,
+        proof_cost=1,
+        evaluate=lambda args: (args[0] << 16) + args[1],
+        arg_widths=(16, 32),
+    )
+    assert widen.arg_widths == (16, 32)
+    assert widen.manifest["arg_widths"] == [16, 32]
+    assert widen.evaluate((0xFFFF, 1)) == 0xFFFF0001
+    assert widen.check((0xFFFF, 1), 0xFFFF0001)
+    with pytest.raises(InvalidArtifact, match="argument 0 is not a 16-bit value"):
+        widen.evaluate((0x10000, 1))
+    with pytest.raises(InvalidArtifact, match="argument 1 is not a 32-bit value"):
+        widen.evaluate((1, 1 << 32))
+    with pytest.raises(InvalidArtifact, match="output is not a 32-bit value"):
+        widen.check((1, 1), 1 << 32)
+    with pytest.raises(ValueError, match="arg_widths"):
+        Gate("bad", 2, 8, replay_cost=1, proof_cost=1, evaluate=lambda args: 0, arg_widths=(8,))
+    # the same declaration written out explicitly is the same gate: no digest change for single-width sets
+    explicit = Gate("add", 2, 4, replay_cost=add.replay_cost, proof_cost=add.proof_cost, evaluate=lambda args: 0, arg_widths=(4, 4))
+    assert explicit.manifest == add.manifest
+
+
 def test_custom_check_relation_is_used_when_given():
     gate = Gate(
         "lt",
