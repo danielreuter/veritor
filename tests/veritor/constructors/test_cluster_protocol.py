@@ -195,7 +195,7 @@ def test_a_corrupted_interior_value_is_rejected_when_everything_is_sampled(deplo
 def test_a_hand_written_schedule_runs_under_the_same_weight_root(deployment: Deployment) -> None:
     """Another schedule of the same requests: a different circuit, the model's one ``kappa_W``."""
 
-    schedule = Schedule(2, 1, 6, (Join(0, 0, 0, 0), Join(0, 2, 0, 1), Join(1, 0, 0, 2), Join(1, 4, 0, 3)))
+    schedule = Schedule(2, 1, 6, (Join(0, 0, 0, 0, 2), Join(0, 2, 0, 1, 2), Join(1, 0, 0, 2, 4), Join(1, 4, 0, 3, 1)))
     other = Deployment(schedule, 2, 1, 6)
 
     assert other.weights == deployment.weights and other.compiled.digest != deployment.compiled.digest

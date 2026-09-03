@@ -17,12 +17,28 @@ steps' declared outputs, the next token comes out).  The number of occupants
 varies from step to step -- that is continual batching -- and two steps with
 the same tuple of occupant shapes are the same kind.  Steps of one pod are
 chained through the tokens and the KV cache they declare; pods share
-nothing but the weights.
+nothing but the weights.  For a sampling shape each occupant also reads its
+position's public random word, an ``in`` gate inside the step.
+
+Restarts.  A request may join more than once (a pod failed under it): each
+attempt is a fresh prefill and its own chain of steps, and the run's outputs
+for the request are its first ``max(length)`` positions, each taken from the
+attempt that streamed it first (:meth:`Schedule.streamed_before`).  An
+attempt's recomputation of positions already streamed is in the circuit --
+the server executed it -- but declares no circuit output.
 
 Marks.  "Replay decode step ``t`` of pod ``p``" is the unit a server can be
 asked for and explain, so ``step`` is the replay unit (with ``weights``, the
 one unit of source gates); the verification units are the row-sized kinds
 of :class:`~veritor.constructors.lm.ToyLM`.
+
+Restarts.  A request the schedule joins more than once (a pod failed under
+it) is prefilled again by its later attempt; the attempt recomputes the
+positions already streamed -- they stay inside the pod's chain of steps,
+declared like every token -- and the circuit's outputs for the request are
+its positions ``0 .. max(length) - 1``, each taken from the attempt that
+streamed it (:meth:`~veritor.constructors.schedule.Schedule.streamed_before`).
+The aborted attempt's steps stay in the circuit: their tokens were observed.
 """
 
 from __future__ import annotations
@@ -65,6 +81,9 @@ class _Plan:
     requests: tuple[Request, ...]
     schedule: Schedule
     active: dict[int, int] = field(compare=False)
+    """Per request, the positions the run streams (its outputs): the longest of its attempts."""
+    streamed_before: tuple[int, ...] = field(compare=False)
+    """Per join, the positions earlier attempts of its request already streamed."""
     occupancy: dict[tuple[int, int], tuple] = field(compare=False)
 
 
@@ -73,10 +92,11 @@ class ClusterG:
 
     A :class:`veritor.compile.Constructor`: ``digest`` names the class, its
     version and ``(shape, pods, slots, steps)``; ``G(x, a)`` returns the
-    description bytes and the prompt tokens as the ``in`` gates consume them.
+    description bytes and the public inputs -- the prompt tokens and, for a
+    sampling shape, the random words -- as the ``in`` gates consume them.
     """
 
-    VERSION = "1"
+    VERSION = "2"
 
     def __init__(self, shape: LMShape, pods: int, slots: int, steps: int) -> None:
         if not isinstance(shape, LMShape):
@@ -101,6 +121,10 @@ class ClusterG:
         for index, request in enumerate(x):
             if any(token >= self.shape.vocab for token in request.prompt):
                 raise TracerError(f"request {index} has a prompt token outside the vocabulary")
+            try:
+                self.shape.check_randomness(request)
+            except ValueError as error:
+                raise TracerError(f"request {index}: {error}") from error
         return x
 
     def _plan(self, x: object, schedule: object) -> _Plan:
@@ -111,6 +135,7 @@ class ClusterG:
             raise TracerError("the schedule is for another cluster (pods, slots, steps)")
         try:
             active = schedule.active_steps(requests)
+            before = schedule.streamed_before(requests)
         except ScheduleError as error:
             raise TracerError(f"bad schedule: {error}") from error
         for index, request in enumerate(requests):
@@ -119,7 +144,7 @@ class ClusterG:
                     f"request {index} needs {len(request.prompt) + active[index]} positions; "
                     f"the context is {self.shape.context}"
                 )
-        return _Plan(requests, schedule, active, schedule.occupancy(requests))
+        return _Plan(requests, schedule, active, before, schedule.occupancy(requests))
 
     def _decode_advice(self, a: object) -> Schedule:
         if type(a) is not bytes:
@@ -132,22 +157,33 @@ class ClusterG:
     # -- layouts ---------------------------------------------------------------------
 
     def output_layout(self, x: object, schedule: Schedule) -> tuple[tuple[int, int], ...]:
-        """``(request, generated position)`` of every circuit output, in output order."""
+        """``(request, generated position)`` of every circuit output, in output order.
+
+        A request streams ``max(length)`` positions over its attempts; each
+        position is the output of the one attempt that streamed it.
+        """
 
         plan = self._plan(x, schedule)
         return tuple((r, g) for r in range(len(plan.requests)) for g in range(plan.active[r]))
 
     def flatten_inputs(self, x: object, schedule: Schedule) -> tuple[int, ...]:
-        """The prompt tokens in ``in``-gate address order: by ``(pod, step)``, then slot."""
+        """The public inputs in ``in``-gate address order: by ``(pod, step)``, then slot.
+
+        A prefill occupant contributes its prompt tokens (then, for a sampling
+        shape, the random word of position ``0``); a decode occupant at
+        position ``g`` contributes the random word of position ``g``.
+        """
 
         plan = self._plan(x, schedule)
-        return tuple(
-            token
-            for key in sorted(plan.occupancy)
-            for occupant in plan.occupancy[key]
-            if occupant.generated == 0
-            for token in plan.requests[occupant.request].prompt
-        )
+        values: list[int] = []
+        for key in sorted(plan.occupancy):
+            for occupant in plan.occupancy[key]:
+                request = plan.requests[occupant.request]
+                if occupant.generated == 0:
+                    values.extend(request.prompt)
+                if self.shape.sampling:
+                    values.append(request.randomness[occupant.generated])
+        return tuple(values)
 
     # -- kinds -----------------------------------------------------------------------
 
@@ -186,7 +222,7 @@ class ClusterG:
         """The run: the weights, then every step of every pod in order, wired through the caches."""
 
         shape, layers, d = self.shape, self.shape.layers, self.shape.d_model
-        requests, occupancy = plan.requests, plan.occupancy
+        requests, occupancy, before = plan.requests, plan.occupancy, plan.streamed_before
 
         @self.lm.tracer.definition(input_count=0)
         def root(_v: Wires) -> object:
@@ -224,8 +260,13 @@ class ClusterG:
                         start = 2 * layer * positions * d
                         slot.keys[layer].append(block[start : start + positions * d])
                         slot.values[layer].append(block[start + positions * d : start + 2 * positions * d])
-                    slot.token = block[-1]
-                    tokens[(occupant.request, occupant.generated)] = slot.token
+                    token = block[-1]
+                    assert isinstance(token, Wire)
+                    slot.token = token
+                    if occupant.generated >= before[occupant.join]:  # streamed by this attempt
+                        key = (occupant.request, occupant.generated)
+                        assert key not in tokens, "a position is streamed by one attempt only"
+                        tokens[key] = token
             return [tokens[key] for key in self.output_layout(requests, plan.schedule)]
 
         return root

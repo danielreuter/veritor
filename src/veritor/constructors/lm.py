@@ -7,25 +7,38 @@ matrix products are modular dot products, the softmax is the polynomial
 attention output is shifted right by a constant so its magnitude stays
 tame.  Nothing here approximates a real model; what it keeps is the *shape*
 of decoding -- token embedding, per-layer attention over a KV cache that is
-the cross-step state, an MLP, an LM head with an argmax -- so that a cluster
-running it has the structure a verifier has to deal with.
+the cross-step state, an MLP, an LM head with an argmax or a sampler -- so
+that a cluster running it has the structure a verifier has to deal with.
 
 Three things live here:
 
 * :class:`LMShape` and :class:`Parameters`: the model's dimensions and its
   weights, in the exact address order of the ``weight`` gates
   (:meth:`Parameters.flatten`).  Constants the circuit needs (the token
-  table ``0, 1, ..., vocab - 1`` for the one-hot and the argmax, and the
-  shift) are weights too: the grammar has no immediates, and model constants
-  pinned under the weight commitment are exactly what they are.
+  table ``0, 1, ..., vocab - 1`` for the one-hot and the argmax, the
+  shift, and the sampler's shift and bit count) are weights too: the
+  grammar has no immediates, and model constants pinned under the weight
+  commitment are exactly what they are.
 * :func:`reference_generate`: the semantic oracle, written the ordinary
-  sequential way, one request at a time.  A cluster circuit's outputs must
-  equal it for every schedule.
+  sequential way, one request at a time (:class:`Decoder` is its
+  incremental form, what a simulated server runs).  A cluster circuit's
+  outputs must equal it for every schedule.
 * :class:`ToyLM`: the traced definitions (the *kinds*) a cluster run is
   assembled from, with their marks.  ``dot_k``, ``onehot``,
-  ``attend_head_c``, ``argmax`` and the ``add``/``square`` cells are the
-  verification units; the replay units (``step``, ``weights``) belong to
-  :mod:`veritor.constructors.cluster`.
+  ``attend_head_c``, ``argmax`` (or ``sample``) and the ``add``/``square``
+  cells are the verification units; the replay units (``step``,
+  ``weights``) belong to :mod:`veritor.constructors.cluster`.
+
+Sampling.  With :attr:`LMShape.sampling` the LM head draws the token
+instead of taking the argmax, from a public random word ``r`` per generated
+position (an ``in`` gate: the server publishes its randomness, so it is
+part of ``x``).  The sampler is division-free and stays inside the word:
+scores ``s_j = l_j >> score_shift`` have ``score_bits`` bits, weights
+``w_j = s_j * s_j + 1`` (never zero, so the CDF is strictly increasing),
+``cdf_j`` their prefix sums, ``t = (r * total) >> random_bits`` with ``r <
+2**random_bits``, and the token is the first ``j`` with ``cdf_j > t``,
+counted as ``sum_j [cdf_j < t + 1]``.  The bit budget ``vocab_bits + 2 *
+score_bits + random_bits <= width`` keeps every value below ``2**width``.
 """
 
 from __future__ import annotations
@@ -52,6 +65,9 @@ class LMShape:
     is the longest sequence (prompt plus generated tokens) a request may
     occupy; ``width`` is the word size of every value.  Token ids are words,
     so ``vocab <= 2**width``; the argmax needs at least two candidates.
+    With ``sampling`` the LM head samples from a public random word per
+    generated position instead of taking the argmax (see the module
+    docstring); the sampler's bit budget needs ``width >= vocab_bits + 3``.
     """
 
     vocab: int
@@ -60,18 +76,23 @@ class LMShape:
     layers: int
     context: int
     width: int
+    sampling: bool = False
 
     def __post_init__(self) -> None:
         for name in ("vocab", "d_model", "heads", "layers", "context", "width"):
             value = getattr(self, name)
             if type(value) is not int or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
+        if type(self.sampling) is not bool:
+            raise ValueError("sampling must be a bool")
         if self.vocab < 2:
             raise ValueError("vocab must be at least 2")
         if self.d_model % self.heads:
             raise ValueError("d_model must be a multiple of heads")
         if self.vocab > 1 << self.width:
             raise ValueError("token ids must be words: vocab <= 2**width")
+        if self.sampling and self.width < self.vocab_bits + 3:
+            raise ValueError("sampling needs width >= vocab_bits + 3")
 
     @property
     def d_head(self) -> int:
@@ -82,20 +103,61 @@ class LMShape:
         return 2 * self.d_model
 
     @property
+    def vocab_bits(self) -> int:
+        """Bits needed for a token id: ``ceil(log2 vocab)``."""
+
+        return (self.vocab - 1).bit_length()
+
+    @property
+    def score_bits(self) -> int:
+        """Bits of a sampler score ``s_j = l_j >> score_shift``."""
+
+        return max(1, (self.width - self.vocab_bits) // 3)
+
+    @property
+    def score_shift(self) -> int:
+        return self.width - self.score_bits
+
+    @property
+    def random_bits(self) -> int:
+        """Bits of the public random word ``r`` a sampled position consumes."""
+
+        return self.width - self.vocab_bits - 2 * self.score_bits
+
+    @property
+    def sampler_constants(self) -> tuple[int, ...]:
+        """The sampler's ``weight`` gates: ``score_shift`` and ``random_bits``; empty for the argmax."""
+
+        return (self.score_shift, self.random_bits) if self.sampling else ()
+
+    @property
     def weight_count(self) -> int:
-        """The number of ``weight`` gates: every matrix, the constant table and the shift."""
+        """The number of ``weight`` gates: every matrix, the constant table, the shift, the sampler's."""
 
         d, hidden, vocab = self.d_model, self.hidden, self.vocab
-        return vocab * d + self.layers * (4 * d * d + 2 * d * hidden) + d * vocab + vocab + 1
+        matrices = vocab * d + self.layers * (4 * d * d + 2 * d * hidden) + d * vocab
+        return matrices + vocab + 1 + len(self.sampler_constants)
 
     def state_size(self, positions: int) -> int:
         """The KV-cache entries ``positions`` new positions add: ``k`` and ``v`` per layer."""
 
         return 2 * self.layers * positions * self.d_model
 
+    def check_randomness(self, request: Request) -> None:
+        """A sampled model needs a ``random_bits``-bit word per generated position; the argmax none."""
+
+        if not self.sampling:
+            if request.randomness:
+                raise ValueError("an argmax model takes no randomness")
+            return
+        if len(request.randomness) != request.max_new:
+            raise ValueError("a sampled request needs one random word per generated position")
+        if any(word >= 1 << self.random_bits for word in request.randomness):
+            raise ValueError(f"random words must have at most {self.random_bits} bits")
+
     @property
     def manifest(self) -> dict[str, JSONValue]:
-        return {
+        manifest: dict[str, JSONValue] = {
             "context": self.context,
             "d_model": self.d_model,
             "heads": self.heads,
@@ -103,6 +165,9 @@ class LMShape:
             "vocab": self.vocab,
             "width": self.width,
         }
+        if self.sampling:  # argmax shapes keep the manifest (and the digests) they had
+            manifest["sampling"] = True
+        return manifest
 
 
 def _check_matrix(value: object, rows: int, columns: int, width: int, name: str) -> Matrix:
@@ -138,9 +203,10 @@ class Parameters:
     ``w_q, w_k, w_v, w_o`` (``d_model x d_model``), ``w_1``
     (``d_model x hidden``), ``w_2`` (``hidden x d_model``), then
     ``unembedding`` (``d_model x vocab``), the constant table
-    ``0, 1, ..., vocab - 1`` and ``shift``, every matrix row-major.  The
-    constants are fixed by the shape and not stored; ``shift`` is the amount
-    each attention output is shifted right (``0`` leaves it alone).
+    ``0, 1, ..., vocab - 1``, ``shift`` and, for a sampling shape, the
+    sampler's ``score_shift`` and ``random_bits``, every matrix row-major.
+    The constants are fixed by the shape and not stored; ``shift`` is the
+    amount each attention output is shifted right (``0`` leaves it alone).
     """
 
     shape: LMShape
@@ -184,6 +250,7 @@ class Parameters:
         flat = [item for matrix in matrices for row in matrix for item in row]
         flat.extend(self.constants)
         flat.append(self.shift)
+        flat.extend(self.shape.sampler_constants)
         assert len(flat) == self.shape.weight_count
         return tuple(flat)
 
@@ -221,8 +288,47 @@ def _matvec(x: Sequence[int], matrix: Matrix, mask: int) -> list[int]:
     return [sum(x[i] * matrix[i][o] for i in range(len(x))) & mask for o in range(len(matrix[0]))]
 
 
-class _Decoder:
-    """One request's sequential decoder: a KV cache and the forward pass of one token."""
+def argmax_token(logits: Sequence[int]) -> int:
+    """The first maximum of the logits, as the ``argmax`` unit computes it."""
+
+    best, index = logits[0], 0
+    for candidate in range(1, len(logits)):
+        if best < logits[candidate]:  # ties keep the first maximum
+            best, index = logits[candidate], candidate
+    return index
+
+
+def sample_token(shape: LMShape, logits: Sequence[int], r: int) -> int:
+    """The token the ``sample`` unit draws from ``logits`` with the public word ``r``.
+
+    Scores are the logits' top ``score_bits``, weights their squares plus
+    one, the threshold ``(r * total) >> random_bits`` lies in
+    ``[0, total)``, and the token is the number of CDF entries at most the
+    threshold, i.e. the first ``j`` with ``cdf_j > t``.  No value exceeds
+    ``2**width``, so the modular circuit computes exactly this.
+    """
+
+    if not 0 <= r < 1 << shape.random_bits:
+        raise ValueError(f"r must be a {shape.random_bits}-bit word")
+    weights = [(logit >> shape.score_shift) ** 2 + 1 for logit in logits]
+    total = sum(weights)
+    threshold = (r * total) >> shape.random_bits
+    assert total < 1 << shape.width and threshold < total
+    cdf, count = 0, 0
+    for weight in weights:
+        cdf += weight
+        count += cdf < threshold + 1
+    return count
+
+
+class Decoder:
+    """One request's sequential decoder: a KV cache and the forward pass of one token.
+
+    This is the reference in incremental form -- what a server runs, one
+    token at a time -- so a simulated cluster can stop a request at an
+    end-of-sequence token or restart it after a failure and know exactly
+    what its circuit will produce.
+    """
 
     def __init__(self, parameters: Parameters) -> None:
         self.p = parameters
@@ -231,8 +337,20 @@ class _Decoder:
         self.keys: list[list[list[int]]] = [[] for _ in range(self.shape.layers)]
         self.values: list[list[list[int]]] = [[] for _ in range(self.shape.layers)]
 
-    def forward(self, token: int) -> int:
-        """Feed ``token`` at the next position; return the argmax of its logits."""
+    def forward(self, token: int, r: int | None = None) -> int:
+        """Feed ``token`` at the next position; return the next token (argmax, or sampled with ``r``)."""
+
+        logits = self.logits(token)
+        if not self.shape.sampling:
+            if r is not None:
+                raise ValueError("an argmax model takes no randomness")
+            return argmax_token(logits)
+        if r is None:
+            raise ValueError("a sampling model needs a random word")
+        return sample_token(self.shape, logits, r)
+
+    def logits(self, token: int) -> list[int]:
+        """Feed ``token`` at the next position; return the logits of the position after it."""
 
         shape, p, mask = self.shape, self.p, self.mask
         dh = shape.d_head
@@ -255,12 +373,7 @@ class _Decoder:
             x = [(a + b) & mask for a, b in zip(x, _matvec(attention, layer.w_o, mask))]
             hidden = [(h * h) & mask for h in _matvec(x, layer.w_1, mask)]
             x = [(a + b) & mask for a, b in zip(x, _matvec(hidden, layer.w_2, mask))]
-        logits = _matvec(x, p.unembedding, mask)
-        best, index = logits[0], 0
-        for candidate in range(1, shape.vocab):
-            if best < logits[candidate]:  # ties keep the first maximum
-                best, index = logits[candidate], candidate
-        return index
+        return _matvec(x, p.unembedding, mask)
 
 
 def reference_generate(
@@ -270,9 +383,10 @@ def reference_generate(
 
     The prompt is fed position by position (each attending to itself and the
     positions before it, exactly the causal prefill), the last prompt
-    position's argmax is the first generated token, and every generated token
-    is fed back for the next, ``max_new`` tokens in all.  A schedule that cuts
-    a request short produces a prefix of this.
+    position's decision (argmax, or a sample with the request's first random
+    word) is the first generated token, and every generated token is fed
+    back for the next, ``max_new`` tokens in all.  A schedule that cuts a
+    request short produces a prefix of this.
     """
 
     if not isinstance(parameters, Parameters) or parameters.shape != shape:
@@ -283,13 +397,16 @@ def reference_generate(
             raise TypeError("requests must be Request instances")
         if any(token >= shape.vocab for token in request.prompt):
             raise ValueError("prompt tokens must be below vocab")
-        decoder = _Decoder(parameters)
+        shape.check_randomness(request)
+        decoder = Decoder(parameters)
+        randomness = request.randomness if shape.sampling else (None,) * request.max_new
         token = 0
-        for prompt_token in request.prompt:
-            token = decoder.forward(prompt_token)
+        for prompt_token in request.prompt[:-1]:
+            decoder.logits(prompt_token)
+        token = decoder.forward(request.prompt[-1], randomness[0])
         tokens = [token]
-        for _ in range(request.max_new - 1):
-            token = decoder.forward(token)
+        for position in range(1, request.max_new):
+            token = decoder.forward(token, randomness[position])
             tokens.append(token)
         generated.append(tuple(tokens))
     return tuple(generated)
@@ -348,6 +465,8 @@ class _WeightPorts:
     unembedding: Wires
     constants: Wires
     shift: Wire
+    sampler: Wires | None
+    """``score_shift, random_bits`` for a sampling shape."""
 
 
 class ToyLM:
@@ -361,9 +480,11 @@ class ToyLM:
     * ``attend_head_c`` -- one head over ``c`` positions: ``c`` scores, their
       squares, the mix of the values and the shift.  Its dots are the same
       body as ``dot_k`` without the mark, so no mark nests in another;
-    * ``argmax`` -- the chain over ``vocab`` logits;
+    * ``argmax`` -- the chain over ``vocab`` logits; or, for a sampling
+      shape, ``sample`` -- the CDF over the squared scores and the count of
+      entries below the threshold drawn from the public random word;
     * ``add`` and ``square`` cells -- the residual sums and the MLP squares;
-    * the tracer's one-gate ``in`` cell for prompt tokens.
+    * the tracer's one-gate ``in`` cell for prompt tokens and random words.
 
     Unmarked kinds compose them: ``matvec_{k,m}`` (``m`` dots), ``embed_row``
     (one-hot then matvec), ``prefill_n`` (``n`` prompt positions with causal
@@ -378,7 +499,7 @@ class ToyLM:
         self.tracer = Tracer(make_isa_gate_set(shape.width))
         gate = self.tracer.gate
         add, mul, sub, lt, eq, shr = (gate(name) for name in ("add", "mul", "sub", "lt", "eq", "shr"))
-        self.add, self.mul, self.sub, self.lt = add, mul, sub, lt
+        self.add, self.mul, self.sub, self.lt, self.shr = add, mul, sub, lt, shr
         define = self.tracer.definition
         self.mul_pair = define(input_count=2, key="mul")(lambda v: mul(v[0], v[1]))
         self.add_pair = define(input_count=2, key="add")(lambda v: add(v[0], v[1]))
@@ -414,9 +535,10 @@ class ToyLM:
         )
         unembedding = take(d * vocab)
         constants = take(vocab)
-        shift = v[cursor]
-        assert cursor + 1 == shape.weight_count
-        return _WeightPorts(embedding, layers, unembedding, constants, shift)
+        shift = take(1)[0]
+        sampler = take(2) if shape.sampling else None
+        assert cursor == shape.weight_count
+        return _WeightPorts(embedding, layers, unembedding, constants, shift, sampler)
 
     # -- verification units ----------------------------------------------------------
 
@@ -495,6 +617,54 @@ class ToyLM:
             return index
 
         return argmax
+
+    def sample(self) -> TracedDefinition:
+        """A token drawn from ``vocab`` logits with the public word ``r``: see the module docstring.
+
+        Ports: the logits, ``r``, the constant ``1``, ``score_shift`` and
+        ``random_bits``.  Every value stays below ``2**width`` by the shape's
+        bit budget, so the modular gates compute :func:`sample_token` exactly.
+        """
+
+        vocab = self.shape.vocab
+        add, mul, lt, shr = self.add, self.mul, self.lt, self.shr
+
+        @self.tracer.definition(input_count=vocab + 4, key="sample", role=VERIFICATION)
+        def sample(v: Wires) -> object:
+            logits, r, one, score_shift, random_bits = v[:vocab], v[vocab], v[vocab + 1], v[vocab + 2], v[vocab + 3]
+            weights = []
+            for logit in logits:
+                score = shr(logit, score_shift)
+                weights.append(add(mul(score, score), one))
+            cdf = [weights[0]]
+            for weight in weights[1:]:
+                cdf.append(add(cdf[-1], weight))
+            bound = add(shr(mul(r, cdf[-1]), random_bits), one)  # t + 1 with t = (r * total) >> random_bits
+            below = [lt(entry, bound) for entry in cdf]  # cdf_j <= t
+            index = below[0]
+            for flag in below[1:]:
+                index = add(index, flag)
+            return index
+
+        return sample
+
+    def head(self, logits: Wire | Wires, ports: _WeightPorts, r: Wire | None) -> Wire | Wires:
+        """The LM head's decision: the argmax, or a sample with the position's random word."""
+
+        if not self.shape.sampling:
+            assert r is None
+            return self.argmax()(logits, ports.constants)
+        assert r is not None and ports.sampler is not None
+        return self.sample()(logits, r, ports.constants[1], ports.sampler)
+
+    def randomness(self) -> Wire | None:
+        """The ``in`` gate of a position's public random word, for a sampling shape."""
+
+        if not self.shape.sampling:
+            return None
+        wire = self.tracer.inputs(1)[0]
+        assert isinstance(wire, Wire)
+        return wire
 
     # -- unmarked composites -------------------------------------------------------
 
@@ -582,7 +752,9 @@ class ToyLM:
 
         Outputs: per layer ``K`` then ``V`` for the ``n`` positions
         (``state_size(n)`` values, position-major), then the first generated
-        token, the argmax of the last position's logits.
+        token, the head's decision on the last position's logits.  For a
+        sampling shape the position's random word is one more ``in`` gate,
+        after the prompt tokens.
         """
 
         if type(n) is not int or n <= 0:
@@ -594,10 +766,11 @@ class ToyLM:
         def prefill(v: Wires) -> object:
             ports = self.ports(v)
             tokens = self.tracer.inputs(n)
+            r = self.randomness()
             x = self.tracer.repeat(n, self.embed_row(), tokens[0].by(1), ports.constants, ports.embedding)
             state, x = self.forward(ports, x, n, [None] * shape.layers)
             logits = self.matvec(d, vocab)(x[(n - 1) * d : n * d], ports.unembedding)
-            return [*state, self.argmax()(logits, ports.constants)]
+            return [*state, self.head(logits, ports, r)]
 
         return prefill
 
@@ -606,7 +779,8 @@ class ToyLM:
         the cached ``K`` and ``V`` of the ``c - 1`` earlier positions.
 
         Outputs: per layer the new ``k`` then ``v`` (``state_size(1)`` values), then
-        the next token.
+        the next token.  For a sampling shape the position's random word is
+        an ``in`` gate inside the step.
         """
 
         if type(c) is not int or c < 2:
@@ -623,10 +797,11 @@ class ToyLM:
             for layer in range(shape.layers):
                 start = weights + 1 + layer * 2 * cached
                 caches.append((v[start : start + cached], v[start + cached : start + 2 * cached]))
+            r = self.randomness()
             x = wires(self.embed_row()(token, ports.constants, ports.embedding))
             state, x = self.forward(ports, x, 1, caches)
             logits = self.matvec(d, vocab)(x, ports.unembedding)
-            return [*state, self.argmax()(logits, ports.constants)]
+            return [*state, self.head(logits, ports, r)]
 
         return decode
 
@@ -639,13 +814,16 @@ class ToyLM:
 
 
 __all__ = [
+    "Decoder",
     "LMShape",
     "LayerParameters",
     "Matrix",
     "Parameters",
     "ToyLM",
+    "argmax_token",
     "concat",
     "random_parameters",
     "reference_generate",
+    "sample_token",
     "wires",
 ]
