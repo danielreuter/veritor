@@ -15,14 +15,13 @@ jobs:
           python-version-file: ".python-version"
           enable-cache: true
       - run: uv sync --locked
+      # The default run skips tests marked ``slow`` (tests/conftest.py); they
+      # need the SP1 toolchain or minutes of CPU and are run by hand with -m slow.
       - run: uv run pytest -q
 
-  # ruff and mypy are currently red across the package and will be fixed in a
-  # separate cleanup; until then they report but do not block the build.
   lint:
-    name: ruff (advisory)
+    name: ruff
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -30,12 +29,11 @@ jobs:
           python-version-file: ".python-version"
           enable-cache: true
       - run: uv sync --locked
-      - run: uv run ruff check src/veritor tests/veritor
+      - run: uv run ruff check src tests benchmarks zk
 
   typecheck:
-    name: mypy (advisory)
+    name: mypy
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
