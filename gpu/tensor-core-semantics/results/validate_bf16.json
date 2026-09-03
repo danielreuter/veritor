@@ -1,0 +1,206 @@
+{
+ "dtype": "bf16",
+ "pipeline": "ada_bf16_m16n8k16",
+ "families": {
+  "randn_zero_acc": {
+   "tiles": 100000,
+   "elements": 12800000,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.2503516674041748,
+   "model_seconds": 26.55393695831299,
+   "first_mismatches": [],
+   "hawkeye": {
+    "simulator": "Ampere_simulator",
+    "tiles": 100000,
+    "elements": 12800000,
+    "mismatches_vs_gpu": 0,
+    "seconds": 715.4057965278625,
+    "first_mismatches": []
+   }
+  },
+  "randn_random_acc": {
+   "tiles": 25000,
+   "elements": 3200000,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.029015302658081055,
+   "model_seconds": 9.02401089668274,
+   "first_mismatches": []
+  },
+  "uniform_bits": {
+   "tiles": 25000,
+   "elements": 3200000,
+   "mismatches_vs_model": 352221,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.009572744369506836,
+   "model_seconds": 9.14399766921997,
+   "first_mismatches": [
+    {
+     "acc": "b07e8ecc",
+     "a": "44380e42c0f160f0fb492db220eda741544eb84c1ba72f43a68387b922cd16b2",
+     "b": "358dfea91fc467f69c454637a0fc8e32ff20b9bc28cec926530b332c5b30ef0f",
+     "d": "7f800000",
+     "model": "ff800000"
+    },
+    {
+     "acc": "299c259e",
+     "a": "4636ebfff3efcfdc4ef07c48910857c9f0e1c91db4ca58f97ea0c4dd5c7420bf",
+     "b": "05d1994a6b3f3798de29da051c0f20f6f0bca5320994c3e0102b7c2e7a16171b",
+     "d": "ff800000",
+     "model": "7f800000"
+    },
+    {
+     "acc": "f289147d",
+     "a": "4636ebfff3efcfdc4ef07c48910857c9f0e1c91db4ca58f97ea0c4dd5c7420bf",
+     "b": "da64906773e0d9ef60a355934779890a85429c2009021ffc6e485fc703101446",
+     "d": "ff800000",
+     "model": "7f800000"
+    },
+    {
+     "acc": "c4384e12",
+     "a": "c7ad8b24ded9e042ddeda821b2caa55f620d36620fc9b19b160ee4352db2db57",
+     "b": "79753c3d7e4bd1336d3e78c8e120fa74a7b3f0256e4cf6e38402ff30f516c870",
+     "d": "ff800000",
+     "model": "7f800000"
+    },
+    {
+     "acc": "80962133",
+     "a": "980552570e49f9ee59b33fa4f6ed57a9cc0e2bf0f16dd6f15bb30f1c3ba8d024",
+     "b": "79753c3d7e4bd1336d3e78c8e120fa74a7b3f0256e4cf6e38402ff30f516c870",
+     "d": "7f800000",
+     "model": "ff800000"
+    }
+   ]
+  },
+  "subnormal": {
+   "tiles": 12500,
+   "elements": 1600000,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.003640413284301758,
+   "model_seconds": 5.7383153438568115,
+   "first_mismatches": []
+  },
+  "cancellation": {
+   "tiles": 12500,
+   "elements": 1600000,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.003833770751953125,
+   "model_seconds": 5.885200023651123,
+   "first_mismatches": []
+  },
+  "mixed_magnitude": {
+   "tiles": 12500,
+   "elements": 1600000,
+   "mismatches_vs_model": 176747,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.0038411617279052734,
+   "model_seconds": 5.740119457244873,
+   "first_mismatches": [
+    {
+     "acc": "396f464d",
+     "a": "a6edb4fd3c6be4e2dd9a15e21f3314780220305fd09d4ebeddf0dcef24a84d77",
+     "b": "daa6f5e05a1a48406bc4ab5fa605a81b8b4257b1443c38cdec26a6d0dd5b7d6c",
+     "d": "ff800000",
+     "model": "7f800000"
+    },
+    {
+     "acc": "34e4abdc",
+     "a": "cd41cb9831c2734f7bfef3251aa69d4208e905f373cb61296719cca99daa0657",
+     "b": "fa796889103693046d6abbd314fdb32c9d694dfbf8347665ec9a148c2c49c1fb",
+     "d": "7f800000",
+     "model": "ff800000"
+    },
+    {
+     "acc": "c7a2e45f",
+     "a": "f28378b218d012df9a93c66ba3ce6f96b27c2f3cbc696a4d916e0f3bbd9ebbb6",
+     "b": "a157ed354d3946578fc2115789a8287434e51e2a104c7ee7a1c56521d238a3de",
+     "d": "ff800000",
+     "model": "7f800000"
+    },
+    {
+     "acc": "d674d0b2",
+     "a": "babc66c326c42b60dbabb49660da4ce32d1a6b7146301d14dd9482fd72e585fc",
+     "b": "5f637f65e75aa1b99c0e20930df6aa298c1fb1ec90a1a44888d527eaf62497c9",
+     "d": "7f800000",
+     "model": "ff800000"
+    },
+    {
+     "acc": "51cd5986",
+     "a": "6fd7e6092789895a34267977c9793a25820ddbd492fe145448b173aa75280754",
+     "b": "8af2635a710e0edb270d03971294e27cb9e4cbf2d1e499517d49e1f872fcd1c7",
+     "d": "ff800000",
+     "model": "7f800000"
+    }
+   ]
+  },
+  "near_overflow": {
+   "tiles": 6250,
+   "elements": 800000,
+   "mismatches_vs_model": 199965,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.002389192581176758,
+   "model_seconds": 4.1260926723480225,
+   "first_mismatches": [
+    {
+     "acc": "fd6c3910",
+     "a": "7c057f08fb76fd16ff247ac67d7efc2efb7c7c88fe30ff44fd68fc20fb4a7ad7",
+     "b": "7bf4fdc8ff027cd47b05fb5a7d5a7d9a7a957c78fc2dff0bff097e8dfc95fd30",
+     "d": "ff800000",
+     "model": "7f800000"
+    },
+    {
+     "acc": "fee1c3ac",
+     "a": "ff597c7b7d34fe97fc187ce37dcdfc9c7f6d7dcdfba17f5dfd31fdf4fedefaf8",
+     "b": "7b53fbdf7be4fca6fa847d5dfb46ff0ffc0e7e2f7c83fe7b7cea7de37bc1fc40",
+     "d": "7f800000",
+     "model": "ff800000"
+    },
+    {
+     "acc": "7daf7a95",
+     "a": "ff597c7b7d34fe97fc187ce37dcdfc9c7f6d7dcdfba17f5dfd31fdf4fedefaf8",
+     "b": "fd11faa2fca0ff2afc59fa857e77fd5bfba87c1dfd567b3e7aff7ce87f387d1d",
+     "d": "7f800000",
+     "model": "ff800000"
+    },
+    {
+     "acc": "7ef814d0",
+     "a": "ff597c7b7d34fe97fc187ce37dcdfc9c7f6d7dcdfba17f5dfd31fdf4fedefaf8",
+     "b": "7b60fef9fc04fda2fda97e117bdefbb5ff097f157e727dfb7e9afa887e08fcfe",
+     "d": "7f800000",
+     "model": "ff800000"
+    },
+    {
+     "acc": "fe5e3c94",
+     "a": "7d307cdc7e7cfcce7f0efaf4fb417e86fe7b7bddfcb7fec97eb0fc8efc0a7c0b",
+     "b": "7b60fef9fc04fda2fda97e117bdefbb5ff097f157e727dfb7e9afa887e08fcfe",
+     "d": "ff800000",
+     "model": "7f800000"
+    }
+   ]
+  },
+  "signed_zero": {
+   "tiles": 256,
+   "elements": 32768,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.0009088516235351562,
+   "model_seconds": 2.453378915786743,
+   "first_mismatches": []
+  },
+  "tiny_acc_zero_products": {
+   "tiles": 512,
+   "elements": 65536,
+   "mismatches_vs_model": 0,
+   "model_domain_errors": 0,
+   "gpu_seconds": 0.0006639957427978516,
+   "model_seconds": 2.4023048877716064,
+   "first_mismatches": []
+  }
+ },
+ "seconds": 788.7148687839508,
+ "total_elements": 24898304,
+ "total_mismatches_vs_model": 728933
+}

@@ -51,6 +51,7 @@ from .indexed import (
     position_domain,
 )
 from .limits import CompilationLimits, VerificationLimits
+from .ml_gates import make_ml_gate_set
 from .policy import (
     ProbabilityInput,
     VerificationPolicy,
@@ -111,6 +112,7 @@ __all__ = [
     "identity_digest",
     "iter_domain",
     "make_isa_gate_set",
+    "make_ml_gate_set",
     "make_word_gate_set",
     "parse_probability",
     "position",
@@ -122,3 +124,20 @@ __all__ = [
     "validate_marks",
     "value_byte_length",
 ]
+from .silicon import (
+    ADA_BF16_M16N8K16,
+    ADA_E4M3_M16N8K32,
+    AMPERE_BF16_M16N8K16,
+    HAWKEYE_AMPERE_GROUPSUM_E4M3_V0,
+    HOPPER_BF16_M16N8K16,
+    HOPPER_E4M3_K32,
+    PIPELINES,
+    Pipeline,
+    Term,
+    group_sum,
+    make_tensor_core_gate_set,
+    tc_dot,
+    tc_dot_chain,
+)
+
+__all__ += ["ADA_BF16_M16N8K16", "ADA_E4M3_M16N8K32", "AMPERE_BF16_M16N8K16", "HAWKEYE_AMPERE_GROUPSUM_E4M3_V0", "HOPPER_BF16_M16N8K16", "HOPPER_E4M3_K32", "PIPELINES", "Pipeline", "Term", "group_sum", "make_tensor_core_gate_set", "tc_dot", "tc_dot_chain"]

@@ -13,7 +13,7 @@ import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
-from veritor.core import IndexedDomain, Position, VerificationLimits
+from veritor.core import IndexedDomain, VerificationLimits
 
 from .messages import Commitment, Opening, ProtocolError
 
@@ -57,7 +57,7 @@ class CommitmentDomain:
 
     binding: bytes
     owner: int
-    positions: IndexedDomain[Position]
+    positions: IndexedDomain[int]
     domain_id: bytes = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -156,7 +156,7 @@ class MerkleTree:
         return Commitment(root, self._domain.count)
 
     def open(self, position: int) -> Opening:
-        rank = self._domain.positions.rank(Position(position))
+        rank = self._domain.positions.rank(position)
         path: list[bytes] = []
         cursor = rank
         for level in self._levels[:-1]:
@@ -183,7 +183,7 @@ def verify_opening(
     if not validate_commitment(domain, commitment):
         return False
     try:
-        rank = domain.positions.rank(Position(opening.position))
+        rank = domain.positions.rank(opening.position)
     except KeyError:
         return False
     if len(opening.path) != merkle_depth(domain.count):

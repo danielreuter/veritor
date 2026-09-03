@@ -63,6 +63,10 @@ class RequestsG:
                     f"request {index} needs {len(request.prompt) + request.max_new} positions; "
                     f"the context is {self.shape.context}"
                 )
+            try:
+                self.shape.check_randomness(request)
+            except ValueError as error:
+                raise TracerError(f"request {index}: {error}") from error
         return x
 
     # -- layouts ---------------------------------------------------------------------
@@ -74,9 +78,12 @@ class RequestsG:
         return tuple((r, g) for r, request in enumerate(requests) for g in range(request.max_new))
 
     def flatten_inputs(self, x: object) -> tuple[int, ...]:
-        """The prompt tokens in ``in``-gate address order: request by request."""
+        """The public inputs in ``in``-gate address order: request by request, the prompt
+        tokens then (for a sampling shape) the random word of every generated position."""
 
-        return tuple(token for request in self.requests(x) for token in request.prompt)
+        return tuple(
+            value for request in self.requests(x) for value in (*request.prompt, *request.randomness)
+        )
 
     # -- kinds -----------------------------------------------------------------------
 

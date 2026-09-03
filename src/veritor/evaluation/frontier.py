@@ -30,10 +30,11 @@ from __future__ import annotations
 import json
 import math
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from fractions import Fraction
 from pathlib import Path
+from typing import cast
 
 from veritor.analysis import BoundOptions, CostParameters, PolicyGrid, bound, cost
 from veritor.core import KindTable, VerificationPolicy, exact_fraction
@@ -131,8 +132,8 @@ class Point:
             q=Fraction(str(record["q"])),
             s=Fraction(str(record["s"])),
             eta=Fraction(str(record["eta"])),
-            bits=float(record["bits"]),  # type: ignore[arg-type]
-            out_bits=int(record["out_bits"]),  # type: ignore[arg-type]
+            bits=float(cast(float, record["bits"])),
+            out_bits=int(cast(int, record["out_bits"])),
             overhead=Fraction(str(record["overhead"])),
             work=Fraction(str(record["work"])),
             seconds=float(record["seconds"]),  # type: ignore[arg-type]
@@ -238,16 +239,38 @@ def certify(
 # -- persistence and reporting --------------------------------------------------------
 
 
-def save(points: Sequence[Point], shape: ServingShape, path: Path) -> None:
-    path.write_text(
-        json.dumps({"shape": shape.manifest, "points": [point.to_json() for point in points]}, indent=1)
-    )
+def save(
+    points: Sequence[Point], shape: ServingShape, path: Path, manifest: Mapping[str, object] | None = None
+) -> None:
+    """Write the points and the shape, and the run's ``manifest`` when there is one.
+
+    The manifest (see :func:`veritor.evaluation.sweep.manifest`) records
+    where the points came from: the commit, the shape, the bound options,
+    the grid, the partitions and the wall time.  Files written without one
+    are the same as before it existed and :func:`load` reads both.
+    """
+
+    record: dict[str, object] = {"shape": shape.manifest}
+    if manifest is not None:
+        record["manifest"] = dict(manifest)
+    record["points"] = [point.to_json() for point in points]
+    path.write_text(json.dumps(record, indent=1))
 
 
 def load(path: Path) -> tuple[ServingShape, list[Point]]:
+    """The shape and the points of a file written by :func:`save`, with or without a manifest."""
+
     record = json.loads(path.read_text())
     shape = ServingShape(**record["shape"])
     return shape, [Point.from_json(item) for item in record["points"]]
+
+
+def load_manifest(path: Path) -> dict[str, object] | None:
+    """The manifest of a file written by :func:`save`, or ``None`` for a file written without one."""
+
+    record = json.loads(path.read_text())
+    manifest = record.get("manifest")
+    return None if manifest is None else dict(manifest)
 
 
 def _bits(value: float) -> str:
@@ -333,6 +356,7 @@ __all__ = [
     "certify",
     "honest_cost",
     "load",
+    "load_manifest",
     "partition_table",
     "price",
     "save",

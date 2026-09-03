@@ -1,0 +1,4787 @@
+{
+ "benchmarks": {
+  "analysis": {
+   "description": "Folds over the kind table.  `time_s` is `Bound` with the Laplace fold alone (`FRONTIER_OPTIONS`: `knapsack=False, max_buckets=2**22`); `knapsack_s` is `Bound` with the default options (knapsack on a 2048-bucket grid plus Laplace); `cost_s` and `work_s` are `Cost` and `expected_work`.  Policy `q = 1/128, s = 1/8`, `eta = 1/100`.",
+   "name": "analysis",
+   "seconds": 227.7611418333836,
+   "series": [
+    {
+     "columns": [
+      "rows",
+      "replay_kinds",
+      "replay_copies",
+      "ru_positions",
+      "n",
+      "laplace_bits",
+      "shape",
+      "build_s",
+      "knapsack_s",
+      "knapsack_bits",
+      "buckets",
+      "cost_s",
+      "work_s"
+     ],
+     "fit_columns": [
+      "time_s",
+      "knapsack_s",
+      "cost_s",
+      "work_s",
+      "build_s"
+     ],
+     "fits": {
+      "build_s": {
+       "coefficient": 6.959788882771253e-06,
+       "exponent": 1.1552520916755336,
+       "points": 4,
+       "r2": 0.9989396202623609
+      },
+      "cost_s": {
+       "coefficient": 1.376363676673408e-06,
+       "exponent": 0.8775821081116201,
+       "points": 4,
+       "r2": 0.9989518746662759
+      },
+      "knapsack_s": {
+       "coefficient": 0.00011709616294539595,
+       "exponent": 1.1433983014059645,
+       "points": 4,
+       "r2": 0.9997773660952741
+      },
+      "time_s": {
+       "coefficient": 0.00010580803946945251,
+       "exponent": 1.1771751413850744,
+       "points": 4,
+       "r2": 0.99978102537358
+      },
+      "work_s": {
+       "coefficient": 5.458391377062444e-07,
+       "exponent": 0.6254281259446831,
+       "points": 4,
+       "r2": 0.9657510140019415
+      }
+     },
+     "name": "serving_request_row",
+     "note": "`serving_table(shape, 'request', 'row')` from toy dimensions to the 70B-class frontier shape (`d_model = 8192`, 80 layers, 2048 requests of 512 + 512 tokens, 2.7e17 gates); the number of kinds grows with the number of distinct decode contexts.  `build_s` is the table construction.",
+     "points": [
+      {
+       "buckets": 2048,
+       "build_s": 0.00036679115146398544,
+       "cost_s": 3.1250063329935074e-05,
+       "knapsack_bits": 192.0,
+       "knapsack_s": 0.006171499844640493,
+       "laplace_bits": 192.0,
+       "n": 8673,
+       "peak_bytes": 118728,
+       "repeats": 3,
+       "replay_copies": 5,
+       "replay_kinds": 2,
+       "rows": 33,
+       "ru_positions": 1734.6,
+       "shape": "toy",
+       "time_s": 0.006275041028857231,
+       "work_s": 6.082933396100998e-06,
+       "x": 33
+      },
+      {
+       "buckets": 2048,
+       "build_s": 0.0015733339823782444,
+       "cost_s": 7.458403706550598e-05,
+       "knapsack_bits": 8192.0,
+       "knapsack_s": 0.023990666959434748,
+       "laplace_bits": 8192.0,
+       "n": 325958913,
+       "peak_bytes": 137901,
+       "repeats": 3,
+       "replay_copies": 33,
+       "replay_kinds": 2,
+       "rows": 101,
+       "ru_positions": 9877542.818181818,
+       "shape": "small",
+       "time_s": 0.02537437528371811,
+       "work_s": 7.708091288805008e-06,
+       "x": 101
+      },
+      {
+       "buckets": 2048,
+       "build_s": 0.012952249962836504,
+       "cost_s": 0.00039633410051465034,
+       "knapsack_bits": 524288.0,
+       "knapsack_s": 0.19601375004276633,
+       "laplace_bits": 524288.0,
+       "n": 18891500752897,
+       "peak_bytes": 257613,
+       "repeats": 3,
+       "replay_copies": 257,
+       "replay_kinds": 2,
+       "rows": 661,
+       "ru_positions": 73507785030.72763,
+       "shape": "mid",
+       "time_s": 0.21980529185384512,
+       "work_s": 2.7291011065244675e-05,
+       "x": 661
+      },
+      {
+       "buckets": 2048,
+       "build_s": 0.05827704118564725,
+       "cost_s": 0.00141120795160532,
+       "knapsack_bits": 16777216.0,
+       "knapsack_s": 0.921560041140765,
+       "laplace_bits": 16777216.0,
+       "n": 274448049648992257,
+       "peak_bytes": 672885,
+       "repeats": 3,
+       "replay_copies": 2049,
+       "replay_kinds": 2,
+       "rows": 2578,
+       "ru_positions": 133942435163002.56,
+       "shape": "frontier-70B",
+       "time_s": 1.0878455829806626,
+       "work_s": 8.745910599827766e-05,
+       "x": 2578
+      }
+     ],
+     "x_label": "kinds"
+    },
+    {
+     "columns": [
+      "rows",
+      "replay_kinds",
+      "replay_copies",
+      "ru_positions",
+      "n",
+      "laplace_bits",
+      "shape",
+      "build_s",
+      "knapsack_s",
+      "knapsack_bits",
+      "buckets",
+      "cost_s",
+      "work_s"
+     ],
+     "fit_columns": [
+      "time_s",
+      "knapsack_s",
+      "cost_s",
+      "work_s",
+      "build_s"
+     ],
+     "fits": {
+      "build_s": {
+       "coefficient": 7.01402019565172e-06,
+       "exponent": 1.1373859642514248,
+       "points": 4,
+       "r2": 0.9988373813245384
+      },
+      "cost_s": {
+       "coefficient": 1.580316729910296e-06,
+       "exponent": 0.9275867010005832,
+       "points": 4,
+       "r2": 0.9962057008731442
+      },
+      "knapsack_s": {
+       "coefficient": 0.00038763830746439286,
+       "exponent": 1.2373864932225909,
+       "points": 4,
+       "r2": 0.9952991817760896
+      },
+      "time_s": {
+       "coefficient": 0.00013643093891619538,
+       "exponent": 1.191128788071636,
+       "points": 4,
+       "r2": 0.9976438348162354
+      },
+      "work_s": {
+       "coefficient": 6.340885472351272e-07,
+       "exponent": 0.5973537451038299,
+       "points": 4,
+       "r2": 0.9778427988637434
+      }
+     },
+     "name": "serving_step_row",
+     "note": "`serving_table(shape, 'step', 'row')` from toy dimensions to the 70B-class frontier shape (`d_model = 8192`, 80 layers, 2048 requests of 512 + 512 tokens, 2.7e17 gates); the number of kinds grows with the number of distinct decode contexts.  `build_s` is the table construction.",
+     "points": [
+      {
+       "buckets": 2048,
+       "build_s": 0.000374416820704937,
+       "cost_s": 4.766741767525673e-05,
+       "knapsack_bits": 192.0,
+       "knapsack_s": 0.026594916824251413,
+       "laplace_bits": 192.0,
+       "n": 8673,
+       "peak_bytes": 121965,
+       "repeats": 3,
+       "replay_copies": 7,
+       "replay_kinds": 4,
+       "rows": 35,
+       "ru_positions": 1239.0,
+       "shape": "toy",
+       "time_s": 0.008389416616410017,
+       "work_s": 6.1658211052417755e-06,
+       "x": 35
+      },
+      {
+       "buckets": 2048,
+       "build_s": 0.0016600419767200947,
+       "cost_s": 0.00011066719889640808,
+       "knapsack_bits": 8192.0,
+       "knapsack_s": 0.17423324985429645,
+       "laplace_bits": 8192.0,
+       "n": 325958913,
+       "peak_bytes": 163730,
+       "repeats": 3,
+       "replay_copies": 65,
+       "replay_kinds": 17,
+       "rows": 116,
+       "ru_positions": 5014752.507692307,
+       "shape": "small",
+       "time_s": 0.045094916597008705,
+       "work_s": 9.499955922365189e-06,
+       "x": 116
+      },
+      {
+       "buckets": 2048,
+       "build_s": 0.014869832899421453,
+       "cost_s": 0.0007908330298960209,
+       "knapsack_bits": 524288.0,
+       "knapsack_s": 1.5141238328069448,
+       "laplace_bits": 524288.0,
+       "n": 18891500752897,
+       "peak_bytes": 467903,
+       "repeats": 3,
+       "replay_copies": 1025,
+       "replay_kinds": 129,
+       "rows": 788,
+       "ru_positions": 18430732441.85073,
+       "shape": "mid",
+       "time_s": 0.40331679163500667,
+       "work_s": 2.858322113752365e-05,
+       "x": 788
+      },
+      {
+       "buckets": 2048,
+       "build_s": 0.06111004063859582,
+       "cost_s": 0.0027910000644624233,
+       "knapsack_bits": 16777216.0,
+       "knapsack_s": 7.501239332836121,
+       "laplace_bits": 16777216.0,
+       "n": 274448049648992257,
+       "peak_bytes": 1523963,
+       "repeats": 3,
+       "replay_copies": 32769,
+       "replay_kinds": 513,
+       "rows": 3089,
+       "ru_positions": 8375234204552.848,
+       "shape": "frontier-70B",
+       "time_s": 1.8252543746493757,
+       "work_s": 9.020883589982986e-05,
+       "x": 3089
+      }
+     ],
+     "x_label": "kinds"
+    },
+    {
+     "columns": [
+      "rows",
+      "replay_kinds",
+      "replay_copies",
+      "ru_positions",
+      "n",
+      "laplace_bits",
+      "shape",
+      "build_s",
+      "knapsack_s",
+      "knapsack_bits",
+      "buckets",
+      "cost_s",
+      "work_s"
+     ],
+     "fit_columns": [
+      "time_s",
+      "knapsack_s",
+      "cost_s",
+      "work_s",
+      "build_s"
+     ],
+     "fits": {
+      "build_s": {
+       "coefficient": 6.239968259696157e-06,
+       "exponent": 1.1936957527209957,
+       "points": 4,
+       "r2": 0.9965699154554423
+      },
+      "cost_s": {
+       "coefficient": 3.3272251162107517e-06,
+       "exponent": 1.0237796943560111,
+       "points": 4,
+       "r2": 0.9999148612797577
+      },
+      "knapsack_s": {
+       "coefficient": 0.0009237525566989326,
+       "exponent": 1.4853063001015498,
+       "points": 3,
+       "r2": 0.9564559739029128
+      },
+      "time_s": {
+       "coefficient": 0.0004228333876786994,
+       "exponent": 1.026869020795895,
+       "points": 4,
+       "r2": 0.9999661270745248
+      },
+      "work_s": {
+       "coefficient": 9.252813309971311e-07,
+       "exponent": 0.4547847742332589,
+       "points": 4,
+       "r2": 0.9656598291537963
+      }
+     },
+     "name": "serving_cell_gate",
+     "note": "`serving_table(shape, 'cell', 'gate')` from toy dimensions to the 70B-class frontier shape (`d_model = 8192`, 80 layers, 2048 requests of 512 + 512 tokens, 2.7e17 gates); the number of kinds grows with the number of distinct decode contexts.  `build_s` is the table construction.",
+     "points": [
+      {
+       "buckets": 2048,
+       "build_s": 0.0005153748206794262,
+       "cost_s": 0.0001628343015909195,
+       "knapsack_bits": 192.0,
+       "knapsack_s": 0.1839897921308875,
+       "laplace_bits": 192.0,
+       "n": 8673,
+       "peak_bytes": 35160,
+       "repeats": 3,
+       "replay_copies": 2209,
+       "replay_kinds": 17,
+       "rows": 44,
+       "ru_positions": 3.926210955183341,
+       "shape": "toy",
+       "time_s": 0.020391791127622128,
+       "work_s": 5.667097866535187e-06,
+       "x": 44
+      },
+      {
+       "buckets": 2048,
+       "build_s": 0.00189558370038867,
+       "cost_s": 0.0004144171252846718,
+       "knapsack_bits": 8192.0,
+       "knapsack_s": 1.7050967500545084,
+       "laplace_bits": 8192.0,
+       "n": 325958913,
+       "peak_bytes": 137708,
+       "repeats": 3,
+       "replay_copies": 5171745,
+       "replay_kinds": 45,
+       "rows": 113,
+       "ru_positions": 63.02687255462131,
+       "shape": "small",
+       "time_s": 0.054717582650482655,
+       "work_s": 7.709022611379623e-06,
+       "x": 113
+      },
+      {
+       "buckets": 2048,
+       "build_s": 0.017086083069443703,
+       "cost_s": 0.0025762920267879963,
+       "knapsack_bits": 185846.8877642489,
+       "knapsack_s": 12.333142729708925,
+       "laplace_bits": 185846.8899102323,
+       "n": 18891500752897,
+       "peak_bytes": 533095,
+       "repeats": 3,
+       "replay_copies": 19590054145,
+       "replay_kinds": 269,
+       "rows": 673,
+       "ru_positions": 964.3414261679674,
+       "shape": "mid",
+       "time_s": 0.3424629592336714,
+       "work_s": 1.454213634133339e-05,
+       "x": 673
+      },
+      {
+       "build_s": 0.06621941598132253,
+       "cost_s": 0.010527250356972218,
+       "laplace_bits": 236711.1090803328,
+       "n": 274448049648992257,
+       "peak_bytes": 1768392,
+       "repeats": 3,
+       "replay_copies": 34686869964801,
+       "replay_kinds": 1036,
+       "rows": 2590,
+       "ru_positions": 7912.1595556904485,
+       "shape": "frontier-70B",
+       "time_s": 1.3407485829666257,
+       "work_s": 3.816699609160423e-05,
+       "x": 2590
+      }
+     ],
+     "x_label": "kinds"
+    },
+    {
+     "columns": [
+      "rows",
+      "replay_kinds",
+      "replay_copies",
+      "ru_positions",
+      "n",
+      "laplace_bits",
+      "knapsack_s",
+      "knapsack_bits",
+      "buckets",
+      "cost_s",
+      "work_s"
+     ],
+     "fit_columns": [
+      "time_s",
+      "knapsack_s",
+      "cost_s",
+      "work_s"
+     ],
+     "fits": {
+      "cost_s": {
+       "coefficient": 9.444448220434743e-06,
+       "exponent": 0.7701656816966614,
+       "points": 5,
+       "r2": 0.9548458798870453
+      },
+      "knapsack_s": {
+       "coefficient": 0.051351776944161355,
+       "exponent": 1.0185969590186288,
+       "points": 4,
+       "r2": 0.999915548273707
+      },
+      "time_s": {
+       "coefficient": 0.0012186735470286938,
+       "exponent": 1.000615523793054,
+       "points": 5,
+       "r2": 0.9999874437542016
+      },
+      "work_s": {
+       "coefficient": 2.9184357562807397e-06,
+       "exponent": 0.18912711093094586,
+       "points": 5,
+       "r2": 0.7027236056165416
+      }
+     },
+     "name": "synthetic_vs_replay_kinds",
+     "note": "A synthetic table of `K` distinct RU kinds (1000 copies each, 64 VUs of one kind per copy): the Laplace fold is one series per kind and ~130 evaluations of a `K`-term sum (linear in `K`); the knapsack forms a cost polynomial per kind and convolves `K` of them on the grid.",
+     "points": [
+      {
+       "buckets": 2048,
+       "cost_s": 4.2957719415426254e-05,
+       "knapsack_bits": 64000.0,
+       "knapsack_s": 0.20745200011879206,
+       "laplace_bits": 64000.0,
+       "n": 1024000,
+       "peak_bytes": 26508,
+       "repeats": 3,
+       "replay_copies": 4000,
+       "replay_kinds": 4,
+       "rows": 6,
+       "ru_positions": 256.0,
+       "time_s": 0.004869750235229731,
+       "work_s": 4.708301275968552e-06,
+       "x": 4
+      },
+      {
+       "buckets": 2048,
+       "cost_s": 5.6667253375053406e-05,
+       "knapsack_bits": 89407.62104466921,
+       "knapsack_s": 0.8830994167365134,
+       "laplace_bits": 89407.62104467061,
+       "n": 4096000,
+       "peak_bytes": 46534,
+       "repeats": 3,
+       "replay_copies": 16000,
+       "replay_kinds": 16,
+       "rows": 18,
+       "ru_positions": 256.0,
+       "time_s": 0.019664375111460686,
+       "work_s": 4.166737198829651e-06,
+       "x": 16
+      },
+      {
+       "buckets": 2048,
+       "cost_s": 0.00016587506979703903,
+       "knapsack_bits": 99695.10671397756,
+       "knapsack_s": 3.573761333245784,
+       "laplace_bits": 99695.10671398375,
+       "n": 16384000,
+       "peak_bytes": 123318,
+       "repeats": 3,
+       "replay_copies": 64000,
+       "replay_kinds": 64,
+       "rows": 66,
+       "ru_positions": 256.0,
+       "time_s": 0.07815445819869637,
+       "work_s": 6.3749030232429504e-06,
+       "x": 64
+      },
+      {
+       "buckets": 2048,
+       "cost_s": 0.0006219581700861454,
+       "knapsack_bits": 109315.65211262768,
+       "knapsack_s": 14.41232006275095,
+       "laplace_bits": 109315.65211265259,
+       "n": 65536000,
+       "peak_bytes": 428712,
+       "repeats": 3,
+       "replay_copies": 256000,
+       "replay_kinds": 256,
+       "rows": 258,
+       "ru_positions": 256.0,
+       "time_s": 0.3093930841423571,
+       "work_s": 5.875248461961746e-06,
+       "x": 256
+      },
+      {
+       "cost_s": 0.0026993327774107456,
+       "laplace_bits": 118789.73919802473,
+       "n": 262144000,
+       "peak_bytes": 1656456,
+       "repeats": 3,
+       "replay_copies": 1024000,
+       "replay_kinds": 1024,
+       "rows": 1026,
+       "ru_positions": 256.0,
+       "time_s": 1.2625376246869564,
+       "work_s": 1.470884308218956e-05,
+       "x": 1024
+      }
+     ],
+     "x_label": "replay kinds"
+    },
+    {
+     "columns": [
+      "buckets_used",
+      "bits",
+      "knapsack_bits"
+     ],
+     "fit_columns": [
+      "time_s",
+      "peak_bytes"
+     ],
+     "fits": {
+      "peak_bytes": {
+       "coefficient": 4128.958894019195,
+       "exponent": 1.0654069662571644,
+       "points": 4,
+       "r2": 0.9865589997755567
+      },
+      "time_s": {
+       "coefficient": 5.857331990040314e-05,
+       "exponent": 1.1646238123651853,
+       "points": 5,
+       "r2": 0.9089691117714679
+      }
+     },
+     "name": "knapsack_vs_buckets",
+     "note": "`Bound` with the knapsack on, on the `small` `step/row` table (116 kinds, 17 replay kinds), against the cost grid: `sparse_power` and the convolutions are `O(buckets * terms)` to `O(buckets**2)`.  `time_s` is the whole `Bound`.",
+     "points": [
+      {
+       "bits": 8192.0,
+       "buckets_used": 128,
+       "knapsack_bits": 69664.00000009136,
+       "peak_bytes": 589817,
+       "repeats": 3,
+       "time_s": 0.04110670927911997,
+       "x": 128
+      },
+      {
+       "bits": 8192.0,
+       "buckets_used": 512,
+       "knapsack_bits": 69664.00000019818,
+       "peak_bytes": 4315110,
+       "repeats": 3,
+       "time_s": 0.05015891697257757,
+       "x": 512
+      },
+      {
+       "bits": 8192.0,
+       "buckets_used": 2048,
+       "knapsack_bits": 69878.85585686484,
+       "peak_bytes": 14089010,
+       "repeats": 3,
+       "time_s": 0.1767437499947846,
+       "x": 2048
+      },
+      {
+       "bits": 8192.0,
+       "buckets_used": 8192,
+       "knapsack_bits": 69910.85585726547,
+       "peak_bytes": 54645044,
+       "repeats": 3,
+       "time_s": 1.508058125153184,
+       "x": 8192
+      },
+      {
+       "bits": 8192.0,
+       "buckets_used": 32768,
+       "knapsack_bits": 69950.53428423252,
+       "peak_bytes": null,
+       "repeats": 1,
+       "time_s": 24.029501332901418,
+       "x": 32768
+      }
+     ],
+     "x_label": "max_buckets"
+    },
+    {
+     "columns": [
+      "steps",
+      "evaluated"
+     ],
+     "fit_columns": [
+      "time_s"
+     ],
+     "fits": {
+      "time_s": {
+       "coefficient": 0.06539258821689796,
+       "exponent": 0.9112108714253989,
+       "points": 5,
+       "r2": 0.9966376640794816
+      }
+     },
+     "name": "optimize_vs_grid",
+     "note": "`Optimize` (`max_bits` objective, Laplace-only bound) on the `small` `step/row` table over `PolicyGrid.uniform(steps)`, `(steps + 1)**2` points: one `Cost` and one `Bound` per point.",
+     "points": [
+      {
+       "evaluated": 4,
+       "peak_bytes": null,
+       "repeats": 3,
+       "steps": 1,
+       "time_s": 0.2581811249256134,
+       "x": 4
+      },
+      {
+       "evaluated": 9,
+       "peak_bytes": null,
+       "repeats": 3,
+       "steps": 2,
+       "time_s": 0.45991000020876527,
+       "x": 9
+      },
+      {
+       "evaluated": 25,
+       "peak_bytes": null,
+       "repeats": 3,
+       "steps": 4,
+       "time_s": 1.1144432919099927,
+       "x": 25
+      },
+      {
+       "evaluated": 81,
+       "peak_bytes": null,
+       "repeats": 3,
+       "steps": 8,
+       "time_s": 3.436621000058949,
+       "x": 81
+      },
+      {
+       "evaluated": 289,
+       "peak_bytes": null,
+       "repeats": 2,
+       "steps": 16,
+       "time_s": 12.394320874940604,
+       "x": 289
+      }
+     ],
+     "x_label": "grid points"
+    }
+   ],
+   "title": "Bound, Cost, expected_work and Optimize"
+  },
+  "challenge": {
+   "description": "Wall time of `bernoulli_subset(seed, stage, phase, N, p)` -- `K ~ Binomial(N, p)` by 512-bit CDF inversion, then a uniform `K`-subset from `K` HMAC-SHA256 draws with rejection -- and of the two derivations the verifier runs on a compiled circuit.",
+   "name": "challenge",
+   "seconds": 1.1390029173344374,
+   "series": [
+    {
+     "columns": [
+      "selected",
+      "expected",
+      "per_selected_s",
+      "denominator_bits"
+     ],
+     "fit_columns": [
+      "time_s",
+      "per_selected_s"
+     ],
+     "fits": {
+      "per_selected_s": {
+       "coefficient": 2.954464257557736e-06,
+       "exponent": 0.013027973904931265,
+       "points": 10,
+       "r2": 0.33252950733678
+      },
+      "time_s": {
+       "coefficient": 0.0001734898060872446,
+       "exponent": 0.015848670714352312,
+       "points": 10,
+       "r2": 0.4282932303565994
+      }
+     },
+     "name": "vs_N_fixed_K",
+     "note": "`p = 64 / N`: sixty-four selections expected whatever `N`; time should be flat in `N` up to the `O(log N)` initial power (the exponent should be near 0, far below 1).",
+     "points": [
+      {
+       "denominator_bits": 7,
+       "expected": 64.0,
+       "peak_bytes": null,
+       "per_selected_s": 3.0910990879697313e-06,
+       "repeats": 3,
+       "selected": 59,
+       "time_s": 0.00018237484619021416,
+       "x": 1000
+      },
+      {
+       "denominator_bits": 10,
+       "expected": 64.0,
+       "peak_bytes": null,
+       "per_selected_s": 4.326042376066509e-06,
+       "repeats": 3,
+       "selected": 57,
+       "time_s": 0.000246584415435791,
+       "x": 10000
+      },
+      {
+       "denominator_bits": 12,
+       "expected": 64.0,
+       "peak_bytes": null,
+       "per_selected_s": 3.4634597026384796e-06,
+       "repeats": 3,
+       "selected": 65,
+       "time_s": 0.00022512488067150116,
+       "x": 100000
+      },
+      {
+       "denominator_bits": 14,
+       "expected": 64.0,
+       "peak_bytes": null,
+       "per_selected_s": 2.852181763681647e-06,
+       "repeats": 3,
+       "selected": 73,
+       "time_s": 0.00020820926874876022,
+       "x": 1000000
+      },
+      {
+       "denominator_bits": 18,
+       "expected": 64.0,
+       "peak_bytes": null,
+       "per_selected_s": 4.326972037048663e-06,
+       "repeats": 3,
+       "selected": 59,
+       "time_s": 0.0002552913501858711,
+       "x": 10000000
+      },
+      {
+       "denominator_bits": 21,
+       "expected": 64.0,
+       "peak_bytes": null,
+       "per_selected_s": 3.5684539138206413e-06,
+       "repeats": 3,
+       "selected": 56,
+       "time_s": 0.00019983341917395592,
+       "x": 100000000
+      },
+      {
+       "denominator_bits": 24,
+       "expected": 64.0,
+       "peak_bytes": null,
+       "per_selected_s": 2.9795298005564737e-06,
+       "repeats": 3,
+       "selected": 59,
+       "time_s": 0.00017579225823283195,
+       "x": 1000000000
+      },
+      {
+       "denominator_bits": 31,
+       "expected": 64.0,
+       "peak_bytes": null,
+       "per_selected_s": 3.840285353362561e-06,
+       "repeats": 3,
+       "selected": 60,
+       "time_s": 0.00023041712120175362,
+       "x": 100000000000
+      },
+      {
+       "denominator_bits": 38,
+       "expected": 64.0,
+       "peak_bytes": null,
+       "per_selected_s": 5.161540152934882e-06,
+       "repeats": 3,
+       "selected": 65,
+       "time_s": 0.0003355001099407673,
+       "x": 10000000000000
+      },
+      {
+       "denominator_bits": 44,
+       "expected": 64.0,
+       "peak_bytes": null,
+       "per_selected_s": 4.777575240415685e-06,
+       "repeats": 3,
+       "selected": 68,
+       "time_s": 0.0003248751163482666,
+       "x": 1000000000000000
+      }
+     ],
+     "x_label": "N (candidates)"
+    },
+    {
+     "columns": [
+      "selected",
+      "expected",
+      "per_selected_s",
+      "denominator_bits"
+     ],
+     "fit_columns": [
+      "time_s"
+     ],
+     "fits": {
+      "time_s": {
+       "coefficient": 9.42447370167945e-06,
+       "exponent": 0.8695807777161187,
+       "points": 6,
+       "r2": 0.9793326206597511
+      }
+     },
+     "name": "vs_K_fixed_N",
+     "note": "`N = 10**6` candidates, `p = K / N`: one HMAC draw (plus rejections) per selection, so time is linear in `K` (exponent near 1) once `K` dominates the fixed cost of the binomial inversion.",
+     "points": [
+      {
+       "denominator_bits": 20,
+       "expected": 1.0,
+       "peak_bytes": null,
+       "per_selected_s": 2.1290965378284454e-05,
+       "repeats": 3,
+       "selected": 1,
+       "time_s": 2.1290965378284454e-05,
+       "x": 1
+      },
+      {
+       "denominator_bits": 17,
+       "expected": 10.0,
+       "peak_bytes": null,
+       "per_selected_s": 7.277820259332657e-06,
+       "repeats": 3,
+       "selected": 6,
+       "time_s": 4.366692155599594e-05,
+       "x": 10
+      },
+      {
+       "denominator_bits": 14,
+       "expected": 100.0,
+       "peak_bytes": null,
+       "per_selected_s": 2.75863896844522e-06,
+       "repeats": 3,
+       "selected": 106,
+       "time_s": 0.00029241573065519333,
+       "x": 100
+      },
+      {
+       "denominator_bits": 10,
+       "expected": 1000.0,
+       "peak_bytes": null,
+       "per_selected_s": 2.7593400707279425e-06,
+       "repeats": 3,
+       "selected": 1035,
+       "time_s": 0.0028559169732034206,
+       "x": 1000
+      },
+      {
+       "denominator_bits": 7,
+       "expected": 10000.0,
+       "peak_bytes": null,
+       "per_selected_s": 3.113919297730239e-06,
+       "repeats": 3,
+       "selected": 10025,
+       "time_s": 0.031217040959745646,
+       "x": 10000
+      },
+      {
+       "denominator_bits": 4,
+       "expected": 100000.0,
+       "peak_bytes": null,
+       "per_selected_s": 3.1832148604239116e-06,
+       "repeats": 3,
+       "selected": 100439,
+       "time_s": 0.31971891736611724,
+       "x": 100000
+      }
+     ],
+     "x_label": "K (expected selections)"
+    },
+    {
+     "columns": [
+      "sample_s",
+      "selected_replay_units",
+      "sampled_verification_units",
+      "verification_units"
+     ],
+     "fit_columns": [
+      "time_s",
+      "sample_s"
+     ],
+     "fits": {
+      "sample_s": {
+       "coefficient": 0.00082679526816355,
+       "exponent": 0.028195901836163745,
+       "points": 6,
+       "r2": 0.5646895056722918
+      },
+      "time_s": {
+       "coefficient": 0.00015656923857646683,
+       "exponent": 0.039731826260714885,
+       "points": 6,
+       "r2": 0.534184056330203
+      }
+     },
+     "name": "derive_selections_vs_units",
+     "note": "`derive_replay_selection` (`q = 64 / #RU`) then `derive_sample_selection` (`s = 1/2`) on a `repeat(U, block)` of 8-cell RUs; the verifier's `max_units` limit (10**6) is raised for the sweep.  `time_s` is the replay selection, `sample_s` the VU selection over the 8 * |J| candidates.",
+     "points": [
+      {
+       "peak_bytes": null,
+       "repeats": 3,
+       "sample_s": 0.000988875050097704,
+       "sampled_verification_units": 227,
+       "selected_replay_units": 56,
+       "time_s": 0.0001759999431669712,
+       "verification_units": 8001,
+       "x": 1001
+      },
+      {
+       "peak_bytes": null,
+       "repeats": 3,
+       "sample_s": 0.0009780419059097767,
+       "sampled_verification_units": 212,
+       "selected_replay_units": 59,
+       "time_s": 0.00029741693288087845,
+       "verification_units": 80001,
+       "x": 10001
+      },
+      {
+       "peak_bytes": null,
+       "repeats": 3,
+       "sample_s": 0.001180166844278574,
+       "sampled_verification_units": 277,
+       "selected_replay_units": 67,
+       "time_s": 0.0002293749712407589,
+       "verification_units": 800001,
+       "x": 100001
+      },
+      {
+       "peak_bytes": null,
+       "repeats": 3,
+       "sample_s": 0.0013880003243684769,
+       "sampled_verification_units": 299,
+       "selected_replay_units": 80,
+       "time_s": 0.00024670781567692757,
+       "verification_units": 8000001,
+       "x": 1000001
+      },
+      {
+       "peak_bytes": null,
+       "repeats": 3,
+       "sample_s": 0.001432250253856182,
+       "sampled_verification_units": 281,
+       "selected_replay_units": 76,
+       "time_s": 0.0003282502293586731,
+       "verification_units": 80000001,
+       "x": 10000001
+      },
+      {
+       "peak_bytes": null,
+       "repeats": 3,
+       "sample_s": 0.0011995420791208744,
+       "sampled_verification_units": 277,
+       "selected_replay_units": 67,
+       "time_s": 0.00031016720458865166,
+       "verification_units": 800000001,
+       "x": 100000001
+      }
+     ],
+     "x_label": "replay units"
+    }
+   ],
+   "title": "Challenge sampling: binomial count and Floyd subset"
+  },
+  "compile": {
+   "description": "Wall time of `Compiler.compile` (parse, validate, summarize, mark check, build `Index` and `DescriptionCircuit`) with the constructor's trace time (`G(x, a)`) and the whole `Compile(G, x, a)` alongside.  The x-axis is the parameter swept; `n` is the flattened gate count, `description_bytes` what the compiler actually reads.",
+   "name": "compile",
+   "seconds": 8.17364729102701,
+   "series": [
+    {
+     "columns": [
+      "trace_s",
+      "compile_total_s",
+      "description_bytes",
+      "definitions",
+      "n",
+      "replay_units",
+      "verification_units",
+      "advice_bytes"
+     ],
+     "fit_columns": [
+      "time_s",
+      "description_bytes",
+      "n",
+      "trace_s"
+     ],
+     "fits": {
+      "description_bytes": {
+       "coefficient": 37734.421236843344,
+       "exponent": 0.041597270212739484,
+       "points": 6,
+       "r2": 0.9453079205610999
+      },
+      "n": {
+       "coefficient": 1396.4612847042804,
+       "exponent": 1.903183475163828,
+       "points": 6,
+       "r2": 0.999465280453947
+      },
+      "time_s": {
+       "coefficient": 0.0042689771653584155,
+       "exponent": 0.06907275637379476,
+       "points": 6,
+       "r2": 0.934100044899568
+      },
+      "trace_s": {
+       "coefficient": 0.0016767638246072355,
+       "exponent": -0.014056965142259832,
+       "points": 6,
+       "r2": 0.09131639201158859
+      }
+     },
+     "name": "cluster_d_model",
+     "note": "ClusterG with 2 layers, 4 requests of 4 + 4 tokens on 2 slots; compile time should follow `description_bytes` (roughly linear in d_model: the tracer unrolls each dot product), not `n` (quadratic).",
+     "points": [
+      {
+       "advice_bytes": 100,
+       "compile_total_s": 0.006996749900281429,
+       "definitions": 41,
+       "description_bytes": 39868,
+       "n": 21177,
+       "peak_bytes": 490059,
+       "repeats": 3,
+       "replay_units": 9,
+       "time_s": 0.004764041863381863,
+       "trace_s": 0.0017439587973058224,
+       "verification_units": 3205,
+       "x": 4
+      },
+      {
+       "advice_bytes": 100,
+       "compile_total_s": 0.006494749803096056,
+       "definitions": 41,
+       "description_bytes": 40505,
+       "n": 70633,
+       "peak_bytes": 496037,
+       "repeats": 3,
+       "replay_units": 9,
+       "time_s": 0.004895207937806845,
+       "trace_s": 0.0016509159468114376,
+       "verification_units": 6613,
+       "x": 8
+      },
+      {
+       "advice_bytes": 100,
+       "compile_total_s": 0.007389291189610958,
+       "definitions": 45,
+       "description_bytes": 43061,
+       "n": 257097,
+       "peak_bytes": 526390,
+       "repeats": 3,
+       "replay_units": 9,
+       "time_s": 0.005033000372350216,
+       "trace_s": 0.0014785830862820148,
+       "verification_units": 14965,
+       "x": 16
+      },
+      {
+       "advice_bytes": 100,
+       "compile_total_s": 0.007625500205904245,
+       "definitions": 45,
+       "description_bytes": 44215,
+       "n": 980233,
+       "peak_bytes": 536678,
+       "repeats": 3,
+       "replay_units": 9,
+       "time_s": 0.005420415662229061,
+       "trace_s": 0.0015214169397950172,
+       "verification_units": 37813,
+       "x": 32
+      },
+      {
+       "advice_bytes": 100,
+       "compile_total_s": 0.006893916986882687,
+       "definitions": 45,
+       "description_bytes": 44732,
+       "n": 3827337,
+       "peak_bytes": 544862,
+       "repeats": 3,
+       "replay_units": 9,
+       "time_s": 0.005915583111345768,
+       "trace_s": 0.0015954580157995224,
+       "verification_units": 108085,
+       "x": 64
+      },
+      {
+       "advice_bytes": 100,
+       "compile_total_s": 0.007673458196222782,
+       "definitions": 45,
+       "description_bytes": 45721,
+       "n": 15124873,
+       "peak_bytes": 554822,
+       "repeats": 3,
+       "replay_units": 9,
+       "time_s": 0.0058580003678798676,
+       "trace_s": 0.001653249841183424,
+       "verification_units": 346933,
+       "x": 128
+      }
+     ],
+     "x_label": "d_model"
+    },
+    {
+     "columns": [
+      "trace_s",
+      "compile_total_s",
+      "description_bytes",
+      "definitions",
+      "n",
+      "replay_units",
+      "verification_units",
+      "advice_bytes"
+     ],
+     "fit_columns": [
+      "time_s",
+      "description_bytes",
+      "n",
+      "trace_s",
+      "advice_bytes"
+     ],
+     "fits": {
+      "advice_bytes": {
+       "coefficient": 35.35089438105219,
+       "exponent": 0.792860314927328,
+       "points": 5,
+       "r2": 0.9906397275333171
+      },
+      "description_bytes": {
+       "coefficient": 19511.925704022917,
+       "exponent": 0.18147745379909075,
+       "points": 5,
+       "r2": 0.8567116418513785
+      },
+      "n": {
+       "coefficient": 6961.979392353926,
+       "exponent": 0.986813225200191,
+       "points": 5,
+       "r2": 0.9999644820913491
+      },
+      "time_s": {
+       "coefficient": 0.0016211685789253453,
+       "exponent": 0.4612606101972686,
+       "points": 5,
+       "r2": 0.6884839476468974
+      },
+      "trace_s": {
+       "coefficient": 0.0003614335122443874,
+       "exponent": 0.6768198486294132,
+       "points": 5,
+       "r2": 0.7823829186192627
+      }
+     },
+     "name": "cluster_requests",
+     "note": "ClusterG d_model=8, 1 layer, 2 slots, requests of 3 + 3 tokens; every extra wave adds root steps and schedule bytes but no new kinds.  The sweep stops at 64 requests: from 96 on, the root's declared outputs (every request's tokens) resolve to more than `CompilationLimits.max_output_runs = 256` runs and the description is rejected, a limit of the toy constructor's output layout rather than of the compiler.",
+     "points": [
+      {
+       "advice_bytes": 68,
+       "compile_total_s": 0.0040224166586995125,
+       "definitions": 35,
+       "description_bytes": 24244,
+       "n": 13909,
+       "peak_bytes": 304899,
+       "repeats": 3,
+       "replay_units": 4,
+       "time_s": 0.0030109160579741,
+       "trace_s": 0.0008173752576112747,
+       "verification_units": 1699,
+       "x": 2
+      },
+      {
+       "advice_bytes": 164,
+       "compile_total_s": 0.004922292195260525,
+       "definitions": 35,
+       "description_bytes": 26407,
+       "n": 53689,
+       "peak_bytes": 338291,
+       "repeats": 3,
+       "replay_units": 13,
+       "time_s": 0.0035732081159949303,
+       "trace_s": 0.0012587504461407661,
+       "verification_units": 4849,
+       "x": 8
+      },
+      {
+       "advice_bytes": 292,
+       "compile_total_s": 0.005342875141650438,
+       "definitions": 35,
+       "description_bytes": 29319,
+       "n": 106729,
+       "peak_bytes": 383163,
+       "repeats": 3,
+       "replay_units": 25,
+       "time_s": 0.00433654198423028,
+       "trace_s": 0.0015441249124705791,
+       "verification_units": 9049,
+       "x": 16
+      },
+      {
+       "advice_bytes": 548,
+       "compile_total_s": 0.021800708025693893,
+       "definitions": 35,
+       "description_bytes": 35143,
+       "n": 212809,
+       "peak_bytes": 470891,
+       "repeats": 3,
+       "replay_units": 49,
+       "time_s": 0.005372707732021809,
+       "trace_s": 0.0025123748928308487,
+       "verification_units": 17449,
+       "x": 32
+      },
+      {
+       "advice_bytes": 1060,
+       "compile_total_s": 0.01301870821043849,
+       "definitions": 35,
+       "description_bytes": 46791,
+       "n": 424969,
+       "peak_bytes": 647371,
+       "repeats": 3,
+       "replay_units": 97,
+       "time_s": 0.019420458003878593,
+       "trace_s": 0.01148504065349698,
+       "verification_units": 34249,
+       "x": 64
+      }
+     ],
+     "x_label": "requests"
+    },
+    {
+     "columns": [
+      "trace_s",
+      "compile_total_s",
+      "description_bytes",
+      "definitions",
+      "n",
+      "replay_units",
+      "verification_units",
+      "advice_bytes"
+     ],
+     "fit_columns": [
+      "time_s",
+      "description_bytes",
+      "n"
+     ],
+     "fits": {
+      "description_bytes": {
+       "coefficient": 21767.079716406522,
+       "exponent": 0.20448349207831382,
+       "points": 6,
+       "r2": 0.8822847487772917
+      },
+      "n": {
+       "coefficient": 13763.666062374274,
+       "exponent": 0.9876047480635521,
+       "points": 6,
+       "r2": 0.9999664892447722
+      },
+      "time_s": {
+       "coefficient": 0.0025460725611974656,
+       "exponent": 0.35298555553212185,
+       "points": 6,
+       "r2": 0.8893571785838084
+      }
+     },
+     "name": "cluster_slots",
+     "note": "ClusterG d_model=8, 1 layer, `2 * slots` requests of 3 + 3 tokens: a step kind per distinct occupant tuple, so the description grows with the number of slots.",
+     "points": [
+      {
+       "advice_bytes": 68,
+       "compile_total_s": 0.0037909168750047684,
+       "definitions": 35,
+       "description_bytes": 24134,
+       "n": 13909,
+       "peak_bytes": 301867,
+       "repeats": 3,
+       "replay_units": 7,
+       "time_s": 0.0030091251246631145,
+       "trace_s": 0.0007788329385221004,
+       "verification_units": 1699,
+       "x": 1
+      },
+      {
+       "advice_bytes": 100,
+       "compile_total_s": 0.004193958360701799,
+       "definitions": 35,
+       "description_bytes": 24953,
+       "n": 27169,
+       "peak_bytes": 315651,
+       "repeats": 3,
+       "replay_units": 7,
+       "time_s": 0.003055000212043524,
+       "trace_s": 0.0008755829185247421,
+       "verification_units": 2749,
+       "x": 2
+      },
+      {
+       "advice_bytes": 164,
+       "compile_total_s": 0.004597291816025972,
+       "definitions": 35,
+       "description_bytes": 26635,
+       "n": 53689,
+       "peak_bytes": 343743,
+       "repeats": 3,
+       "replay_units": 7,
+       "time_s": 0.003985332790762186,
+       "trace_s": 0.0010625841096043587,
+       "verification_units": 4849,
+       "x": 4
+      },
+      {
+       "advice_bytes": 292,
+       "compile_total_s": 0.006514291744679213,
+       "definitions": 35,
+       "description_bytes": 30010,
+       "n": 106729,
+       "peak_bytes": 400442,
+       "repeats": 3,
+       "replay_units": 7,
+       "time_s": 0.0044813333079218864,
+       "trace_s": 0.0013309172354638577,
+       "verification_units": 9049,
+       "x": 8
+      },
+      {
+       "advice_bytes": 548,
+       "compile_total_s": 0.008709416724741459,
+       "definitions": 35,
+       "description_bytes": 36778,
+       "n": 212809,
+       "peak_bytes": 510889,
+       "repeats": 3,
+       "replay_units": 7,
+       "time_s": 0.005981250200420618,
+       "trace_s": 0.0021632909774780273,
+       "verification_units": 17449,
+       "x": 16
+      },
+      {
+       "advice_bytes": 1060,
+       "compile_total_s": 0.015308166854083538,
+       "definitions": 35,
+       "description_bytes": 50359,
+       "n": 424969,
+       "peak_bytes": 734929,
+       "repeats": 3,
+       "replay_units": 7,
+       "time_s": 0.010889249853789806,
+       "trace_s": 0.0033829170279204845,
+       "verification_units": 34249,
+       "x": 32
+      }
+     ],
+     "x_label": "slots"
+    },
+    {
+     "columns": [
+      "depth",
+      "description_bytes",
+      "definitions",
+      "replay_units"
+     ],
+     "fit_columns": [
+      "time_s",
+      "description_bytes",
+      "peak_bytes"
+     ],
+     "fits": {
+      "description_bytes": {
+       "coefficient": 1481.7842617152094,
+       "exponent": 0.04279132851857273,
+       "points": 7,
+       "r2": 0.977903355989707
+      },
+      "peak_bytes": {
+       "coefficient": 25233.54001232147,
+       "exponent": 0.0388680842856088,
+       "points": 7,
+       "r2": 0.9824056652570152
+      },
+      "time_s": {
+       "coefficient": 0.0001929091037905013,
+       "exponent": 0.0449590389167289,
+       "points": 7,
+       "r2": 0.9875247771477536
+      }
+     },
+     "name": "deep_repeat",
+     "note": "`repeat(10, ...)` nested `depth` times over a 3-gate VU: `n = 3 * 10**depth + 1`.  The compiler never touches a gate, so time and memory follow the description (`O(depth)`), not `n`.",
+     "points": [
+      {
+       "definitions": 5,
+       "depth": 1,
+       "description_bytes": 1581,
+       "peak_bytes": 27154,
+       "repeats": 3,
+       "replay_units": 2,
+       "time_s": 0.0002165832556784153,
+       "x": 31
+      },
+      {
+       "definitions": 6,
+       "depth": 2,
+       "description_bytes": 1866,
+       "peak_bytes": 30966,
+       "repeats": 3,
+       "replay_units": 11,
+       "time_s": 0.00024187518283724785,
+       "x": 301
+      },
+      {
+       "definitions": 8,
+       "depth": 4,
+       "description_bytes": 2436,
+       "peak_bytes": 39202,
+       "repeats": 3,
+       "replay_units": 1001,
+       "time_s": 0.0003289170563220978,
+       "x": 30001
+      },
+      {
+       "definitions": 10,
+       "depth": 6,
+       "description_bytes": 3006,
+       "peak_bytes": 47728,
+       "repeats": 3,
+       "replay_units": 100001,
+       "time_s": 0.0003992910496890545,
+       "x": 3000001
+      },
+      {
+       "definitions": 12,
+       "depth": 8,
+       "description_bytes": 3576,
+       "peak_bytes": 56120,
+       "repeats": 3,
+       "replay_units": 10000001,
+       "time_s": 0.00045566679909825325,
+       "x": 300000001
+      },
+      {
+       "definitions": 14,
+       "depth": 10,
+       "description_bytes": 4146,
+       "peak_bytes": 64580,
+       "repeats": 3,
+       "replay_units": 1000000001,
+       "time_s": 0.0005422499962151051,
+       "x": 30000000001
+      },
+      {
+       "definitions": 16,
+       "depth": 12,
+       "description_bytes": 4716,
+       "peak_bytes": 72374,
+       "repeats": 3,
+       "replay_units": 100000000001,
+       "time_s": 0.0007097916677594185,
+       "x": 3000000000001
+      }
+     ],
+     "x_label": "n (gates)"
+    },
+    {
+     "columns": [
+      "description_bytes",
+      "n"
+     ],
+     "fit_columns": [
+      "time_s",
+      "description_bytes",
+      "peak_bytes"
+     ],
+     "fits": {
+      "description_bytes": {
+       "coefficient": 367.7401638202477,
+       "exponent": 1.0143204744238157,
+       "points": 6,
+       "r2": 0.999915753518622
+      },
+      "peak_bytes": {
+       "coefficient": 5240.317823533163,
+       "exponent": 0.9855945511419841,
+       "points": 6,
+       "r2": 0.9996874524551951
+      },
+      "time_s": {
+       "coefficient": 3.731680569514621e-05,
+       "exponent": 1.0413376654435866,
+       "points": 6,
+       "r2": 0.9993535675257278
+      }
+     },
+     "name": "definitions",
+     "note": "A root calling `D` distinct RU kinds once each (`repeat(i + 1, cell)`): compile time linear in the number of definitions, i.e. in the description.",
+     "points": [
+      {
+       "description_bytes": 4415,
+       "n": 109,
+       "peak_bytes": 64599,
+       "repeats": 3,
+       "time_s": 0.000534208957105875,
+       "x": 12
+      },
+      {
+       "description_bytes": 14181,
+       "n": 1585,
+       "peak_bytes": 175173,
+       "repeats": 3,
+       "time_s": 0.0014664162881672382,
+       "x": 36
+      },
+      {
+       "description_bytes": 53311,
+       "n": 24769,
+       "peak_bytes": 609741,
+       "repeats": 3,
+       "time_s": 0.006185125093907118,
+       "x": 132
+      },
+      {
+       "description_bytes": 210367,
+       "n": 393985,
+       "peak_bytes": 2412334,
+       "repeats": 3,
+       "time_s": 0.02292195800691843,
+       "x": 516
+      },
+      {
+       "description_bytes": 840689,
+       "n": 6294529,
+       "peak_bytes": 9705091,
+       "repeats": 3,
+       "time_s": 0.10291437525302172,
+       "x": 2052
+      },
+      {
+       "description_bytes": 3365873,
+       "n": 100675585,
+       "peak_bytes": 38965151,
+       "repeats": 3,
+       "time_s": 0.4734831671230495,
+       "x": 8196
+      }
+     ],
+     "x_label": "definitions"
+    }
+   ],
+   "title": "Compile: description in, lazy circuit and index out"
+  },
+  "kinds": {
+   "description": "`Index.kinds()` / `kind_table()` wall time against the description, and the per-call latency of the boundary and interior address sets and the unit lookups against the number of RUs.",
+   "name": "kinds",
+   "seconds": 4.546212874818593,
+   "series": [
+    {
+     "columns": [
+      "kinds_s",
+      "definitions",
+      "n"
+     ],
+     "fit_columns": [
+      "time_s",
+      "kinds_s",
+      "peak_bytes"
+     ],
+     "fits": {
+      "kinds_s": {
+       "coefficient": 5.073516247320621e-06,
+       "exponent": 1.0604686859460852,
+       "points": 6,
+       "r2": 0.9991162675367304
+      },
+      "peak_bytes": {
+       "coefficient": 1300.2594772539767,
+       "exponent": 0.9185272150636641,
+       "points": 6,
+       "r2": 0.9961572258421171
+      },
+      "time_s": {
+       "coefficient": 5.309867598294737e-06,
+       "exponent": 1.058875741165758,
+       "points": 6,
+       "r2": 0.9979207480757183
+      }
+     },
+     "name": "kind_table_vs_definitions",
+     "note": "`Index.kind_table()` on a root calling `D` distinct RU kinds: one row per kind, linear in the description.  `kinds_s` is `Index.kinds()` alone (the table adds the totals).",
+     "points": [
+      {
+       "definitions": 11,
+       "kinds_s": 7.191579788923264e-05,
+       "n": 109,
+       "peak_bytes": 15000,
+       "repeats": 3,
+       "time_s": 8.591730147600174e-05,
+       "x": 12
+      },
+      {
+       "definitions": 35,
+       "kinds_s": 0.00024633295834064484,
+       "n": 1585,
+       "peak_bytes": 35080,
+       "repeats": 3,
+       "time_s": 0.00022795796394348145,
+       "x": 36
+      },
+      {
+       "definitions": 131,
+       "kinds_s": 0.0008271248079836369,
+       "n": 24769,
+       "peak_bytes": 98870,
+       "repeats": 3,
+       "time_s": 0.000839166808873415,
+       "x": 132
+      },
+      {
+       "definitions": 515,
+       "kinds_s": 0.003676917403936386,
+       "n": 393985,
+       "peak_bytes": 346096,
+       "repeats": 3,
+       "time_s": 0.0035584578290581703,
+       "x": 516
+      },
+      {
+       "definitions": 2051,
+       "kinds_s": 0.015345416031777859,
+       "n": 6294529,
+       "peak_bytes": 1407672,
+       "repeats": 3,
+       "time_s": 0.016242458019405603,
+       "x": 2052
+      },
+      {
+       "definitions": 8195,
+       "kinds_s": 0.07897995924577117,
+       "n": 100675585,
+       "peak_bytes": 5991736,
+       "repeats": 3,
+       "time_s": 0.08559341635555029,
+       "x": 8196
+      }
+     ],
+     "x_label": "kinds"
+    },
+    {
+     "columns": [
+      "boundary_rank_s",
+      "boundary_contains_miss_s",
+      "boundary_unrank_s",
+      "interior_build_s",
+      "interior_contains_s",
+      "interior_rank_s",
+      "interior_unrank_s",
+      "unit_size",
+      "out_count",
+      "interior_count"
+     ],
+     "fit_columns": [
+      "time_s",
+      "boundary_rank_s",
+      "boundary_contains_miss_s",
+      "boundary_unrank_s",
+      "interior_build_s",
+      "interior_contains_s",
+      "interior_unrank_s"
+     ],
+     "fits": {
+      "boundary_contains_miss_s": {
+       "coefficient": 2.908594052040425e-06,
+       "exponent": 0.2108851116684683,
+       "points": 5,
+       "r2": 0.8579857613479855
+      },
+      "boundary_rank_s": {
+       "coefficient": 3.127104251047821e-06,
+       "exponent": 0.15813698483982225,
+       "points": 5,
+       "r2": 0.8546311032833949
+      },
+      "boundary_unrank_s": {
+       "coefficient": 1.16744236502092e-06,
+       "exponent": 0.017153880579997057,
+       "points": 5,
+       "r2": 0.7633003780299881
+      },
+      "interior_build_s": {
+       "coefficient": 4.690112304037614e-06,
+       "exponent": 0.667297937814779,
+       "points": 5,
+       "r2": 0.9681017638696562
+      },
+      "interior_contains_s": {
+       "coefficient": 9.586506340738916e-08,
+       "exponent": 0.725830866439908,
+       "points": 5,
+       "r2": 0.9868315758506515
+      },
+      "interior_unrank_s": {
+       "coefficient": 6.314011333890267e-07,
+       "exponent": 0.8217501003873448,
+       "points": 5,
+       "r2": 0.9749832712507809
+      },
+      "time_s": {
+       "coefficient": 0.00020248010095346136,
+       "exponent": 0.2742357410112395,
+       "points": 5,
+       "r2": 0.5224382774016534
+      }
+     },
+     "name": "vs_output_runs",
+     "note": "1000 copies of one RU whose declared `Out` resolves to `R` runs (outputs at irregular gaps).  `time_s` is `kind_table()`.  `boundary.rank` and a boundary `contains` miss scan the runs (`O(R)`), `boundary.unrank` bisects (`O(log R)`); the interior's `contains`/`rank` are `O(R)` and its `unrank` `O(R log |R_r|)`.",
+     "points": [
+      {
+       "boundary_contains_miss_s": 3.402639801303546e-06,
+       "boundary_rank_s": 3.4683337435126303e-06,
+       "boundary_unrank_s": 1.184302382171154e-06,
+       "interior_build_s": 6.159447754422824e-06,
+       "interior_contains_s": 1.1069700121879578e-07,
+       "interior_count": 62,
+       "interior_rank_s": 2.3471967627604803e-07,
+       "interior_unrank_s": 7.947223881880443e-07,
+       "out_count": 2,
+       "peak_bytes": 12568,
+       "repeats": 3,
+       "time_s": 0.0003128340467810631,
+       "unit_size": 64,
+       "x": 1
+      },
+      {
+       "boundary_contains_miss_s": 3.6087508002916973e-06,
+       "boundary_rank_s": 3.799165909488996e-06,
+       "boundary_unrank_s": 1.1606964593132338e-06,
+       "interior_build_s": 9.354442978898684e-06,
+       "interior_contains_s": 2.4916604161262514e-07,
+       "interior_count": 56,
+       "interior_rank_s": 5.638863270481428e-07,
+       "interior_unrank_s": 1.8038895602027575e-06,
+       "out_count": 8,
+       "peak_bytes": 12544,
+       "repeats": 3,
+       "time_s": 0.0002597919665277004,
+       "unit_size": 64,
+       "x": 4
+      },
+      {
+       "boundary_contains_miss_s": 4.161113562683265e-06,
+       "boundary_rank_s": 3.982641113301118e-06,
+       "boundary_unrank_s": 1.2388903026779492e-06,
+       "interior_build_s": 2.328722272068262e-05,
+       "interior_contains_s": 5.570830156405766e-07,
+       "interior_count": 32,
+       "interior_rank_s": 1.2322235852479934e-06,
+       "interior_unrank_s": 4.194026502470175e-06,
+       "out_count": 32,
+       "peak_bytes": 12544,
+       "repeats": 3,
+       "time_s": 0.00019474979490041733,
+       "unit_size": 64,
+       "x": 16
+      },
+      {
+       "boundary_contains_miss_s": 6.750277243554592e-06,
+       "boundary_rank_s": 5.961946832636992e-06,
+       "boundary_unrank_s": 1.2688913072148958e-06,
+       "interior_build_s": 7.590041651080051e-05,
+       "interior_contains_s": 1.973890078564485e-06,
+       "interior_count": 128,
+       "interior_rank_s": 4.471666179597378e-06,
+       "interior_unrank_s": 1.90912497540315e-05,
+       "out_count": 128,
+       "peak_bytes": 42412,
+       "repeats": 3,
+       "time_s": 0.0006380416452884674,
+       "unit_size": 256,
+       "x": 64
+      },
+      {
+       "boundary_contains_miss_s": 9.702499955892562e-06,
+       "boundary_rank_s": 7.67041618625323e-06,
+       "boundary_unrank_s": 1.2579156706730525e-06,
+       "interior_build_s": 0.00014610055213173232,
+       "interior_contains_s": 3.7833334257205327e-06,
+       "interior_count": 256,
+       "interior_rank_s": 8.785277605056763e-06,
+       "interior_unrank_s": 4.382208300133546e-05,
+       "out_count": 256,
+       "peak_bytes": 106356,
+       "repeats": 3,
+       "time_s": 0.0012478330172598362,
+       "unit_size": 512,
+       "x": 128
+      }
+     ],
+     "x_label": "runs in Out"
+    },
+    {
+     "columns": [
+      "boundary_build_s",
+      "boundary_unrank_s",
+      "boundary_contains_s",
+      "interior_build_s",
+      "interior_unrank_s",
+      "interior_contains_s",
+      "unit_s",
+      "owner_s",
+      "verification_unit_s",
+      "verification_units_s",
+      "replay_units",
+      "boundary_count",
+      "n",
+      "layout"
+     ],
+     "fit_columns": [
+      "time_s",
+      "boundary_unrank_s",
+      "boundary_contains_s",
+      "interior_build_s",
+      "interior_unrank_s",
+      "unit_s",
+      "owner_s",
+      "verification_unit_s"
+     ],
+     "fits": {
+      "boundary_contains_s": {
+       "coefficient": 5.156657899240858e-06,
+       "exponent": 0.006535516186115742,
+       "points": 6,
+       "r2": 0.37791593684276326
+      },
+      "boundary_unrank_s": {
+       "coefficient": 2.1821535793326763e-06,
+       "exponent": 0.001413093351518536,
+       "points": 6,
+       "r2": 0.01334713700068113
+      },
+      "interior_build_s": {
+       "coefficient": 7.528787927740918e-06,
+       "exponent": -0.0034156850832819377,
+       "points": 6,
+       "r2": 0.11985459220843908
+      },
+      "interior_unrank_s": {
+       "coefficient": 7.132569236679954e-07,
+       "exponent": -0.0363280873176219,
+       "points": 6,
+       "r2": 0.36419958378385586
+      },
+      "owner_s": {
+       "coefficient": 2.368658613327817e-06,
+       "exponent": -0.010210939725241518,
+       "points": 6,
+       "r2": 0.6331700097446662
+      },
+      "time_s": {
+       "coefficient": 5.347899519818915e-06,
+       "exponent": 0.0014478179162096274,
+       "points": 6,
+       "r2": 0.016862812818982276
+      },
+      "unit_s": {
+       "coefficient": 2.4080561579133026e-06,
+       "exponent": -0.009977051759424083,
+       "points": 6,
+       "r2": 0.8386757594862171
+      },
+      "verification_unit_s": {
+       "coefficient": 3.385279968911662e-06,
+       "exponent": -0.007147529540778493,
+       "points": 6,
+       "r2": 0.47422759029156436
+      }
+     },
+     "name": "address_sets_vs_units_repeat",
+     "note": "`repeat(U, block)` of an 8-cell RU: every lookup descends by division, so all latencies should be flat in `U`.  `time_s` is `boundary.rank`.",
+     "points": [
+      {
+       "boundary_build_s": 5.667097866535187e-06,
+       "boundary_contains_s": 5.168056425948938e-06,
+       "boundary_count": 101,
+       "boundary_unrank_s": 2.1143071353435514e-06,
+       "interior_build_s": 7.720973032216231e-06,
+       "interior_contains_s": 1.1459633242338896e-07,
+       "interior_unrank_s": 8.294446161016822e-07,
+       "layout": "repeat",
+       "n": 2401,
+       "owner_s": 2.201806443432967e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "replay_units": 101,
+       "time_s": 5.081666943927606e-06,
+       "unit_s": 2.3387496670087177e-06,
+       "verification_unit_s": 3.4295845155914624e-06,
+       "verification_units_s": 2.4434737861156462e-06,
+       "x": 100
+      },
+      {
+       "boundary_build_s": 6.332993507385254e-06,
+       "boundary_contains_s": 5.4781946043173475e-06,
+       "boundary_count": 1001,
+       "boundary_unrank_s": 2.1326402202248575e-06,
+       "interior_build_s": 6.933469946185748e-06,
+       "interior_contains_s": 1.1199153959751129e-07,
+       "interior_unrank_s": 4.309986252337694e-07,
+       "layout": "repeat",
+       "n": 24001,
+       "owner_s": 2.347775734961033e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "replay_units": 1001,
+       "time_s": 5.5954155201713245e-06,
+       "unit_s": 2.26569672425588e-06,
+       "verification_unit_s": 3.052779162923495e-06,
+       "verification_units_s": 2.2177770733833315e-06,
+       "x": 1000
+      },
+      {
+       "boundary_build_s": 7.874798029661179e-06,
+       "boundary_contains_s": 5.756526564558347e-06,
+       "boundary_count": 10001,
+       "boundary_unrank_s": 2.4033322309454283e-06,
+       "interior_build_s": 7.512362984319528e-06,
+       "interior_contains_s": 1.1327210813760757e-07,
+       "interior_unrank_s": 4.322791937738657e-07,
+       "layout": "repeat",
+       "n": 240001,
+       "owner_s": 2.099443227052689e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "replay_units": 10001,
+       "time_s": 5.780416540801525e-06,
+       "unit_s": 2.139999220768611e-06,
+       "verification_unit_s": 3.1672231853008272e-06,
+       "verification_units_s": 2.299303499360879e-06,
+       "x": 10000
+      },
+      {
+       "boundary_build_s": 6.332993507385254e-06,
+       "boundary_contains_s": 5.4968070859710375e-06,
+       "boundary_count": 100001,
+       "boundary_unrank_s": 2.2786095117529233e-06,
+       "interior_build_s": 7.1320837984482445e-06,
+       "interior_contains_s": 1.1328666005283594e-07,
+       "interior_unrank_s": 4.375033313408494e-07,
+       "layout": "repeat",
+       "n": 2400001,
+       "owner_s": 2.0722206681966783e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "replay_units": 100001,
+       "time_s": 5.451527734597524e-06,
+       "unit_s": 2.107780116299788e-06,
+       "verification_unit_s": 3.0962501962979634e-06,
+       "verification_units_s": 2.2709726666410766e-06,
+       "x": 100000
+      },
+      {
+       "boundary_build_s": 8.74977558851242e-06,
+       "boundary_contains_s": 5.375415397187074e-06,
+       "boundary_count": 1000001,
+       "boundary_unrank_s": 2.2627801323930424e-06,
+       "interior_build_s": 6.9850000242392226e-06,
+       "interior_contains_s": 1.1199153959751129e-07,
+       "interior_unrank_s": 4.5834167394787073e-07,
+       "layout": "repeat",
+       "n": 24000001,
+       "owner_s": 2.047781211634477e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "replay_units": 1000001,
+       "time_s": 5.186391063034535e-06,
+       "unit_s": 2.0966663335760433e-06,
+       "verification_unit_s": 3.0750005195538203e-06,
+       "verification_units_s": 2.2509740665555e-06,
+       "x": 1000000
+      },
+      {
+       "boundary_build_s": 5.8747828006744385e-06,
+       "boundary_contains_s": 5.861666674415271e-06,
+       "boundary_count": 10000001,
+       "boundary_unrank_s": 2.109860070049763e-06,
+       "interior_build_s": 7.350972543160121e-06,
+       "interior_contains_s": 1.1328666005283594e-07,
+       "interior_unrank_s": 4.440371412783861e-07,
+       "layout": "repeat",
+       "n": 240000001,
+       "owner_s": 2.032637906571229e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "replay_units": 10000001,
+       "time_s": 5.508195608854294e-06,
+       "unit_s": 2.09250021725893e-06,
+       "verification_unit_s": 3.056943727036317e-06,
+       "verification_units_s": 2.2277763734261197e-06,
+       "x": 10000000
+      }
+     ],
+     "x_label": "replay units"
+    },
+    {
+     "columns": [
+      "boundary_build_s",
+      "boundary_unrank_s",
+      "boundary_contains_s",
+      "interior_build_s",
+      "interior_unrank_s",
+      "interior_contains_s",
+      "unit_s",
+      "owner_s",
+      "verification_unit_s",
+      "verification_units_s",
+      "replay_units",
+      "boundary_count",
+      "n",
+      "layout"
+     ],
+     "fit_columns": [
+      "time_s",
+      "boundary_unrank_s",
+      "boundary_contains_s",
+      "interior_build_s",
+      "unit_s",
+      "owner_s",
+      "verification_unit_s"
+     ],
+     "fits": {
+      "boundary_contains_s": {
+       "coefficient": 2.786266668320283e-06,
+       "exponent": 0.03895190943275711,
+       "points": 4,
+       "r2": 0.7728475951172041
+      },
+      "boundary_unrank_s": {
+       "coefficient": 1.0254436380718888e-06,
+       "exponent": 0.04294539789844723,
+       "points": 4,
+       "r2": 0.5231495456546162
+      },
+      "interior_build_s": {
+       "coefficient": 5.544794781007563e-06,
+       "exponent": 0.01885327854278391,
+       "points": 4,
+       "r2": 0.6845488511679741
+      },
+      "owner_s": {
+       "coefficient": 8.035092453327558e-07,
+       "exponent": 0.06181524082956632,
+       "points": 4,
+       "r2": 0.9740440204152746
+      },
+      "time_s": {
+       "coefficient": 2.9880946251175586e-06,
+       "exponent": 0.02302528541687272,
+       "points": 4,
+       "r2": 0.5736995834711252
+      },
+      "unit_s": {
+       "coefficient": 8.673162992768509e-07,
+       "exponent": 0.054002652457924405,
+       "points": 4,
+       "r2": 0.8280471461986335
+      },
+      "verification_unit_s": {
+       "coefficient": 1.9025799409188913e-06,
+       "exponent": 0.021178333928199275,
+       "points": 4,
+       "r2": 0.41940407338846464
+      }
+     },
+     "name": "address_sets_vs_units_unrolled",
+     "note": "A root of `U` separate `call` steps of one RU: descent bisects the root's step list, `O(log U)`; the description itself is `O(U)` (about 120 bytes per step, so 10^5 unrolled steps exceed `max_description_bytes = 10 MB`; the sweep stops at 50,000).  `time_s` is `boundary.rank`.",
+     "points": [
+      {
+       "boundary_build_s": 7.207971066236496e-06,
+       "boundary_contains_s": 3.3062494670351347e-06,
+       "boundary_count": 101,
+       "boundary_unrank_s": 1.3487506657838822e-06,
+       "interior_build_s": 5.953886235753695e-06,
+       "interior_contains_s": 1.1196243576705456e-07,
+       "interior_unrank_s": 2.5390181690454483e-07,
+       "layout": "unrolled",
+       "n": 301,
+       "owner_s": 1.0884708414475123e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "replay_units": 101,
+       "time_s": 3.247360388437907e-06,
+       "unit_s": 1.1458341032266616e-06,
+       "verification_unit_s": 2.0538875833153723e-06,
+       "verification_units_s": 1.259025496741136e-06,
+       "x": 100
+      },
+      {
+       "boundary_build_s": 5.916226655244827e-06,
+       "boundary_contains_s": 3.5733341549833614e-06,
+       "boundary_count": 1001,
+       "boundary_unrank_s": 1.2812499577800432e-06,
+       "interior_build_s": 6.5794431914885836e-06,
+       "interior_contains_s": 1.2110103853046894e-07,
+       "interior_unrank_s": 2.682209014892578e-07,
+       "layout": "unrolled",
+       "n": 3001,
+       "owner_s": 1.209027444322904e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "replay_units": 1001,
+       "time_s": 3.5277800634503366e-06,
+       "unit_s": 1.245136372745037e-06,
+       "verification_unit_s": 2.1912499020497003e-06,
+       "verification_units_s": 1.3544425989190738e-06,
+       "x": 1000
+      },
+      {
+       "boundary_build_s": 6.542075425386429e-06,
+       "boundary_contains_s": 4.326109774410725e-06,
+       "boundary_count": 10001,
+       "boundary_unrank_s": 1.3577798381447792e-06,
+       "interior_build_s": 6.34444256623586e-06,
+       "interior_contains_s": 1.1069641914218664e-07,
+       "interior_unrank_s": 3.359309630468488e-07,
+       "layout": "unrolled",
+       "n": 30001,
+       "owner_s": 1.3805522272984186e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "replay_units": 10001,
+       "time_s": 3.966527680555979e-06,
+       "unit_s": 1.3070832937955857e-06,
+       "verification_unit_s": 2.5386130437254906e-06,
+       "verification_units_s": 1.4577774951855341e-06,
+       "x": 10000
+      },
+      {
+       "boundary_build_s": 6.666872650384903e-06,
+       "boundary_contains_s": 4.02888593574365e-06,
+       "boundary_count": 50001,
+       "boundary_unrank_s": 1.8262490630149842e-06,
+       "interior_build_s": 6.8933330476284026e-06,
+       "interior_contains_s": 1.1590600479394197e-07,
+       "interior_unrank_s": 2.6302586775273085e-07,
+       "layout": "unrolled",
+       "n": 150001,
+       "owner_s": 1.6123630727330845e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "replay_units": 50001,
+       "time_s": 3.627083885173003e-06,
+       "unit_s": 1.6666669398546218e-06,
+       "verification_unit_s": 2.2368039935827255e-06,
+       "verification_units_s": 1.4451394478480022e-06,
+       "x": 50000
+      }
+     ],
+     "x_label": "replay units"
+    }
+   ],
+   "title": "Kind table and lazy address sets of the index"
+  },
+  "lookup": {
+   "description": "Per-call latency (seconds) of `DescriptionCircuit.__getitem__` for random, sequential and strided addresses, of `Index.replay_units.owner(address)` and of `Index.replay_units.unit(k)`.  `time_s` is the random-access latency.",
+   "name": "lookup",
+   "seconds": 1.0260672909207642,
+   "series": [
+    {
+     "columns": [
+      "sequential_s",
+      "strided_s",
+      "owner_s",
+      "unit_s",
+      "n",
+      "depth",
+      "k"
+     ],
+     "fit_columns": [
+      "time_s",
+      "sequential_s",
+      "strided_s",
+      "owner_s",
+      "unit_s"
+     ],
+     "fits": {
+      "owner_s": {
+       "coefficient": 2.9640221991124327e-06,
+       "exponent": 0.006129411452305767,
+       "points": 5,
+       "r2": 0.72123353938251
+      },
+      "sequential_s": {
+       "coefficient": 6.501061522111628e-06,
+       "exponent": 0.005083193060503725,
+       "points": 5,
+       "r2": 0.583812300800842
+      },
+      "strided_s": {
+       "coefficient": 6.5993957905091024e-06,
+       "exponent": 0.0031149629455669964,
+       "points": 5,
+       "r2": 0.2862133249284491
+      },
+      "time_s": {
+       "coefficient": 6.496397734944603e-06,
+       "exponent": 0.00509194171731301,
+       "points": 5,
+       "r2": 0.5049393962592976
+      },
+      "unit_s": {
+       "coefficient": 3.3288598235410957e-06,
+       "exponent": 0.0030064997651004267,
+       "points": 5,
+       "r2": 0.9548585685151539
+      }
+     },
+     "name": "vs_n",
+     "note": "Three `repeat` levels of factor `k`, `n = 3 k**3 + 1`: depth is fixed, so every latency should be flat in `n` (exponent near 0).",
+     "points": [
+      {
+       "depth": 4,
+       "k": 10,
+       "n": 3001,
+       "owner_s": 2.9620823139945667e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 6.4022233709692955e-06,
+       "strided_s": 6.672359692553679e-06,
+       "time_s": 6.36375043541193e-06,
+       "unit_s": 3.4165273730953534e-06,
+       "x": 3001
+      },
+      {
+       "depth": 4,
+       "k": 100,
+       "n": 3000001,
+       "owner_s": 3.406389926870664e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 7.493471105893453e-06,
+       "strided_s": 7.384029837946097e-06,
+       "time_s": 7.270276546478271e-06,
+       "unit_s": 3.482916702826818e-06,
+       "x": 3000001
+      },
+      {
+       "depth": 4,
+       "k": 1000,
+       "n": 3000000001,
+       "owner_s": 3.521665930747986e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 7.442499821384748e-06,
+       "strided_s": 6.515000325938066e-06,
+       "time_s": 7.819167027870814e-06,
+       "unit_s": 3.5594434787829716e-06,
+       "x": 3000000001
+      },
+      {
+       "depth": 4,
+       "k": 10000,
+       "n": 3000000000001,
+       "owner_s": 3.4598602602879204e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 7.349859612683455e-06,
+       "strided_s": 7.361667230725288e-06,
+       "time_s": 7.4252765625715255e-06,
+       "unit_s": 3.5872232789794603e-06,
+       "x": 3000000000001
+      },
+      {
+       "depth": 4,
+       "k": 100000,
+       "n": 3000000000000001,
+       "owner_s": 3.632083535194397e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 7.705140548447768e-06,
+       "strided_s": 7.441529693702857e-06,
+       "time_s": 7.507776220639546e-06,
+       "unit_s": 3.734859637916088e-06,
+       "x": 3000000000000001
+      }
+     ],
+     "x_label": "n (gates)"
+    },
+    {
+     "columns": [
+      "sequential_s",
+      "strided_s",
+      "owner_s",
+      "unit_s",
+      "n",
+      "depth"
+     ],
+     "fit_columns": [
+      "time_s",
+      "sequential_s",
+      "strided_s",
+      "owner_s",
+      "unit_s"
+     ],
+     "fits": {
+      "owner_s": {
+       "coefficient": 9.683476407363466e-07,
+       "exponent": 1.0421197694288222,
+       "points": 6,
+       "r2": 0.9948211908644193
+      },
+      "sequential_s": {
+       "coefficient": 2.5985931512684966e-06,
+       "exponent": 0.8201009327587125,
+       "points": 6,
+       "r2": 0.9849468374762395
+      },
+      "strided_s": {
+       "coefficient": 2.4622981154215418e-06,
+       "exponent": 0.8351622899442793,
+       "points": 6,
+       "r2": 0.9822487473297883
+      },
+      "time_s": {
+       "coefficient": 2.7989879390876838e-06,
+       "exponent": 0.8005742766353121,
+       "points": 6,
+       "r2": 0.9852105668927889
+      },
+      "unit_s": {
+       "coefficient": 9.360473075226305e-07,
+       "exponent": 1.0627101829966417,
+       "points": 6,
+       "r2": 0.999652342092743
+      }
+     },
+     "name": "vs_depth",
+     "note": "`repeat(2, ...)` nested `depth` times (`n = 3 * 2**depth + 1`, up to ~10**15): latency should be linear in depth (exponent near 1).",
+     "points": [
+      {
+       "depth": 3,
+       "n": 13,
+       "owner_s": 2.1831939617792764e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 5.331944363812606e-06,
+       "strided_s": 5.3733323390285175e-06,
+       "time_s": 5.6190292040506995e-06,
+       "unit_s": 1.939167268574238e-06,
+       "x": 2
+      },
+      {
+       "depth": 5,
+       "n": 49,
+       "owner_s": 3.5687489435076713e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 7.816947375734647e-06,
+       "strided_s": 6.7813896263639136e-06,
+       "time_s": 8.305138908326627e-06,
+       "unit_s": 4.025135810176532e-06,
+       "x": 4
+      },
+      {
+       "depth": 9,
+       "n": 769,
+       "owner_s": 9.065833874046802e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 1.2267082929611206e-05,
+       "strided_s": 1.2518473279972871e-05,
+       "time_s": 1.2267500472565493e-05,
+       "unit_s": 8.679583358267943e-06,
+       "x": 8
+      },
+      {
+       "depth": 17,
+       "n": 196609,
+       "owner_s": 1.6752500087022782e-05,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 2.245180308818817e-05,
+       "strided_s": 2.2766529582440853e-05,
+       "time_s": 2.416875058164199e-05,
+       "unit_s": 1.8533472903072835e-05,
+       "x": 16
+      },
+      {
+       "depth": 33,
+       "n": 12884901889,
+       "owner_s": 3.399333295722802e-05,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 4.621166580667098e-05,
+       "strided_s": 4.649569746106863e-05,
+       "time_s": 4.591138722995917e-05,
+       "unit_s": 3.6190970179935295e-05,
+       "x": 32
+      },
+      {
+       "depth": 49,
+       "n": 844424930131969,
+       "owner_s": 5.88020837555329e-05,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 7.009305680791537e-05,
+       "strided_s": 6.909764061371486e-05,
+       "time_s": 6.917972428103288e-05,
+       "unit_s": 5.696680707236131e-05,
+       "x": 48
+      }
+     ],
+     "x_label": "depth"
+    },
+    {
+     "columns": [
+      "sequential_s",
+      "strided_s",
+      "owner_s",
+      "unit_s",
+      "n",
+      "depth",
+      "case"
+     ],
+     "fit_columns": [
+      "time_s",
+      "owner_s",
+      "unit_s"
+     ],
+     "fits": {
+      "owner_s": {
+       "coefficient": 1.0032793764600057e-06,
+       "exponent": 0.01194562577724762,
+       "points": 6,
+       "r2": 0.5051851971433099
+      },
+      "time_s": {
+       "coefficient": 6.8551521603351025e-06,
+       "exponent": 0.015289967652134162,
+       "points": 6,
+       "r2": 0.5962071439045473
+      },
+      "unit_s": {
+       "coefficient": 9.885563658511181e-07,
+       "exponent": 0.015847217596088023,
+       "points": 6,
+       "r2": 0.3371473522050038
+      }
+     },
+     "name": "cluster",
+     "note": "`ClusterG` circuits of growing width: the decoder's hierarchy has a fixed depth, so lookups stay flat while `n` grows four orders of magnitude.",
+     "points": [
+      {
+       "case": "d4-L1",
+       "depth": 6,
+       "n": 4437,
+       "owner_s": 1.1084694415330887e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 7.371806229154269e-06,
+       "strided_s": 7.976807343463102e-06,
+       "time_s": 7.3718031247456865e-06,
+       "unit_s": 1.1183321475982666e-06,
+       "x": 4437
+      },
+      {
+       "case": "d8-L1",
+       "depth": 6,
+       "n": 27169,
+       "owner_s": 1.1065260817607243e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 8.948886146148046e-06,
+       "strided_s": 8.345693349838258e-06,
+       "time_s": 8.208886720240116e-06,
+       "unit_s": 1.1323640743891397e-06,
+       "x": 27169
+      },
+      {
+       "case": "d16-L2",
+       "depth": 6,
+       "n": 509833,
+       "owner_s": 1.2665257478753725e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 8.26264110704263e-06,
+       "strided_s": 8.28069324294726e-06,
+       "time_s": 8.758053493996462e-06,
+       "unit_s": 1.3330578804016112e-06,
+       "x": 509833
+      },
+      {
+       "case": "d32-L2",
+       "depth": 6,
+       "n": 1943561,
+       "owner_s": 1.1356966570019721e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 7.810136303305626e-06,
+       "strided_s": 7.909446333845456e-06,
+       "time_s": 8.926110652585824e-06,
+       "unit_s": 1.1262499416867893e-06,
+       "x": 1943561
+      },
+      {
+       "case": "d64-L2",
+       "depth": 6,
+       "n": 7588105,
+       "owner_s": 1.2101372703909874e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 8.43069205681483e-06,
+       "strided_s": 8.600278136630852e-06,
+       "time_s": 8.686527920265992e-06,
+       "unit_s": 1.3997203980882962e-06,
+       "x": 7588105
+      },
+      {
+       "case": "d128-L4",
+       "depth": 6,
+       "n": 59794185,
+       "owner_s": 1.2418068945407868e-06,
+       "peak_bytes": null,
+       "repeats": 0,
+       "sequential_s": 8.612082650264105e-06,
+       "strided_s": 7.862780864040057e-06,
+       "time_s": 8.578472770750523e-06,
+       "unit_s": 1.2455570201079051e-06,
+       "x": 59794185
+      }
+     ],
+     "x_label": "n (gates)"
+    }
+   ],
+   "title": "Lazy gate lookup: `circuit[i]` latency"
+  },
+  "merkle": {
+   "description": "`MerkleTree(domain, values, schema)` over `L` 16-bit leaves on a range domain: build wall time and `tracemalloc` peak, then the per-call latency of `tree.open(position)` and `verify_opening`, with the opening's size in bytes.  `commit_weights_s` builds `kappa_W` for `L` weights through `commit_weights`.",
+   "name": "merkle",
+   "seconds": 86.1941119581461,
+   "series": [
+    {
+     "columns": [
+      "values_per_s",
+      "hashes_per_s",
+      "bytes_per_leaf",
+      "commit_weights_s",
+      "depth"
+     ],
+     "fit_columns": [
+      "time_s",
+      "peak_bytes",
+      "commit_weights_s"
+     ],
+     "fits": {
+      "commit_weights_s": {
+       "coefficient": 2.7125860362859048e-06,
+       "exponent": 0.9876637418790797,
+       "points": 6,
+       "r2": 0.9993020569822711
+      },
+      "peak_bytes": {
+       "coefficient": 245.38830033910082,
+       "exponent": 0.9822848380481304,
+       "points": 6,
+       "r2": 0.9982881456408346
+      },
+      "time_s": {
+       "coefficient": 2.4540471428776314e-06,
+       "exponent": 0.9892255161504124,
+       "points": 6,
+       "r2": 0.998560009956736
+      }
+     },
+     "name": "build_vs_leaves",
+     "note": "Linear in `L`: `2L - 1` domain-bound SHA-256 calls.  `values_per_s` is the build throughput, `bytes_per_leaf` the retained tree (`_values` and every level) per leaf.",
+     "points": [
+      {
+       "bytes_per_leaf": 225.99,
+       "commit_weights_s": 0.00025754235684871674,
+       "depth": 7,
+       "hashes_per_s": 1060841.1634205214,
+       "peak_bytes": 22599,
+       "repeats": 3,
+       "time_s": 0.00024037528783082962,
+       "values_per_s": 416016.14251785155,
+       "x": 100
+      },
+      {
+       "bytes_per_leaf": 176.631,
+       "commit_weights_s": 0.002170292194932699,
+       "depth": 10,
+       "hashes_per_s": 1115683.5120615112,
+       "peak_bytes": 176631,
+       "repeats": 3,
+       "time_s": 0.001834749709814787,
+       "values_per_s": 545033.4694975629,
+       "x": 1000
+      },
+      {
+       "bytes_per_leaf": 269.5479,
+       "commit_weights_s": 0.028481165878474712,
+       "depth": 14,
+       "hashes_per_s": 1184317.270160497,
+       "peak_bytes": 2695479,
+       "repeats": 3,
+       "time_s": 0.02766741719096899,
+       "values_per_s": 361435.97831980255,
+       "x": 10000
+      },
+      {
+       "bytes_per_leaf": 218.79879,
+       "commit_weights_s": 0.24872766574844718,
+       "depth": 17,
+       "hashes_per_s": 1118450.1540697943,
+       "peak_bytes": 21879879,
+       "repeats": 3,
+       "time_s": 0.2343805837444961,
+       "values_per_s": 426656.502012182,
+       "x": 100000
+      },
+      {
+       "bytes_per_leaf": 177.991511,
+       "commit_weights_s": 2.1995692499913275,
+       "depth": 20,
+       "hashes_per_s": 1045507.3713578043,
+       "peak_bytes": 177991511,
+       "repeats": 3,
+       "time_s": 2.0058691669255495,
+       "values_per_s": 498537.00155964174,
+       "x": 1000000
+      },
+      {
+       "bytes_per_leaf": 178.2213795,
+       "commit_weights_s": 4.333995542023331,
+       "depth": 21,
+       "hashes_per_s": 1057722.9267450308,
+       "peak_bytes": 356442759,
+       "repeats": 3,
+       "time_s": 3.96540804207325,
+       "values_per_s": 504361.71480459603,
+       "x": 2000000
+      }
+     ],
+     "x_label": "leaves"
+    },
+    {
+     "columns": [
+      "verify_s",
+      "proof_bytes",
+      "depth"
+     ],
+     "fit_columns": [
+      "time_s",
+      "verify_s",
+      "proof_bytes"
+     ],
+     "fits": {
+      "proof_bytes": {
+       "coefficient": 150.02042929042383,
+       "exponent": 0.10766353899833608,
+       "points": 6,
+       "r2": 0.9707967862994784
+      },
+      "time_s": {
+       "coefficient": 5.688638357778797e-07,
+       "exponent": 0.096415831615596,
+       "points": 6,
+       "r2": 0.9964524145424566
+      },
+      "verify_s": {
+       "coefficient": 4.995986773715229e-06,
+       "exponent": 0.10693240540735421,
+       "points": 6,
+       "r2": 0.9627094760095735
+      }
+     },
+     "name": "open_verify_vs_leaves",
+     "note": "`time_s` is `tree.open(position)` (a rank lookup and `depth` sibling reads), `verify_s` is `verify_opening` (`depth + 1` hashes): both `O(log L)`.  `proof_bytes` is `2 + 32 * depth`.",
+     "points": [
+      {
+       "depth": 7,
+       "peak_bytes": null,
+       "proof_bytes": 226,
+       "repeats": 0,
+       "time_s": 9.113907193144163e-07,
+       "verify_s": 7.397499866783619e-06,
+       "x": 100
+      },
+      {
+       "depth": 10,
+       "peak_bytes": null,
+       "proof_bytes": 322,
+       "repeats": 0,
+       "time_s": 1.0737497359514237e-06,
+       "verify_s": 1.1052219197154045e-05,
+       "x": 1000
+      },
+      {
+       "depth": 14,
+       "peak_bytes": null,
+       "proof_bytes": 450,
+       "repeats": 0,
+       "time_s": 1.3656929756204287e-06,
+       "verify_s": 1.5258610559006531e-05,
+       "x": 10000
+      },
+      {
+       "depth": 17,
+       "peak_bytes": null,
+       "proof_bytes": 546,
+       "repeats": 0,
+       "time_s": 1.7483346164226532e-06,
+       "verify_s": 1.640888707091411e-05,
+       "x": 100000
+      },
+      {
+       "depth": 20,
+       "peak_bytes": null,
+       "proof_bytes": 642,
+       "repeats": 0,
+       "time_s": 2.123890444636345e-06,
+       "verify_s": 2.1803334044913453e-05,
+       "x": 1000000
+      },
+      {
+       "depth": 21,
+       "peak_bytes": null,
+       "proof_bytes": 674,
+       "repeats": 0,
+       "time_s": 2.345136987666289e-06,
+       "verify_s": 2.262083347886801e-05,
+       "x": 2000000
+      }
+     ],
+     "x_label": "leaves"
+    }
+   ],
+   "title": "Merkle commitments: build, open, verify"
+  },
+  "protocol": {
+   "description": "`time_s` is the prover's total (setup, boundary commitment, replay + interior commitments, openings); `verifier_total_s` the verifier's (admission, boundary check and `J`, interior check and `T`, evidence check).  `evaluate_s` is the honest computation itself through the lazy circuit (`circuit.evaluate`, `gates_per_s`), `kappa_w_s` the one-off weight commitment.  Sizes: `boundary_count = |\u2202|`, `interior_positions` committed, `openings` sent, message bytes as canonical JSON.",
+   "name": "protocol",
+   "seconds": 457.9875394999981,
+   "series": [
+    {
+     "columns": [
+      "case",
+      "q",
+      "s",
+      "n",
+      "replay_units",
+      "verification_units",
+      "weights",
+      "description_bytes",
+      "evaluate_s",
+      "gates_per_s",
+      "kappa_w_s",
+      "verifier_admit_s",
+      "prover_setup_s",
+      "prover_commit_boundary_s",
+      "verifier_boundary_s",
+      "verifier_boundary_merkle_s",
+      "prover_interiors_s",
+      "prover_replay_s",
+      "prover_commit_interior_s",
+      "verifier_interiors_s",
+      "prover_prove_s",
+      "verifier_evidence_s",
+      "verifier_merkle_s",
+      "verifier_recompute_s",
+      "openings_verified",
+      "prover_total_s",
+      "verifier_total_s",
+      "boundary_count",
+      "selected_replay_units",
+      "interior_positions",
+      "sampled_verification_units",
+      "openings",
+      "boundary_bytes",
+      "interiors_bytes",
+      "evidence_bytes",
+      "transcript_bytes",
+      "seeds",
+      "replay_us_per_position",
+      "commit_us_per_position",
+      "prove_us_per_opening",
+      "verify_merkle_us_per_opening",
+      "verify_recompute_us_per_opening",
+      "evidence_bytes_per_opening"
+     ],
+     "fit_columns": [
+      "time_s",
+      "verifier_total_s",
+      "prover_commit_boundary_s",
+      "prover_replay_s",
+      "prover_commit_interior_s",
+      "prover_prove_s",
+      "verifier_boundary_s",
+      "verifier_interiors_s",
+      "verifier_recompute_s",
+      "verifier_merkle_s",
+      "transcript_bytes",
+      "evaluate_s"
+     ],
+     "fits": {
+      "evaluate_s": {
+       "coefficient": 7.980607873112423e-06,
+       "exponent": 1.0066525834047384,
+       "points": 4,
+       "r2": 0.9999775143977132
+      },
+      "prover_commit_boundary_s": {
+       "coefficient": 5.978236781467318e-06,
+       "exponent": 0.6992967513538222,
+       "points": 4,
+       "r2": 0.9890088474398926
+      },
+      "prover_commit_interior_s": {
+       "coefficient": 3.3755244722048125e-05,
+       "exponent": 0.8950611791667548,
+       "points": 4,
+       "r2": 0.9784376471318906
+      },
+      "prover_prove_s": {
+       "coefficient": 1.7471610382001178e-05,
+       "exponent": 0.8256041400392581,
+       "points": 4,
+       "r2": 0.9748897440672624
+      },
+      "prover_replay_s": {
+       "coefficient": 3.292662476900737e-05,
+       "exponent": 0.8713723159328923,
+       "points": 4,
+       "r2": 0.9765639208639721
+      },
+      "time_s": {
+       "coefficient": 8.377931014552864e-05,
+       "exponent": 0.8763515628806283,
+       "points": 4,
+       "r2": 0.9779006954552127
+      },
+      "transcript_bytes": {
+       "coefficient": 543.1146275517243,
+       "exponent": 0.8919259493826107,
+       "points": 4,
+       "r2": 0.9755706239528263
+      },
+      "verifier_boundary_s": {
+       "coefficient": 5.5661326105968185e-05,
+       "exponent": 0.2387746399166292,
+       "points": 4,
+       "r2": 0.7299103978727579
+      },
+      "verifier_interiors_s": {
+       "coefficient": 1.1079287589796137e-06,
+       "exponent": 0.6979886329037271,
+       "points": 4,
+       "r2": 0.961107473136146
+      },
+      "verifier_merkle_s": {
+       "coefficient": 9.850077916121418e-06,
+       "exponent": 0.8830516165713329,
+       "points": 4,
+       "r2": 0.9772852861145375
+      },
+      "verifier_recompute_s": {
+       "coefficient": 5.004458604678422e-05,
+       "exponent": 0.8128375220442883,
+       "points": 4,
+       "r2": 0.9745696218252929
+      },
+      "verifier_total_s": {
+       "coefficient": 6.187879586485393e-05,
+       "exponent": 0.8277862559098118,
+       "points": 4,
+       "r2": 0.9753139228278976
+      }
+     },
+     "name": "cluster_vs_n",
+     "note": "`ClusterG` at growing model width, `q = 1/2, s = 1/4`.  Steps are the RUs: the boundary is the KV cache and the tokens, so `|\u2202|` grows with `n`.",
+     "points": [
+      {
+       "boundary_bytes": 6246.0,
+       "boundary_count": 92.0,
+       "case": "d4-L1",
+       "commit_us_per_position": 27.373932065817414,
+       "description_bytes": 23917,
+       "evaluate_s": 0.03725958289578557,
+       "evidence_bytes": 931510.0,
+       "evidence_bytes_per_opening": 773.6794019933554,
+       "gates_per_s": 119083.45867451643,
+       "interior_positions": 2224.0,
+       "interiors_bytes": 106.0,
+       "kappa_w_s": 0.000547334086149931,
+       "n": 4437,
+       "openings": 1204.0,
+       "openings_verified": 1204.0,
+       "peak_bytes": null,
+       "prove_us_per_opening": 13.866175222906758,
+       "prover_commit_boundary_s": 0.002091499976813793,
+       "prover_commit_interior_s": 0.06087962491437793,
+       "prover_interiors_s": 0.10821037506684661,
+       "prover_prove_s": 0.016694874968379736,
+       "prover_replay_s": 0.04733095783740282,
+       "prover_setup_s": 0.00022254185751080513,
+       "prover_total_s": 0.12715937523171306,
+       "q": "1/2",
+       "repeats": 3,
+       "replay_units": 4,
+       "replay_us_per_position": 21.281905502429325,
+       "s": "1/4",
+       "sampled_verification_units": 79.0,
+       "seeds": 1,
+       "selected_replay_units": 1.0,
+       "time_s": 0.12715937523171306,
+       "transcript_bytes": 939102.0,
+       "verification_units": 771,
+       "verifier_admit_s": 0.0018382081761956215,
+       "verifier_boundary_merkle_s": 0.00016341591253876686,
+       "verifier_boundary_s": 0.0003886250779032707,
+       "verifier_evidence_s": 0.058799249585717916,
+       "verifier_interiors_s": 0.0004419581964612007,
+       "verifier_merkle_s": 0.015909464098513126,
+       "verifier_recompute_s": 0.04288978548720479,
+       "verifier_total_s": 0.06145966565236449,
+       "verify_merkle_us_per_opening": 13.213840613382995,
+       "verify_recompute_us_per_opening": 35.62274542126644,
+       "weights": 201,
+       "x": 4437
+      },
+      {
+       "boundary_bytes": 15610.0,
+       "boundary_count": 344.0,
+       "case": "d8-L1",
+       "commit_us_per_position": 26.79352264015646,
+       "description_bytes": 24953,
+       "evaluate_s": 0.23320520808920264,
+       "evidence_bytes": 5605955.0,
+       "evidence_bytes_per_opening": 837.2095280764636,
+       "gates_per_s": 116502.54392949777,
+       "interior_positions": 13088.0,
+       "interiors_bytes": 284.0,
+       "kappa_w_s": 0.0017991247586905956,
+       "n": 27169,
+       "openings": 6696.0,
+       "openings_verified": 6696.0,
+       "peak_bytes": null,
+       "prove_us_per_opening": 14.402466537397501,
+       "prover_commit_boundary_s": 0.007373542059212923,
+       "prover_commit_interior_s": 0.35067362431436777,
+       "prover_interiors_s": 0.6318272915668786,
+       "prover_prove_s": 0.09643891593441367,
+       "prover_replay_s": 0.28038345789536834,
+       "prover_setup_s": 0.0003794170916080475,
+       "prover_total_s": 0.7352680824697018,
+       "q": "1/2",
+       "repeats": 3,
+       "replay_units": 7,
+       "replay_us_per_position": 21.42294146511066,
+       "s": "1/4",
+       "sampled_verification_units": 270.0,
+       "seeds": 1,
+       "selected_replay_units": 3.0,
+       "time_s": 0.7352680824697018,
+       "transcript_bytes": 5624179.0,
+       "verification_units": 2749,
+       "verifier_admit_s": 0.0022367918863892555,
+       "verifier_boundary_merkle_s": 0.0003341240808367729,
+       "verifier_boundary_s": 0.0006414172239601612,
+       "verifier_evidence_s": 0.3347727912478149,
+       "verifier_interiors_s": 0.001229959074407816,
+       "verifier_merkle_s": 0.09191612992435694,
+       "verifier_recompute_s": 0.24285666132345796,
+       "verifier_total_s": 0.3388006663881242,
+       "verify_merkle_us_per_opening": 13.727020598022243,
+       "verify_recompute_us_per_opening": 36.268915968258355,
+       "weights": 649,
+       "x": 27169
+      },
+      {
+       "boundary_bytes": 54373.0,
+       "boundary_count": 3648.0,
+       "case": "d16-L2",
+       "commit_us_per_position": 36.82193291256937,
+       "description_bytes": 46617,
+       "evaluate_s": 4.50297262519598,
+       "evidence_bytes": 41574307.0,
+       "evidence_bytes_per_opening": 1059.1370595878022,
+       "gates_per_s": 113221.43002763888,
+       "interior_positions": 75264.0,
+       "interiors_bytes": 283.0,
+       "kappa_w_s": 0.014002750162035227,
+       "n": 509833,
+       "openings": 39253.0,
+       "openings_verified": 39253.0,
+       "peak_bytes": null,
+       "prove_us_per_opening": 14.786365573254766,
+       "prover_commit_boundary_s": 0.07487941673025489,
+       "prover_commit_interior_s": 2.7713659587316215,
+       "prover_interiors_s": 4.747162458021194,
+       "prover_prove_s": 0.5804092078469694,
+       "prover_replay_s": 1.9699060833081603,
+       "prover_setup_s": 0.0007940828800201416,
+       "prover_total_s": 5.403163957409561,
+       "q": "1/2",
+       "repeats": 3,
+       "replay_units": 9,
+       "replay_us_per_position": 26.173284482729596,
+       "s": "1/4",
+       "sampled_verification_units": 1822.0,
+       "seeds": 1,
+       "selected_replay_units": 3.0,
+       "time_s": 5.403163957409561,
+       "transcript_bytes": 41640070.0,
+       "verification_units": 25569,
+       "verifier_admit_s": 0.004731833003461361,
+       "verifier_boundary_merkle_s": 0.001160456333309412,
+       "verifier_boundary_s": 0.0020630001090466976,
+       "verifier_evidence_s": 2.0988694173283875,
+       "verifier_interiors_s": 0.006980666890740395,
+       "verifier_merkle_s": 0.6867458433844149,
+       "verifier_recompute_s": 1.4121235739439726,
+       "verifier_total_s": 2.112370166927576,
+       "verify_merkle_us_per_opening": 17.495372159692632,
+       "verify_recompute_us_per_opening": 35.97492099824147,
+       "weights": 4361,
+       "x": 509833
+      },
+      {
+       "boundary_bytes": 27251.0,
+       "boundary_count": 3616.0,
+       "case": "d32-L2-r4",
+       "commit_us_per_position": 39.78041299235373,
+       "description_bytes": 45017,
+       "evaluate_s": 8.456219791900367,
+       "evidence_bytes": 173522586.0,
+       "evidence_bytes_per_opening": 1192.0216115957958,
+       "gates_per_s": 115918.58112993918,
+       "interior_positions": 279168.0,
+       "interiors_bytes": 285.0,
+       "kappa_w_s": 0.056162250228226185,
+       "n": 980233,
+       "openings": 145570.0,
+       "openings_verified": 145570.0,
+       "peak_bytes": null,
+       "prove_us_per_opening": 14.657982703567804,
+       "prover_commit_boundary_s": 0.07513287523761392,
+       "prover_commit_interior_s": 11.105418334249407,
+       "prover_interiors_s": 18.841493042185903,
+       "prover_prove_s": 2.1337625421583652,
+       "prover_replay_s": 7.7360747079364955,
+       "prover_setup_s": 0.0004297918640077114,
+       "prover_total_s": 21.05081825144589,
+       "q": "1/2",
+       "repeats": 1,
+       "replay_units": 5,
+       "replay_us_per_position": 27.711180034733548,
+       "s": "1/4",
+       "sampled_verification_units": 5732.0,
+       "seeds": 1,
+       "selected_replay_units": 3.0,
+       "time_s": 21.05081825144589,
+       "transcript_bytes": 173582876.0,
+       "verification_units": 37813,
+       "verifier_admit_s": 0.0043952916748821735,
+       "verifier_boundary_merkle_s": 0.0005319160409271717,
+       "verifier_boundary_s": 0.000986249651759863,
+       "verifier_evidence_s": 7.847082583699375,
+       "verifier_interiors_s": 0.02541195834055543,
+       "verifier_merkle_s": 2.7454022066667676,
+       "verifier_recompute_s": 5.101680377032608,
+       "verifier_total_s": 7.877876083366573,
+       "verify_merkle_us_per_opening": 18.859670307527427,
+       "verify_recompute_us_per_opening": 35.04623464335102,
+       "weights": 16905,
+       "x": 980233
+      }
+     ],
+     "x_label": "n (gates)"
+    },
+    {
+     "columns": [
+      "case",
+      "q",
+      "s",
+      "n",
+      "replay_units",
+      "verification_units",
+      "weights",
+      "description_bytes",
+      "evaluate_s",
+      "gates_per_s",
+      "kappa_w_s",
+      "verifier_admit_s",
+      "prover_setup_s",
+      "prover_commit_boundary_s",
+      "verifier_boundary_s",
+      "verifier_boundary_merkle_s",
+      "prover_interiors_s",
+      "prover_replay_s",
+      "prover_commit_interior_s",
+      "verifier_interiors_s",
+      "prover_prove_s",
+      "verifier_evidence_s",
+      "verifier_merkle_s",
+      "verifier_recompute_s",
+      "openings_verified",
+      "prover_total_s",
+      "verifier_total_s",
+      "boundary_count",
+      "selected_replay_units",
+      "interior_positions",
+      "sampled_verification_units",
+      "openings",
+      "boundary_bytes",
+      "interiors_bytes",
+      "evidence_bytes",
+      "transcript_bytes",
+      "seeds",
+      "replay_us_per_position",
+      "commit_us_per_position",
+      "prove_us_per_opening",
+      "verify_merkle_us_per_opening",
+      "verify_recompute_us_per_opening",
+      "evidence_bytes_per_opening"
+     ],
+     "fit_columns": [
+      "time_s",
+      "verifier_total_s",
+      "prover_commit_boundary_s",
+      "prover_replay_s",
+      "prover_commit_interior_s",
+      "prover_prove_s",
+      "verifier_boundary_s",
+      "verifier_interiors_s",
+      "verifier_recompute_s",
+      "verifier_merkle_s",
+      "transcript_bytes",
+      "evaluate_s"
+     ],
+     "fits": {
+      "evaluate_s": {
+       "coefficient": 7.436931449411741e-06,
+       "exponent": 1.0108357872266513,
+       "points": 4,
+       "r2": 0.9999354440950051
+      },
+      "prover_commit_boundary_s": {
+       "coefficient": 6.152414140507638e-05,
+       "exponent": 0.2128982318043601,
+       "points": 4,
+       "r2": 0.7256294559724545
+      },
+      "prover_commit_interior_s": {
+       "coefficient": 3.406588417070415e-06,
+       "exponent": 1.1344524773673799,
+       "points": 4,
+       "r2": 0.9957497662317365
+      },
+      "prover_prove_s": {
+       "coefficient": 1.5832570156711234e-06,
+       "exponent": 1.0892370747898024,
+       "points": 4,
+       "r2": 0.9973320899882323
+      },
+      "prover_replay_s": {
+       "coefficient": 2.584011336640889e-06,
+       "exponent": 1.1403558953117559,
+       "points": 4,
+       "r2": 0.9955005361708965
+      },
+      "time_s": {
+       "coefficient": 7.63998547379648e-06,
+       "exponent": 1.1286748483792732,
+       "points": 4,
+       "r2": 0.9959266518476324
+      },
+      "transcript_bytes": {
+       "coefficient": 62.1743902090134,
+       "exponent": 1.1351080365775412,
+       "points": 4,
+       "r2": 0.9969730518288216
+      },
+      "verifier_boundary_s": {
+       "coefficient": 5.267288754840268e-05,
+       "exponent": 0.21773676833898448,
+       "points": 4,
+       "r2": 0.6818339686434749
+      },
+      "verifier_interiors_s": {
+       "coefficient": 1.0030428744846082e-06,
+       "exponent": 0.7439401183208992,
+       "points": 4,
+       "r2": 0.9981705491353047
+      },
+      "verifier_merkle_s": {
+       "coefficient": 7.123611084749288e-07,
+       "exponent": 1.1719832986958791,
+       "points": 4,
+       "r2": 0.9912126976973189
+      },
+      "verifier_recompute_s": {
+       "coefficient": 3.5283013940714688e-06,
+       "exponent": 1.1044779391367974,
+       "points": 4,
+       "r2": 0.9921106404387329
+      },
+      "verifier_total_s": {
+       "coefficient": 4.357908593225127e-06,
+       "exponent": 1.1190115774594314,
+       "points": 4,
+       "r2": 0.9913740537516184
+      }
+     },
+     "name": "requests_vs_n",
+     "note": "`RequestsG` at growing model width, `q = 1/2, s = 1/4`.  Requests are the RUs: the boundary is prompts and tokens only, the interiors hold everything else.",
+     "points": [
+      {
+       "boundary_bytes": 3834.0,
+       "boundary_count": 12.0,
+       "case": "d4-L1",
+       "commit_us_per_position": 24.272451066115703,
+       "description_bytes": 22819,
+       "evaluate_s": 0.03546116687357426,
+       "evidence_bytes": 966508.0,
+       "evidence_bytes_per_opening": 777.5607401448109,
+       "gates_per_s": 125122.7861682821,
+       "interior_positions": 2112.0,
+       "interiors_bytes": 192.0,
+       "kappa_w_s": 0.0005135419778525829,
+       "n": 4437,
+       "openings": 1243.0,
+       "openings_verified": 1243.0,
+       "peak_bytes": null,
+       "prove_us_per_opening": 13.57894200510971,
+       "prover_commit_boundary_s": 0.0003237500786781311,
+       "prover_commit_interior_s": 0.05126341665163636,
+       "prover_interiors_s": 0.09263258380815387,
+       "prover_prove_s": 0.01687862491235137,
+       "prover_replay_s": 0.040783376432955265,
+       "prover_setup_s": 0.00016520824283361435,
+       "prover_total_s": 0.11039195815101266,
+       "q": "1/2",
+       "repeats": 3,
+       "replay_units": 3,
+       "replay_us_per_position": 19.310310811058365,
+       "s": "1/4",
+       "sampled_verification_units": 121.0,
+       "seeds": 1,
+       "selected_replay_units": 2.0,
+       "time_s": 0.11039195815101266,
+       "transcript_bytes": 971782.0,
+       "verification_units": 771,
+       "verifier_admit_s": 0.0014752503484487534,
+       "verifier_boundary_merkle_s": 0.00011454196646809578,
+       "verifier_boundary_s": 0.0002847500145435333,
+       "verifier_evidence_s": 0.05967658292502165,
+       "verifier_interiors_s": 0.0005574156530201435,
+       "verifier_merkle_s": 0.015930914785712957,
+       "verifier_recompute_s": 0.04375283373519778,
+       "verifier_total_s": 0.06189912371337414,
+       "verify_merkle_us_per_opening": 12.816504252383714,
+       "verify_recompute_us_per_opening": 35.1993835359596,
+       "weights": 201,
+       "x": 4437
+      },
+      {
+       "boundary_bytes": 9177.0,
+       "boundary_count": 24.0,
+       "case": "d8-L1",
+       "commit_us_per_position": 24.9023626517428,
+       "description_bytes": 23415,
+       "evaluate_s": 0.2323184167034924,
+       "evidence_bytes": 5652915.0,
+       "evidence_bytes_per_opening": 861.1997257769652,
+       "gates_per_s": 116947.25018152886,
+       "interior_positions": 13248.0,
+       "interiors_bytes": 281.0,
+       "kappa_w_s": 0.0017747082747519016,
+       "n": 27169,
+       "openings": 6564.0,
+       "openings_verified": 6564.0,
+       "peak_bytes": null,
+       "prove_us_per_opening": 13.554146250007285,
+       "prover_commit_boundary_s": 0.0006101671606302261,
+       "prover_commit_interior_s": 0.3299065004102886,
+       "prover_interiors_s": 0.5970387081615627,
+       "prover_prove_s": 0.08896941598504782,
+       "prover_replay_s": 0.2671322077512741,
+       "prover_setup_s": 0.00029575033113360405,
+       "prover_total_s": 0.6872267504222691,
+       "q": "1/2",
+       "repeats": 3,
+       "replay_units": 5,
+       "replay_us_per_position": 20.16396495707081,
+       "s": "1/4",
+       "sampled_verification_units": 425.0,
+       "seeds": 1,
+       "selected_replay_units": 3.0,
+       "time_s": 0.6872267504222691,
+       "transcript_bytes": 5665103.0,
+       "verification_units": 2749,
+       "verifier_admit_s": 0.0017556673847138882,
+       "verifier_boundary_merkle_s": 0.00026124995201826096,
+       "verifier_boundary_s": 0.0005545839667320251,
+       "verifier_evidence_s": 0.3222766248509288,
+       "verifier_interiors_s": 0.001793332863599062,
+       "verifier_merkle_s": 0.09052719688042998,
+       "verifier_recompute_s": 0.23198339203372598,
+       "verifier_total_s": 0.3260331670753658,
+       "verify_merkle_us_per_opening": 13.791468141442715,
+       "verify_recompute_us_per_opening": 35.34177209532693,
+       "weights": 649,
+       "x": 27169
+      },
+      {
+       "boundary_bytes": 28645.0,
+       "boundary_count": 64.0,
+       "case": "d16-L2",
+       "commit_us_per_position": 26.2606125477099,
+       "description_bytes": 40278,
+       "evaluate_s": 4.363509957678616,
+       "evidence_bytes": 169291168.0,
+       "evidence_bytes_per_opening": 1066.0317244419257,
+       "gates_per_s": 116840.11379482006,
+       "interior_positions": 315880.0,
+       "interiors_bytes": 553.0,
+       "kappa_w_s": 0.014525916893035173,
+       "n": 509833,
+       "openings": 158805.0,
+       "openings_verified": 158805.0,
+       "peak_bytes": null,
+       "prove_us_per_opening": 15.793710054215051,
+       "prover_commit_boundary_s": 0.0014904588460922241,
+       "prover_commit_interior_s": 8.295202291570604,
+       "prover_interiors_s": 15.015083875041455,
+       "prover_prove_s": 2.5081201251596212,
+       "prover_replay_s": 6.719881583470851,
+       "prover_setup_s": 0.0006915424019098282,
+       "prover_total_s": 17.52538600144908,
+       "q": "1/2",
+       "repeats": 1,
+       "replay_units": 9,
+       "replay_us_per_position": 21.27352660336473,
+       "s": "1/4",
+       "sampled_verification_units": 4460.0,
+       "seeds": 1,
+       "selected_replay_units": 6.0,
+       "time_s": 17.52538600144908,
+       "transcript_bytes": 169346092.0,
+       "verification_units": 25569,
+       "verifier_admit_s": 0.0033615422435104847,
+       "verifier_boundary_merkle_s": 0.0006952118128538132,
+       "verifier_boundary_s": 0.0014377092011272907,
+       "verifier_evidence_s": 8.276954083703458,
+       "verifier_interiors_s": 0.017386875115334988,
+       "verifier_merkle_s": 2.6821912708692253,
+       "verifier_recompute_s": 5.594762812834233,
+       "verifier_total_s": 8.299140210263431,
+       "verify_merkle_us_per_opening": 16.889841446234218,
+       "verify_recompute_us_per_opening": 35.23039458980657,
+       "weights": 4361,
+       "x": 509833
+      },
+      {
+       "boundary_bytes": 12241.0,
+       "boundary_count": 32.0,
+       "case": "d32-L2-r4",
+       "commit_us_per_position": 36.54364603890924,
+       "description_bytes": 40708,
+       "evaluate_s": 8.397573874797672,
+       "evidence_bytes": 454133112.0,
+       "evidence_bytes_per_opening": 1198.9205274760088,
+       "gates_per_s": 116728.11869411716,
+       "interior_positions": 722472.0,
+       "interiors_bytes": 376.0,
+       "kappa_w_s": 0.055944917257875204,
+       "n": 980233,
+       "openings": 378785.0,
+       "openings_verified": 378785.0,
+       "peak_bytes": null,
+       "prove_us_per_opening": 15.449319425012156,
+       "prover_commit_boundary_s": 0.0007912497967481613,
+       "prover_commit_interior_s": 26.401761041022837,
+       "prover_interiors_s": 48.317462749779224,
+       "prover_prove_s": 5.85197045840323,
+       "prover_replay_s": 21.915701708756387,
+       "prover_setup_s": 0.00037499982863664627,
+       "prover_total_s": 54.17059945780784,
+       "q": "1/2",
+       "repeats": 1,
+       "replay_units": 5,
+       "replay_us_per_position": 30.334326740353102,
+       "s": "1/4",
+       "sampled_verification_units": 8263.0,
+       "seeds": 1,
+       "selected_replay_units": 4.0,
+       "time_s": 54.17059945780784,
+       "transcript_bytes": 454193426.0,
+       "verification_units": 37813,
+       "verifier_admit_s": 0.0030925418250262737,
+       "verifier_boundary_merkle_s": 0.0003239549696445465,
+       "verifier_boundary_s": 0.0006871670484542847,
+       "verifier_evidence_s": 29.281206249725074,
+       "verifier_interiors_s": 0.030219875276088715,
+       "verifier_merkle_s": 10.116436617448926,
+       "verifier_recompute_s": 19.164769632276148,
+       "verifier_total_s": 29.315205833874643,
+       "verify_merkle_us_per_opening": 26.707595647792086,
+       "verify_recompute_us_per_opening": 50.59537635406932,
+       "weights": 16905,
+       "x": 980233
+      }
+     ],
+     "x_label": "n (gates)"
+    },
+    {
+     "columns": [
+      "case",
+      "q",
+      "s",
+      "n",
+      "replay_units",
+      "verification_units",
+      "weights",
+      "description_bytes",
+      "evaluate_s",
+      "gates_per_s",
+      "kappa_w_s",
+      "verifier_admit_s",
+      "prover_setup_s",
+      "prover_commit_boundary_s",
+      "verifier_boundary_s",
+      "verifier_boundary_merkle_s",
+      "prover_interiors_s",
+      "prover_replay_s",
+      "prover_commit_interior_s",
+      "verifier_interiors_s",
+      "prover_prove_s",
+      "verifier_evidence_s",
+      "verifier_merkle_s",
+      "verifier_recompute_s",
+      "openings_verified",
+      "prover_total_s",
+      "verifier_total_s",
+      "boundary_count",
+      "selected_replay_units",
+      "interior_positions",
+      "sampled_verification_units",
+      "openings",
+      "boundary_bytes",
+      "interiors_bytes",
+      "evidence_bytes",
+      "transcript_bytes",
+      "seeds",
+      "replay_us_per_position",
+      "commit_us_per_position",
+      "prove_us_per_opening",
+      "verify_merkle_us_per_opening",
+      "verify_recompute_us_per_opening",
+      "evidence_bytes_per_opening"
+     ],
+     "fit_columns": [
+      "time_s",
+      "verifier_total_s",
+      "prover_commit_boundary_s",
+      "prover_replay_s",
+      "prover_commit_interior_s",
+      "prover_prove_s",
+      "verifier_boundary_s",
+      "verifier_interiors_s",
+      "verifier_recompute_s",
+      "verifier_merkle_s",
+      "transcript_bytes",
+      "evaluate_s"
+     ],
+     "fits": {
+      "evaluate_s": {
+       "coefficient": 1.8462367090396583,
+       "exponent": 0.0,
+       "points": 4,
+       "r2": 1.0
+      },
+      "prover_commit_boundary_s": {
+       "coefficient": 0.05760556054173213,
+       "exponent": -0.1449461859378497,
+       "points": 4,
+       "r2": 0.7690557364996444
+      },
+      "prover_commit_interior_s": {
+       "coefficient": 5.437067589967842,
+       "exponent": 0.842078484021006,
+       "points": 4,
+       "r2": 0.9979465865981643
+      },
+      "prover_prove_s": {
+       "coefficient": 1.499411162360557,
+       "exponent": 0.8062741442385303,
+       "points": 4,
+       "r2": 0.998279631361134
+      },
+      "prover_replay_s": {
+       "coefficient": 4.396455280362823,
+       "exponent": 0.8479776507460293,
+       "points": 4,
+       "r2": 0.9981567446298879
+      },
+      "time_s": {
+       "coefficient": 11.306705810929055,
+       "exponent": 0.7978608220863467,
+       "points": 4,
+       "r2": 0.9983502764829935
+      },
+      "transcript_bytes": {
+       "coefficient": 91065593.51487604,
+       "exponent": 0.9589512196501637,
+       "points": 4,
+       "r2": 0.9964846665854926
+      },
+      "verifier_boundary_s": {
+       "coefficient": 0.005725922501877936,
+       "exponent": -0.06657694388738918,
+       "points": 4,
+       "r2": 0.2149620872037965
+      },
+      "verifier_interiors_s": {
+       "coefficient": 0.018385979236727003,
+       "exponent": 0.9122959567891061,
+       "points": 4,
+       "r2": 0.9994206592826387
+      },
+      "verifier_merkle_s": {
+       "coefficient": 1.4741638362580287,
+       "exponent": 0.8317533316379538,
+       "points": 4,
+       "r2": 0.9989913045316149
+      },
+      "verifier_recompute_s": {
+       "coefficient": 3.870475899975943,
+       "exponent": 0.8565909193997072,
+       "points": 4,
+       "r2": 0.9979369743939454
+      },
+      "verifier_total_s": {
+       "coefficient": 5.353175766208061,
+       "exponent": 0.8374731574888347,
+       "points": 4,
+       "r2": 0.9979759840303717
+      }
+     },
+     "name": "cluster_vs_q",
+     "note": "`ClusterG` `d8-r32` (49 RUs), `s = 1/4`, mean over 2 session seed(s): the replay phase and the interior commitments scale with the selected RUs, `q * #RU`, so the realized counts (`selected_replay_units`, `interior_positions`) are the honest x-axis.",
+     "points": [
+      {
+       "boundary_bytes": 162832.0,
+       "boundary_count": 2752.0,
+       "case": "d8-r32",
+       "commit_us_per_position": 41.7318553988846,
+       "description_bytes": 35143,
+       "evaluate_s": 1.8462367090396583,
+       "evidence_bytes": 3321034.5,
+       "evidence_bytes_per_opening": 864.5150331901601,
+       "gates_per_s": 115266.36804372452,
+       "interior_positions": 7392.0,
+       "interiors_bytes": 106.0,
+       "kappa_w_s": 0.0021349159069359303,
+       "n": 212809,
+       "openings": 3841.5,
+       "openings_verified": 3841.5,
+       "peak_bytes": null,
+       "prove_us_per_opening": 24.91943249446207,
+       "prover_commit_boundary_s": 0.08723999978974462,
+       "prover_commit_interior_s": 0.30848187510855496,
+       "prover_interiors_s": 0.554769812617451,
+       "prover_prove_s": 0.09572799992747605,
+       "prover_replay_s": 0.24393547885119915,
+       "prover_setup_s": 0.0040656873025000095,
+       "prover_total_s": 0.7421938958577812,
+       "q": "1/32",
+       "repeats": 3,
+       "replay_units": 49,
+       "replay_us_per_position": 32.99992949826828,
+       "s": "1/4",
+       "sampled_verification_units": 146.0,
+       "seeds": 2,
+       "selected_replay_units": 1.0,
+       "time_s": 0.7421938958577812,
+       "transcript_bytes": 3487848.5,
+       "verification_units": 17449,
+       "verifier_admit_s": 0.010715041309595108,
+       "verifier_boundary_merkle_s": 0.003538750112056732,
+       "verifier_boundary_s": 0.006141437450423837,
+       "verifier_evidence_s": 0.2870173333212733,
+       "verifier_interiors_s": 0.0007858125027269125,
+       "verifier_merkle_s": 0.0853931896854192,
+       "verifier_recompute_s": 0.20901748887263238,
+       "verifier_total_s": 0.30853002122603357,
+       "verify_merkle_us_per_opening": 22.229126561348224,
+       "verify_recompute_us_per_opening": 54.41038367112648,
+       "weights": 649,
+       "x": 0.03125
+      },
+      {
+       "boundary_bytes": 162832.0,
+       "boundary_count": 2752.0,
+       "case": "d8-r32",
+       "commit_us_per_position": 36.73541950750314,
+       "description_bytes": 35143,
+       "evaluate_s": 1.8462367090396583,
+       "evidence_bytes": 10791174.5,
+       "evidence_bytes_per_opening": 860.3001155977199,
+       "gates_per_s": 115266.36804372452,
+       "interior_positions": 23616.0,
+       "interiors_bytes": 371.5,
+       "kappa_w_s": 0.0021349159069359303,
+       "n": 212809,
+       "openings": 12543.5,
+       "openings_verified": 12543.5,
+       "peak_bytes": null,
+       "prove_us_per_opening": 20.76317586903722,
+       "prover_commit_boundary_s": 0.0926138749346137,
+       "prover_commit_interior_s": 0.8675436670891941,
+       "prover_interiors_s": 1.5644373749382794,
+       "prover_prove_s": 0.26044289651326835,
+       "prover_replay_s": 0.6968937078490853,
+       "prover_setup_s": 0.0028662492986768484,
+       "prover_total_s": 2.0160911679267883,
+       "q": "1/8",
+       "repeats": 3,
+       "replay_units": 49,
+       "replay_us_per_position": 29.509388035615064,
+       "s": "1/4",
+       "sampled_verification_units": 574.5,
+       "seeds": 2,
+       "selected_replay_units": 4.0,
+       "time_s": 2.0160911679267883,
+       "transcript_bytes": 10960385.0,
+       "verification_units": 17449,
+       "verifier_admit_s": 0.00741385412402451,
+       "verifier_boundary_merkle_s": 0.004964129067957401,
+       "verifier_boundary_s": 0.008740479126572609,
+       "verifier_evidence_s": 0.8459089796524495,
+       "verifier_interiors_s": 0.002676979172974825,
+       "verifier_merkle_s": 0.24774942640215158,
+       "verifier_recompute_s": 0.5981595532502979,
+       "verifier_total_s": 0.8646065427456051,
+       "verify_merkle_us_per_opening": 19.751219867034845,
+       "verify_recompute_us_per_opening": 47.68681414679299,
+       "weights": 649,
+       "x": 0.125
+      },
+      {
+       "boundary_bytes": 162832.0,
+       "boundary_count": 2752.0,
+       "case": "d8-r32",
+       "commit_us_per_position": 26.764889276594957,
+       "description_bytes": 35143,
+       "evaluate_s": 1.8462367090396583,
+       "evidence_bytes": 49749504.0,
+       "evidence_bytes_per_opening": 843.2976912906397,
+       "gates_per_s": 115266.36804372452,
+       "interior_positions": 114160.0,
+       "interiors_bytes": 2375.5,
+       "kappa_w_s": 0.0021349159069359303,
+       "n": 212809,
+       "openings": 58994.0,
+       "openings_verified": 58994.0,
+       "peak_bytes": null,
+       "prove_us_per_opening": 14.628566212687046,
+       "prover_commit_boundary_s": 0.05857785406988114,
+       "prover_commit_interior_s": 3.0554797598160803,
+       "prover_interiors_s": 5.497305458178744,
+       "prover_prove_s": 0.8629976351512596,
+       "prover_replay_s": 2.4418256983626634,
+       "prover_setup_s": 0.0021689689019694924,
+       "prover_total_s": 6.421049916301854,
+       "q": "1/2",
+       "repeats": 2,
+       "replay_units": 49,
+       "replay_us_per_position": 21.389503314319057,
+       "s": "1/4",
+       "sampled_verification_units": 2286.5,
+       "seeds": 2,
+       "selected_replay_units": 26.5,
+       "time_s": 6.421049916301854,
+       "transcript_bytes": 49930459.0,
+       "verification_units": 17449,
+       "verifier_admit_s": 0.006621999782510102,
+       "verifier_boundary_merkle_s": 0.0033099561696872115,
+       "verifier_boundary_s": 0.005703104194253683,
+       "verifier_evidence_s": 2.9759540103841573,
+       "verifier_interiors_s": 0.010205999948084354,
+       "verifier_merkle_s": 0.8210376264760271,
+       "verifier_recompute_s": 2.1549163839081302,
+       "verifier_total_s": 2.9984851143090054,
+       "verify_merkle_us_per_opening": 13.917307293555735,
+       "verify_recompute_us_per_opening": 36.52772119042835,
+       "weights": 649,
+       "x": 0.5
+      },
+      {
+       "boundary_bytes": 162832.0,
+       "boundary_count": 2752.0,
+       "case": "d8-r32",
+       "commit_us_per_position": 26.696068615083924,
+       "description_bytes": 35143,
+       "evaluate_s": 1.8462367090396583,
+       "evidence_bytes": 90715882.5,
+       "evidence_bytes_per_opening": 843.2881783702381,
+       "gates_per_s": 115266.36804372452,
+       "interior_positions": 209408.0,
+       "interiors_bytes": 4375.0,
+       "kappa_w_s": 0.0021349159069359303,
+       "n": 212809,
+       "openings": 107574.0,
+       "openings_verified": 107574.0,
+       "peak_bytes": null,
+       "prove_us_per_opening": 14.282367841088858,
+       "prover_commit_boundary_s": 0.05746862501837313,
+       "prover_commit_interior_s": 5.590370336547494,
+       "prover_interiors_s": 10.12826164579019,
+       "prover_prove_s": 1.5364114381372929,
+       "prover_replay_s": 4.537891309242696,
+       "prover_setup_s": 0.002252708189189434,
+       "prover_total_s": 11.724394417135045,
+       "q": "1",
+       "repeats": 1,
+       "replay_units": 49,
+       "replay_us_per_position": 21.67009526495022,
+       "s": "1/4",
+       "sampled_verification_units": 4354.0,
+       "seeds": 2,
+       "selected_replay_units": 49.0,
+       "time_s": 11.724394417135045,
+       "transcript_bytes": 90909773.5,
+       "verification_units": 17449,
+       "verifier_admit_s": 0.006770916515961289,
+       "verifier_boundary_merkle_s": 0.003136521438136697,
+       "verifier_boundary_s": 0.005319125019013882,
+       "verifier_evidence_s": 5.496915583033115,
+       "verifier_interiors_s": 0.0179668334312737,
+       "verifier_merkle_s": 1.5168398912064731,
+       "verifier_recompute_s": 3.9800756918266416,
+       "verifier_total_s": 5.5269724579993635,
+       "verify_merkle_us_per_opening": 14.100432178839432,
+       "verify_recompute_us_per_opening": 36.99849119514605,
+       "weights": 649,
+       "x": 1.0
+      }
+     ],
+     "x_label": "q"
+    },
+    {
+     "columns": [
+      "case",
+      "q",
+      "s",
+      "n",
+      "replay_units",
+      "verification_units",
+      "weights",
+      "description_bytes",
+      "evaluate_s",
+      "gates_per_s",
+      "kappa_w_s",
+      "verifier_admit_s",
+      "prover_setup_s",
+      "prover_commit_boundary_s",
+      "verifier_boundary_s",
+      "verifier_boundary_merkle_s",
+      "prover_interiors_s",
+      "prover_replay_s",
+      "prover_commit_interior_s",
+      "verifier_interiors_s",
+      "prover_prove_s",
+      "verifier_evidence_s",
+      "verifier_merkle_s",
+      "verifier_recompute_s",
+      "openings_verified",
+      "prover_total_s",
+      "verifier_total_s",
+      "boundary_count",
+      "selected_replay_units",
+      "interior_positions",
+      "sampled_verification_units",
+      "openings",
+      "boundary_bytes",
+      "interiors_bytes",
+      "evidence_bytes",
+      "transcript_bytes",
+      "seeds",
+      "replay_us_per_position",
+      "commit_us_per_position",
+      "prove_us_per_opening",
+      "verify_merkle_us_per_opening",
+      "verify_recompute_us_per_opening",
+      "evidence_bytes_per_opening"
+     ],
+     "fit_columns": [
+      "time_s",
+      "verifier_total_s",
+      "prover_commit_boundary_s",
+      "prover_replay_s",
+      "prover_commit_interior_s",
+      "prover_prove_s",
+      "verifier_boundary_s",
+      "verifier_interiors_s",
+      "verifier_recompute_s",
+      "verifier_merkle_s",
+      "transcript_bytes",
+      "evaluate_s"
+     ],
+     "fits": {
+      "evaluate_s": {
+       "coefficient": 1.8462367090396583,
+       "exponent": 0.0,
+       "points": 4,
+       "r2": 1.0
+      },
+      "prover_commit_boundary_s": {
+       "coefficient": 0.056848586010621455,
+       "exponent": -0.0030803796894023,
+       "points": 4,
+       "r2": 0.5872573516372674
+      },
+      "prover_commit_interior_s": {
+       "coefficient": 3.0263158082783255,
+       "exponent": 0.004998051833374886,
+       "points": 4,
+       "r2": 0.004539853369232794
+      },
+      "prover_prove_s": {
+       "coefficient": 3.3655461610735347,
+       "exponent": 0.9874603063986762,
+       "points": 4,
+       "r2": 0.9936308535379488
+      },
+      "prover_replay_s": {
+       "coefficient": 2.420136572626302,
+       "exponent": 0.00538925462838475,
+       "points": 4,
+       "r2": 0.004946258592052888
+      },
+      "time_s": {
+       "coefficient": 8.19091891589818,
+       "exponent": 0.11489035132853749,
+       "points": 4,
+       "r2": 0.5065711870923973
+      },
+      "transcript_bytes": {
+       "coefficient": 195364436.40320686,
+       "exponent": 0.9875445080215303,
+       "points": 4,
+       "r2": 0.9930449582300431
+      },
+      "verifier_boundary_s": {
+       "coefficient": 0.005375975573553974,
+       "exponent": -0.012769479985048874,
+       "points": 4,
+       "r2": 0.2036313392179142
+      },
+      "verifier_interiors_s": {
+       "coefficient": 0.005640992222516733,
+       "exponent": 0.2789913353034186,
+       "points": 4,
+       "r2": 0.38015153431141935
+      },
+      "verifier_merkle_s": {
+       "coefficient": 3.239094356489514,
+       "exponent": 0.9989689655841204,
+       "points": 4,
+       "r2": 0.9939250437303472
+      },
+      "verifier_recompute_s": {
+       "coefficient": 8.531155373228213,
+       "exponent": 0.9972979837744778,
+       "points": 4,
+       "r2": 0.9941853595536645
+      },
+      "verifier_total_s": {
+       "coefficient": 11.695506721512377,
+       "exponent": 0.9834657738068451,
+       "points": 4,
+       "r2": 0.9931748458908742
+      }
+     },
+     "name": "cluster_vs_s",
+     "note": "`ClusterG` `d8-r32`, `q = 1/2`, mean over 2 session seed(s): the openings and the verifier's evidence check scale with the sampled VUs, `q s * #VU`; the replay phase depends only on `J`, which is redrawn per policy (the policy is in the header digest), hence its scatter.",
+     "points": [
+      {
+       "boundary_bytes": 162832.0,
+       "boundary_count": 2752.0,
+       "case": "d8-r32",
+       "commit_us_per_position": 27.15496450116953,
+       "description_bytes": 35143,
+       "evaluate_s": 1.8462367090396583,
+       "evidence_bytes": 3514715.0,
+       "evidence_bytes_per_opening": 844.7818771782238,
+       "gates_per_s": 115266.36804372452,
+       "interior_positions": 123216.0,
+       "interiors_bytes": 2375.5,
+       "kappa_w_s": 0.0021349159069359303,
+       "n": 212809,
+       "openings": 4160.5,
+       "openings_verified": 4160.5,
+       "peak_bytes": null,
+       "prove_us_per_opening": 15.205413987529907,
+       "prover_commit_boundary_s": 0.057539198314771056,
+       "prover_commit_interior_s": 3.3459261059761047,
+       "prover_interiors_s": 6.028439374640584,
+       "prover_prove_s": 0.06326212489511818,
+       "prover_replay_s": 2.6825132686644793,
+       "prover_setup_s": 0.002135718706995249,
+       "prover_total_s": 6.1513764165574685,
+       "q": "1/2",
+       "repeats": 2,
+       "replay_units": 49,
+       "replay_us_per_position": 21.77081928211011,
+       "s": "1/64",
+       "sampled_verification_units": 160.5,
+       "seeds": 2,
+       "selected_replay_units": 26.5,
+       "time_s": 6.1513764165574685,
+       "transcript_bytes": 3684022.5,
+       "verification_units": 17449,
+       "verifier_admit_s": 0.006403166800737381,
+       "verifier_boundary_merkle_s": 0.003381027840077877,
+       "verifier_boundary_s": 0.005719541455619037,
+       "verifier_evidence_s": 0.21042668772861362,
+       "verifier_interiors_s": 0.0013357083080336452,
+       "verifier_merkle_s": 0.05772649822756648,
+       "verifier_recompute_s": 0.15270018950104713,
+       "verifier_total_s": 0.22388510429300368,
+       "verify_merkle_us_per_opening": 13.87489441835512,
+       "verify_recompute_us_per_opening": 36.70236498042234,
+       "weights": 649,
+       "x": 0.015625
+      },
+      {
+       "boundary_bytes": 162832.0,
+       "boundary_count": 2752.0,
+       "case": "d8-r32",
+       "commit_us_per_position": 26.611610685545845,
+       "description_bytes": 35143,
+       "evaluate_s": 1.8462367090396583,
+       "evidence_bytes": 10108128.0,
+       "evidence_bytes_per_opening": 842.0983879701754,
+       "gates_per_s": 115266.36804372452,
+       "interior_positions": 93088.0,
+       "interiors_bytes": 2016.5,
+       "kappa_w_s": 0.0021349159069359303,
+       "n": 212809,
+       "openings": 12003.5,
+       "openings_verified": 12003.5,
+       "peak_bytes": null,
+       "prove_us_per_opening": 14.972814317688222,
+       "prover_commit_boundary_s": 0.05720786459278315,
+       "prover_commit_interior_s": 2.4772216154960915,
+       "prover_interiors_s": 4.444547260412946,
+       "prover_prove_s": 0.17972617666237056,
+       "prover_replay_s": 1.9673256449168548,
+       "prover_setup_s": 0.0020368542755022645,
+       "prover_total_s": 4.684211364015937,
+       "q": "1/2",
+       "repeats": 2,
+       "replay_units": 49,
+       "replay_us_per_position": 21.134041390048715,
+       "s": "1/16",
+       "sampled_verification_units": 502.5,
+       "seeds": 2,
+       "selected_replay_units": 22.5,
+       "time_s": 4.684211364015937,
+       "transcript_bytes": 10278815.5,
+       "verification_units": 17449,
+       "verifier_admit_s": 0.006384843611158431,
+       "verifier_boundary_merkle_s": 0.003104077302850783,
+       "verifier_boundary_s": 0.005334978806786239,
+       "verifier_evidence_s": 0.6098444066010416,
+       "verifier_interiors_s": 0.0025364584289491177,
+       "verifier_merkle_s": 0.1666461918503046,
+       "verifier_recompute_s": 0.44319821475073695,
+       "verifier_total_s": 0.6239966456778347,
+       "verify_merkle_us_per_opening": 13.883133406948357,
+       "verify_recompute_us_per_opening": 36.92241552470004,
+       "weights": 649,
+       "x": 0.0625
+      },
+      {
+       "boundary_bytes": 162832.0,
+       "boundary_count": 2752.0,
+       "case": "d8-r32",
+       "commit_us_per_position": 26.568374347715746,
+       "description_bytes": 35143,
+       "evaluate_s": 1.8462367090396583,
+       "evidence_bytes": 49749504.0,
+       "evidence_bytes_per_opening": 843.2976912906397,
+       "gates_per_s": 115266.36804372452,
+       "interior_positions": 114160.0,
+       "interiors_bytes": 2375.5,
+       "kappa_w_s": 0.0021349159069359303,
+       "n": 212809,
+       "openings": 58994.0,
+       "openings_verified": 58994.0,
+       "peak_bytes": null,
+       "prove_us_per_opening": 14.312867796563864,
+       "prover_commit_boundary_s": 0.05747502052690834,
+       "prover_commit_interior_s": 3.0330456155352294,
+       "prover_interiors_s": 5.455390301882289,
+       "prover_prove_s": 0.8443733227904886,
+       "prover_replay_s": 2.42234468634706,
+       "prover_setup_s": 0.002122791833244264,
+       "prover_total_s": 6.3593614370329306,
+       "q": "1/2",
+       "repeats": 2,
+       "replay_units": 49,
+       "replay_us_per_position": 21.21885674795953,
+       "s": "1/4",
+       "sampled_verification_units": 2286.5,
+       "seeds": 2,
+       "selected_replay_units": 26.5,
+       "time_s": 6.3593614370329306,
+       "transcript_bytes": 49930459.0,
+       "verification_units": 17449,
+       "verifier_admit_s": 0.0066107186721637845,
+       "verifier_boundary_merkle_s": 0.0034259272506460547,
+       "verifier_boundary_s": 0.005807999754324555,
+       "verifier_evidence_s": 2.9856792606879026,
+       "verifier_interiors_s": 0.009353396249935031,
+       "verifier_merkle_s": 0.821628914331086,
+       "verifier_recompute_s": 2.1640503463568166,
+       "verifier_total_s": 3.007451375364326,
+       "verify_merkle_us_per_opening": 13.92733014088019,
+       "verify_recompute_us_per_opening": 36.68254985857573,
+       "weights": 649,
+       "x": 0.25
+      },
+      {
+       "boundary_bytes": 162832.0,
+       "boundary_count": 2752.0,
+       "case": "d8-r32",
+       "commit_us_per_position": 26.53082449480753,
+       "description_bytes": 35143,
+       "evaluate_s": 1.8462367090396583,
+       "evidence_bytes": 208411553.5,
+       "evidence_bytes_per_opening": 843.0120781886762,
+       "gates_per_s": 115266.36804372452,
+       "interior_positions": 120640.0,
+       "interiors_bytes": 2552.0,
+       "kappa_w_s": 0.0021349159069359303,
+       "n": 212809,
+       "openings": 247222.5,
+       "openings_verified": 247222.5,
+       "peak_bytes": null,
+       "prove_us_per_opening": 14.648141853090092,
+       "prover_commit_boundary_s": 0.0566379374358803,
+       "prover_commit_interior_s": 3.2006786670535803,
+       "prover_interiors_s": 5.766565500525758,
+       "prover_prove_s": 3.621350249275565,
+       "prover_replay_s": 2.5658868334721774,
+       "prover_setup_s": 0.0022068743128329515,
+       "prover_total_s": 9.446760561550036,
+       "q": "1/2",
+       "repeats": 1,
+       "replay_units": 49,
+       "replay_us_per_position": 21.268955847746827,
+       "s": "1",
+       "sampled_verification_units": 9990.5,
+       "seeds": 2,
+       "selected_replay_units": 28.5,
+       "time_s": 9.446760561550036,
+       "transcript_bytes": 208633913.5,
+       "verification_units": 17449,
+       "verifier_admit_s": 0.0063633539248257875,
+       "verifier_boundary_merkle_s": 0.0031309789046645164,
+       "verifier_boundary_s": 0.005241270875558257,
+       "verifier_evidence_s": 12.46017595846206,
+       "verifier_interiors_s": 0.0031383123714476824,
+       "verifier_merkle_s": 3.429356192005798,
+       "verifier_recompute_s": 9.030819766456261,
+       "verifier_total_s": 12.474918895633891,
+       "verify_merkle_us_per_opening": 13.871537550205982,
+       "verify_recompute_us_per_opening": 36.52911756193818,
+       "weights": 649,
+       "x": 1.0
+      }
+     ],
+     "x_label": "s"
+    }
+   ],
+   "title": "The protocol end to end: prover and verifier phases, message bytes"
+  },
+  "reach": {
+   "description": "`time_s` is `output_reach(root)` on the parsed root; `transient_ports_s` the sibling pass, `kinds_s` the whole `Index.kinds()` (both passes plus the per-kind summaries), `parse_s` `parse_description`.  `root_steps` is the step count of the root definition, `definitions` the reachable kinds.",
+   "name": "reach",
+   "seconds": 311.37750379089266,
+   "series": [
+    {
+     "columns": [
+      "description_bytes",
+      "definitions",
+      "root_steps",
+      "n",
+      "transient_ports_s",
+      "kinds_s",
+      "parse_s"
+     ],
+     "fit_columns": [
+      "time_s",
+      "peak_bytes",
+      "transient_ports_s",
+      "kinds_s",
+      "parse_s"
+     ],
+     "fits": {
+      "kinds_s": {
+       "coefficient": 1.533369479615339e-08,
+       "exponent": 2.2653910015308236,
+       "points": 5,
+       "r2": 0.9898258268863275
+      },
+      "parse_s": {
+       "coefficient": 1.2940167440375021e-05,
+       "exponent": 0.9754870462794456,
+       "points": 5,
+       "r2": 0.9990446799294607
+      },
+      "peak_bytes": {
+       "coefficient": 11.232188278624237,
+       "exponent": 1.527384740120387,
+       "points": 5,
+       "r2": 0.9879179010583181
+      },
+      "time_s": {
+       "coefficient": 7.439265618897813e-09,
+       "exponent": 2.346253097830681,
+       "points": 5,
+       "r2": 0.9947307374393767
+      },
+      "transient_ports_s": {
+       "coefficient": 1.2577343224260894e-06,
+       "exponent": 1.0138466200559713,
+       "points": 5,
+       "r2": 0.9992498406803944
+      }
+     },
+     "name": "chain_vs_steps",
+     "note": "A root with `S` sequential `call` steps of one 3-gate RU, each reading the previous step's output (a decode chain).  The closure `Down(j)` is every later step, so the bit-iteration in `_step_reach` visits `\u0398(S\u00b2)` bits, each on an `S`-bit integer: `\u0398(S\u00b3 / w)` word operations, against `\u0398(S)` for the parse.",
+     "points": [
+      {
+       "definitions": 5,
+       "description_bytes": 8992,
+       "kinds_s": 0.00031416723504662514,
+       "n": 193,
+       "parse_s": 0.000802875030785799,
+       "peak_bytes": 9368,
+       "repeats": 3,
+       "root_steps": 65,
+       "time_s": 0.0001888750120997429,
+       "transient_ports_s": 8.995784446597099e-05,
+       "x": 64
+      },
+      {
+       "definitions": 5,
+       "description_bytes": 31805,
+       "kinds_s": 0.002911667339503765,
+       "n": 769,
+       "parse_s": 0.00265579205006361,
+       "peak_bytes": 39396,
+       "repeats": 3,
+       "root_steps": 257,
+       "time_s": 0.0023888330906629562,
+       "transient_ports_s": 0.0003309999592602253,
+       "x": 256
+      },
+      {
+       "definitions": 5,
+       "description_bytes": 123222,
+       "kinds_s": 0.06065566698089242,
+       "n": 3073,
+       "parse_s": 0.010830416809767485,
+       "peak_bytes": 308976,
+       "repeats": 3,
+       "root_steps": 1025,
+       "time_s": 0.05912495777010918,
+       "transient_ports_s": 0.0013765408657491207,
+       "x": 1024
+      },
+      {
+       "definitions": 5,
+       "description_bytes": 491862,
+       "kinds_s": 2.4142356673255563,
+       "n": 12289,
+       "parse_s": 0.04428979102522135,
+       "peak_bytes": 3738144,
+       "repeats": 3,
+       "root_steps": 4097,
+       "time_s": 2.4282610416412354,
+       "transient_ports_s": 0.0055491249077022076,
+       "x": 4096
+      },
+      {
+       "definitions": 5,
+       "description_bytes": 983382,
+       "kinds_s": 16.476384166860953,
+       "n": 24577,
+       "parse_s": 0.08685620781034231,
+       "peak_bytes": 14199876,
+       "repeats": 2,
+       "root_steps": 8193,
+       "time_s": 14.274445062503219,
+       "transient_ports_s": 0.012467457912862301,
+       "x": 8192
+      }
+     ],
+     "x_label": "root steps"
+    },
+    {
+     "columns": [
+      "description_bytes",
+      "definitions",
+      "root_steps",
+      "n",
+      "transient_ports_s",
+      "kinds_s",
+      "parse_s"
+     ],
+     "fit_columns": [
+      "time_s",
+      "peak_bytes",
+      "transient_ports_s",
+      "kinds_s",
+      "parse_s"
+     ],
+     "fits": {
+      "kinds_s": {
+       "coefficient": 1.4659324131211354e-06,
+       "exponent": 1.0587911529660674,
+       "points": 5,
+       "r2": 0.9943693706007127
+      },
+      "parse_s": {
+       "coefficient": 1.318199649884279e-05,
+       "exponent": 0.9731274012287063,
+       "points": 5,
+       "r2": 0.9995420046231923
+      },
+      "peak_bytes": {
+       "coefficient": 17.389749212000822,
+       "exponent": 1.3606387153334778,
+       "points": 5,
+       "r2": 0.983880338222601
+      },
+      "time_s": {
+       "coefficient": 3.349417196118973e-07,
+       "exponent": 1.1687556295911552,
+       "points": 5,
+       "r2": 0.9971464253015035
+      },
+      "transient_ports_s": {
+       "coefficient": 5.869821831412928e-07,
+       "exponent": 1.025052433682741,
+       "points": 5,
+       "r2": 0.9992615437018286
+      }
+     },
+     "name": "independent_vs_steps",
+     "note": "A root with `S` independent `call` steps of one RU (every step reads the input).  `Down(j) = {j}`, so the pass is linear.",
+     "points": [
+      {
+       "definitions": 5,
+       "description_bytes": 8938,
+       "kinds_s": 0.00014133425429463387,
+       "n": 193,
+       "parse_s": 0.0007902919314801693,
+       "peak_bytes": 7228,
+       "repeats": 3,
+       "root_steps": 65,
+       "time_s": 4.9584079533815384e-05,
+       "transient_ports_s": 4.4040847569704056e-05,
+       "x": 64
+      },
+      {
+       "definitions": 5,
+       "description_bytes": 31403,
+       "kinds_s": 0.0004636668600142002,
+       "n": 769,
+       "parse_s": 0.0027864999137818813,
+       "peak_bytes": 24968,
+       "repeats": 3,
+       "root_steps": 257,
+       "time_s": 0.00019220774993300438,
+       "transient_ports_s": 0.00016266712918877602,
+       "x": 256
+      },
+      {
+       "definitions": 5,
+       "description_bytes": 121260,
+       "kinds_s": 0.001864457968622446,
+       "n": 3073,
+       "parse_s": 0.01071104221045971,
+       "peak_bytes": 145044,
+       "repeats": 3,
+       "root_steps": 1025,
+       "time_s": 0.0010103331878781319,
+       "transient_ports_s": 0.0006816661916673183,
+       "x": 1024
+      },
+      {
+       "definitions": 5,
+       "description_bytes": 480684,
+       "kinds_s": 0.009675249923020601,
+       "n": 12289,
+       "parse_s": 0.04415933322161436,
+       "peak_bytes": 1411524,
+       "repeats": 3,
+       "root_steps": 4097,
+       "time_s": 0.005331458989530802,
+       "transient_ports_s": 0.0031380830332636833,
+       "x": 4096
+      },
+      {
+       "definitions": 5,
+       "description_bytes": 959916,
+       "kinds_s": 0.023744792211800814,
+       "n": 24577,
+       "parse_s": 0.08635579189285636,
+       "peak_bytes": 5057512,
+       "repeats": 3,
+       "root_steps": 8193,
+       "time_s": 0.014259916730225086,
+       "transient_ports_s": 0.005994291976094246,
+       "x": 8192
+      }
+     ],
+     "x_label": "root steps"
+    },
+    {
+     "columns": [
+      "description_bytes",
+      "definitions",
+      "root_steps",
+      "n",
+      "transient_ports_s",
+      "kinds_s",
+      "parse_s"
+     ],
+     "fit_columns": [
+      "time_s",
+      "peak_bytes",
+      "transient_ports_s",
+      "kinds_s",
+      "parse_s"
+     ],
+     "fits": {
+      "kinds_s": {
+       "coefficient": 5.017352662222344e-06,
+       "exponent": 1.0650709025498872,
+       "points": 4,
+       "r2": 0.9973352952849419
+      },
+      "parse_s": {
+       "coefficient": 4.74957330950799e-05,
+       "exponent": 1.003189620945609,
+       "points": 4,
+       "r2": 0.9986133754163554
+      },
+      "peak_bytes": {
+       "coefficient": 49.904001575916425,
+       "exponent": 1.223503440389943,
+       "points": 4,
+       "r2": 0.9891616616024757
+      },
+      "time_s": {
+       "coefficient": 1.291535382320598e-06,
+       "exponent": 1.0804346236819666,
+       "points": 4,
+       "r2": 0.9978541981925171
+      },
+      "transient_ports_s": {
+       "coefficient": 1.4079421859853855e-06,
+       "exponent": 1.0186081109584388,
+       "points": 4,
+       "r2": 0.9985774225782699
+      }
+     },
+     "name": "definitions_vs_count",
+     "note": "A root calling `D` distinct RU definitions once each, all reading the input: linear in `D` (one `_step_reach` per definition with call steps, here only the root).",
+     "points": [
+      {
+       "definitions": 68,
+       "description_bytes": 27205,
+       "kinds_s": 0.0004602912813425064,
+       "n": 6241,
+       "parse_s": 0.0032554161734879017,
+       "peak_bytes": 9812,
+       "repeats": 3,
+       "root_steps": 65,
+       "time_s": 0.00012483401224017143,
+       "transient_ports_s": 0.0001037907786667347,
+       "x": 64
+      },
+      {
+       "definitions": 260,
+       "description_bytes": 105663,
+       "kinds_s": 0.0016687908209860325,
+       "n": 98689,
+       "parse_s": 0.011766625102609396,
+       "peak_bytes": 36768,
+       "repeats": 3,
+       "root_steps": 257,
+       "time_s": 0.00047774985432624817,
+       "transient_ports_s": 0.0003705001436173916,
+       "x": 256
+      },
+      {
+       "definitions": 1028,
+       "description_bytes": 419825,
+       "kinds_s": 0.007518833037465811,
+       "n": 1574401,
+       "parse_s": 0.04659845819696784,
+       "peak_bytes": 194220,
+       "repeats": 3,
+       "root_steps": 1025,
+       "time_s": 0.0021376670338213444,
+       "transient_ports_s": 0.0015748748555779457,
+       "x": 1024
+      },
+      {
+       "definitions": 4100,
+       "description_bytes": 1682417,
+       "kinds_s": 0.03824475035071373,
+       "n": 25171969,
+       "parse_s": 0.2121457918547094,
+       "peak_bytes": 1607772,
+       "repeats": 3,
+       "root_steps": 4097,
+       "time_s": 0.011161124799400568,
+       "transient_ports_s": 0.007093874737620354,
+       "x": 4096
+      }
+     ],
+     "x_label": "definitions"
+    },
+    {
+     "columns": [
+      "description_bytes",
+      "definitions",
+      "root_steps",
+      "n",
+      "transient_ports_s",
+      "kinds_s",
+      "parse_s",
+      "gates"
+     ],
+     "fit_columns": [
+      "time_s",
+      "peak_bytes",
+      "transient_ports_s",
+      "kinds_s",
+      "parse_s"
+     ],
+     "fits": {
+      "kinds_s": {
+       "coefficient": 1.698168663568787e-05,
+       "exponent": 0.6484657774427732,
+       "points": 6,
+       "r2": 0.9781245956817628
+      },
+      "parse_s": {
+       "coefficient": 0.0001609483056332508,
+       "exponent": 0.5578466684539675,
+       "points": 6,
+       "r2": 0.802700978488156
+      },
+      "peak_bytes": {
+       "coefficient": 2025.1301032923423,
+       "exponent": 0.3317578236996099,
+       "points": 6,
+       "r2": 0.8074979982513357
+      },
+      "time_s": {
+       "coefficient": 5.130224259082044e-06,
+       "exponent": 0.5586914289323379,
+       "points": 6,
+       "r2": 0.982220674906175
+      },
+      "transient_ports_s": {
+       "coefficient": 2.6537574532335562e-06,
+       "exponent": 0.7160945530594831,
+       "points": 6,
+       "r2": 0.9249927079721726
+      }
+     },
+     "name": "deep_repeat_vs_depth",
+     "note": "`repeat` nesting `depth` levels deep with branching 4 (`n = 4^depth * 8`): one definition per level, one step each, so the pass is linear in `depth` whatever `n` is.",
+     "points": [
+      {
+       "definitions": 8,
+       "description_bytes": 2432,
+       "gates": 769,
+       "kinds_s": 4.370789974927902e-05,
+       "n": 769,
+       "parse_s": 0.00030858302488923073,
+       "peak_bytes": 3504,
+       "repeats": 3,
+       "root_steps": 2,
+       "time_s": 1.1750031262636185e-05,
+       "transient_ports_s": 8.00006091594696e-06,
+       "x": 4
+      },
+      {
+       "definitions": 12,
+       "description_bytes": 3568,
+       "gates": 196609,
+       "kinds_s": 6.120791658759117e-05,
+       "n": 196609,
+       "parse_s": 0.0007072081789374352,
+       "peak_bytes": 3792,
+       "repeats": 3,
+       "root_steps": 2,
+       "time_s": 1.5667174011468887e-05,
+       "transient_ports_s": 1.1249911040067673e-05,
+       "x": 8
+      },
+      {
+       "definitions": 16,
+       "description_bytes": 4704,
+       "gates": 50331649,
+       "kinds_s": 8.520763367414474e-05,
+       "n": 50331649,
+       "parse_s": 0.0005595828406512737,
+       "peak_bytes": 3824,
+       "repeats": 3,
+       "root_steps": 2,
+       "time_s": 1.925043761730194e-05,
+       "transient_ports_s": 1.370767131447792e-05,
+       "x": 12
+      },
+      {
+       "definitions": 20,
+       "description_bytes": 5840,
+       "gates": 12884901889,
+       "kinds_s": 9.55001451075077e-05,
+       "n": 12884901889,
+       "parse_s": 0.0006600408814847469,
+       "peak_bytes": 5456,
+       "repeats": 3,
+       "root_steps": 2,
+       "time_s": 2.3833010345697403e-05,
+       "transient_ports_s": 1.674983650445938e-05,
+       "x": 16
+      },
+      {
+       "definitions": 24,
+       "description_bytes": 6976,
+       "gates": 3298534883329,
+       "kinds_s": 0.00013029202818870544,
+       "n": 3298534883329,
+       "parse_s": 0.0009530410170555115,
+       "peak_bytes": 5856,
+       "repeats": 3,
+       "root_steps": 2,
+       "time_s": 2.791592851281166e-05,
+       "transient_ports_s": 2.316618338227272e-05,
+       "x": 20
+      },
+      {
+       "definitions": 28,
+       "description_bytes": 8112,
+       "gates": 844424930131969,
+       "kinds_s": 0.00013258401304483414,
+       "n": 844424930131969,
+       "parse_s": 0.0009199171327054501,
+       "peak_bytes": 5952,
+       "repeats": 3,
+       "root_steps": 2,
+       "time_s": 3.1833071261644363e-05,
+       "transient_ports_s": 3.133341670036316e-05,
+       "x": 24
+      }
+     ],
+     "x_label": "depth"
+    },
+    {
+     "columns": [
+      "description_bytes",
+      "definitions",
+      "root_steps",
+      "n",
+      "transient_ports_s",
+      "kinds_s",
+      "parse_s",
+      "case"
+     ],
+     "fit_columns": [
+      "time_s",
+      "peak_bytes",
+      "transient_ports_s",
+      "kinds_s",
+      "parse_s"
+     ],
+     "fits": {
+      "kinds_s": {
+       "coefficient": 4.734106429451468e-10,
+       "exponent": 1.405016722089509,
+       "points": 5,
+       "r2": 0.9888650030595302
+      },
+      "parse_s": {
+       "coefficient": 6.52044363712742e-08,
+       "exponent": 1.0676553433908298,
+       "points": 5,
+       "r2": 0.9773209804359542
+      },
+      "peak_bytes": {
+       "coefficient": 3552.6050819002594,
+       "exponent": 0.1063191113147866,
+       "points": 5,
+       "r2": 0.9856615803697193
+      },
+      "time_s": {
+       "coefficient": 1.6133019102142689e-10,
+       "exponent": 1.3789374091709214,
+       "points": 5,
+       "r2": 0.9932680974168795
+      },
+      "transient_ports_s": {
+       "coefficient": 2.0787190892940095e-12,
+       "exponent": 1.8598635167925877,
+       "points": 5,
+       "r2": 0.9996513003958087
+      }
+     },
+     "name": "cluster_vs_description",
+     "note": "The `ClusterG` ladder: the description grows with the layer count and the schedule (steps of the decode loop), not with the model width.",
+     "points": [
+      {
+       "case": "d4-L1",
+       "definitions": 35,
+       "description_bytes": 23917,
+       "kinds_s": 0.0006537497974932194,
+       "n": 4437,
+       "parse_s": 0.0028893747366964817,
+       "peak_bytes": 10336,
+       "repeats": 3,
+       "root_steps": 4,
+       "time_s": 0.00018400000408291817,
+       "transient_ports_s": 0.00028579216450452805,
+       "x": 23917
+      },
+      {
+       "case": "d8-L1",
+       "definitions": 35,
+       "description_bytes": 24953,
+       "kinds_s": 0.0007315832190215588,
+       "n": 27169,
+       "parse_s": 0.0034495829604566097,
+       "peak_bytes": 10472,
+       "repeats": 3,
+       "root_steps": 7,
+       "time_s": 0.00017770938575267792,
+       "transient_ports_s": 0.0003172503784298897,
+       "x": 24953
+      },
+      {
+       "case": "d16-L2",
+       "definitions": 45,
+       "description_bytes": 46617,
+       "kinds_s": 0.0018652081489562988,
+       "n": 509833,
+       "parse_s": 0.006681208033114672,
+       "peak_bytes": 11080,
+       "repeats": 3,
+       "root_steps": 9,
+       "time_s": 0.00046120816841721535,
+       "transient_ports_s": 0.0010156668722629547,
+       "x": 46617
+      },
+      {
+       "case": "d32-L2",
+       "definitions": 45,
+       "description_bytes": 47961,
+       "kinds_s": 0.001691875047981739,
+       "n": 1943561,
+       "parse_s": 0.006310167256742716,
+       "peak_bytes": 11176,
+       "repeats": 3,
+       "root_steps": 9,
+       "time_s": 0.000453209038823843,
+       "transient_ports_s": 0.0010522911325097084,
+       "x": 47961
+      },
+      {
+       "case": "d64-L2",
+       "definitions": 45,
+       "description_bytes": 48494,
+       "kinds_s": 0.00176679203286767,
+       "n": 7588105,
+       "parse_s": 0.006340917199850082,
+       "peak_bytes": 11240,
+       "repeats": 3,
+       "root_steps": 9,
+       "time_s": 0.00045575015246868134,
+       "transient_ports_s": 0.0010663336142897606,
+       "x": 48494
+      }
+     ],
+     "x_label": "description bytes"
+    }
+   ],
+   "title": "`output_reach` vs description size"
+  }
+ },
+ "manifest": {
+  "benchmarks": [
+   "analysis",
+   "challenge",
+   "compile",
+   "kinds",
+   "lookup",
+   "merkle",
+   "protocol",
+   "reach"
+  ],
+  "errors": {},
+  "git_branch": "scale-benchmarks",
+  "git_commit": "ae1f20f3c6d882833c0e47946d0d86c778c9ba77",
+  "git_dirty": true,
+  "implementation": "CPython",
+  "machine": "arm64",
+  "platform": "macOS-26.5.1-arm64-arm-64bit",
+  "processor": "arm",
+  "python": "3.12.11",
+  "quick": false,
+  "repeats": 3,
+  "seconds": 1102.979626541026,
+  "timestamp": "2026-09-03T01:32:24+00:00",
+  "updates": [
+   {
+    "benchmarks": [
+     "kinds"
+    ],
+    "git_commit": "ae1f20f3c6d882833c0e47946d0d86c778c9ba77",
+    "git_dirty": true,
+    "seconds": 4.691294790711254,
+    "timestamp": "2026-09-03T01:33:49+00:00"
+   }
+  ],
+  "veritor_version": "unknown"
+ }
+}

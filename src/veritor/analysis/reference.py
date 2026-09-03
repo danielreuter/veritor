@@ -44,24 +44,21 @@ def error_sets(index: Index) -> Iterator[ErrorSet]:
             yield frozenset(subset)
 
 
+def replay_unit_of(index: Index, unit: int) -> int:
+    """The replay unit containing verification unit ``unit`` (every VU lies inside one)."""
+
+    replay_unit = index.verification_unit(unit).replay_unit
+    assert replay_unit is not None
+    return replay_unit
+
+
 def error_counts(index: Index, errors: ErrorSet) -> list[int]:
     """``l_r = |E ∩ R_r|`` for every replay unit."""
 
     counts = [0] * index.replay_units.count
     for unit in errors:
-        counts[_replay_unit_of(index.verification_unit(unit))] += 1
+        counts[replay_unit_of(index, unit)] += 1
     return counts
-
-
-def _replay_unit_of(unit: IndexNode) -> int:
-    """The replay unit (RU) a verification unit (VU) lies in; the marks tile, so it exists."""
-
-    replay_unit = unit.replay_unit
-    if (
-        replay_unit is None
-    ):  # pragma: no cover - validate_marks puts every VU inside an RU
-        raise AssertionError("a verification unit outside every replay unit")
-    return replay_unit
 
 
 def unit_owner(index: Index) -> dict[int, int]:
@@ -223,7 +220,7 @@ def transcript_outputs(
     circuit = compiled.circuit
     index = compiled.index
     owner = unit_owner(index)
-    replay_of = [_replay_unit_of(index.verification_unit(u)) for u in range(index.verification_unit_count)]
+    replay_of = [replay_unit_of(index, u) for u in range(index.verification_unit_count)]
     pinned = dict(zip(circuit.inputs, inputs, strict=True))
     pinned.update(zip(circuit.weights, weights, strict=True))
     gates = [address for address in range(circuit.n) if address not in pinned]

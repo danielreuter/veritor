@@ -1,0 +1,62 @@
+[
+ {
+  "name": "sixteen_ones",
+  "spec_d": "41800000",
+  "gpu_d": "41800000",
+  "match": true
+ },
+ {
+  "name": "mixed_sign_nonzero_accumulator",
+  "spec_d": "bfa00000",
+  "gpu_d": "bfa00000",
+  "match": true
+ },
+ {
+  "name": "product_remains_unnormalized",
+  "spec_d": "40100000",
+  "gpu_d": "40100000",
+  "match": true
+ },
+ {
+  "name": "exact_sign_cancellation",
+  "spec_d": "00000000",
+  "gpu_d": "00000000",
+  "match": true
+ },
+ {
+  "name": "unnormalized_subnormal_product",
+  "spec_d": "40803000",
+  "gpu_d": "40803000",
+  "match": true
+ },
+ {
+  "name": "alignment_truncates_small_product",
+  "spec_d": "48000000",
+  "gpu_d": "48000000",
+  "match": true
+ },
+ {
+  "name": "one_bit_closer_product_survives",
+  "spec_d": "47ffffff",
+  "gpu_d": "48000000",
+  "match": false
+ },
+ {
+  "name": "normalization_is_not_round_to_nearest",
+  "spec_d": "4b000001",
+  "gpu_d": "4b000000",
+  "match": false
+ },
+ {
+  "name": "two_stage_cancellation_preserves_second_half",
+  "spec_d": "41000040",
+  "gpu_d": "41000000",
+  "match": false
+ },
+ {
+  "name": "negative_zero_canonicalizes",
+  "spec_d": "00000000",
+  "gpu_d": "00000000",
+  "match": true
+ }
+]

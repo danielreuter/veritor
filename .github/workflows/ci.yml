@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version-file: ".python-version"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run pytest -q
+
+  # ruff and mypy are currently red across the package and will be fixed in a
+  # separate cleanup; until then they report but do not block the build.
+  lint:
+    name: ruff (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version-file: ".python-version"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check src/veritor tests/veritor
+
+  typecheck:
+    name: mypy (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version-file: ".python-version"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run mypy src/veritor

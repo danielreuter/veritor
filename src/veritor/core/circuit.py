@@ -353,17 +353,20 @@ class DescriptionCircuit(_Semantics):
     sequence over the definition's runs (``O(log #runs)`` per address);
     ``In`` enumerates what the copy reads, ``Theta(|In|)``, so the protocol
     asks it only about sampled units.
+
+    Widths are per gate (``C[i].width``, the runs of ``Out``); ``width`` is
+    the common width when every gate of the set has the same one and
+    ``None`` for a mixed-width set such as
+    :func:`veritor.core.ml_gates.make_ml_gate_set`.
     """
 
     __slots__ = ("_outputs", "frame", "gate_set", "root", "width")
 
     def __init__(self, root: Definition, gate_set: GateSet) -> None:
         widths = {gate.width for gate in gate_set}
-        if len(widths) != 1:
-            raise InvalidArtifact("the description circuit needs gates of one width")
         self.root = root
         self.gate_set = gate_set
-        self.width = widths.pop()
+        self.width: int | None = widths.pop() if len(widths) == 1 else None
         self.frame = Frame.root(root)
         self._outputs = _LazyAddresses(root.output_count, self.frame.output_address)
 
