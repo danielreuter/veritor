@@ -32,6 +32,8 @@ from .backend import (
     prove_plan,
 )
 from .derive import (
+    DECLARED_KIND,
+    DECLARED_PROGRAM,
     Layout,
     derive_obligation,
     derive_obligations,
@@ -90,6 +92,8 @@ def resolve_backend(
 
 
 __all__ = [
+    "DECLARED_KIND",
+    "DECLARED_PROGRAM",
     "LOCAL",
     "OPENVM_BACKEND",
     "PORT",

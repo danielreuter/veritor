@@ -9,6 +9,7 @@ has.
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -73,6 +74,10 @@ from .proofs import (
 type Values = Mapping[int, object]
 type Replay = Callable[[int, Values], Values]
 """``replay(unit, boundary_values) -> interior values`` for one replay unit."""
+type Declare = Callable[[int, Values], Iterable[int]]
+"""``declare(unit, values) -> VU indices`` the prover declares incorrect in replay unit
+``unit``; ``values`` are the interior values it is about to commit over its boundary
+and weight values (see :func:`self_check`)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +277,68 @@ def assignment_replay(values: Values) -> Replay:
     return replay
 
 
+def self_check(compiled: Compiled, unit: int, values: Values) -> tuple[int, ...]:
+    """Replay-time fault detection: the VUs of replay unit ``unit`` whose values
+    in ``values`` disobey their relation, as global VU indices in order.
+
+    This is what an honest server learns when it replays an opened RU: it
+    recomputes every gate from the values it actually holds (the ones it
+    streamed and is about to commit) and compares.  A hardware fault that
+    flipped one gate's output shows up as exactly that gate's VU -- every VU
+    downstream computed correctly *from* the faulty value, so their
+    relations hold against it -- and that VU is what the server declares.
+    ``values`` must cover the RU's interior and everything it reads.
+    """
+
+    circuit = compiled.circuit
+    units = compiled.index.verification_units(unit)
+    faulty: list[int] = []
+    for offset in range(units.count):
+        node = units.unit(offset)
+        for address in node.interval:
+            gate = circuit[address]
+            if gate.is_source:
+                continue
+            args = [values[argument] for argument in gate.args]
+            if not circuit.check_gate(address, args, values[address]):  # type: ignore[arg-type]
+                faulty.append(units.first + offset)
+                break
+    return tuple(faulty)
+
+
+def honest_declare(compiled: Compiled) -> Declare:
+    """The honest server's :data:`Declare`: declare whatever :func:`self_check` finds."""
+
+    return lambda unit, values: self_check(compiled, unit, values)
+
+
+class _Overlay(Mapping[int, object]):
+    """``front`` over ``back``: the interior values about to be committed over the
+    prover's boundary and weight values, without copying either."""
+
+    __slots__ = ("_back", "_front")
+
+    def __init__(self, front: Values, back: Values) -> None:
+        self._front = front
+        self._back = back
+
+    def __getitem__(self, key: int) -> object:
+        try:
+            return self._front[key]
+        except KeyError:
+            return self._back[key]
+
+    def __iter__(self) -> Iterator[int]:
+        seen = set(self._front)
+        yield from seen
+        for key in self._back:
+            if key not in seen:
+                yield key
+
+    def __len__(self) -> int:
+        return len(set(self._front) | set(self._back))
+
+
 class ProverSession:
     """The prover's side.  Call ``boundary``, ``interiors``, ``evidence`` in order.
 
@@ -280,6 +347,11 @@ class ProverSession:
     that tree, which is never rebuilt.  ``backend`` is the proof backend the
     header names (defaulted for the transparent one) and ``plan`` how the
     sampled VUs' obligations are grouped into proofs (default: one proof).
+    ``declare`` chooses the fault declarations of each opened RU
+    (:data:`Declare`; an honest server uses :func:`honest_declare`); the
+    default declares nothing.  Whatever it returns is sent as is -- a prover
+    that declares more than the header's ``max_faults``, or a VU outside an
+    opened RU, is rejected by the verifier, never silently trimmed here.
     """
 
     def __init__(
@@ -293,6 +365,7 @@ class ProverSession:
         weight_tree: MerkleTree | None = None,
         backend: ProofBackend | None = None,
         plan: BatchPlan | None = None,
+        declare: Declare | None = None,
     ) -> None:
         self._layout = _Layout(compiled)
         if header.compiled_digest != compiled.digest:
@@ -300,6 +373,7 @@ class ProverSession:
         self.header = header
         self._values = values
         self._replay = replay
+        self._declare = declare
         self._limits = VerificationLimits() if limits is None else limits
         self._backend = resolve_backend(backend, header.backend, compiled, self._limits)
         self._plan = plan
@@ -323,6 +397,7 @@ class ProverSession:
         self._boundary_phase = b""
         self._replay_phase = b""
         self._interior_phase = b""
+        self._declarations: tuple[int, ...] = ()
         self.transcript_parts: list[object] = [header]
 
     def _expect(self, phase: str) -> None:
@@ -358,6 +433,7 @@ class ProverSession:
         self._replay_phase = replay_phase(self._boundary_phase, challenge)
         compiled = self._layout.compiled
         commitments: list[Commitment] = []
+        declared: set[int] = set()
         for unit in challenge.selected:
             if unit >= compiled.index.replay_units.count:
                 raise ProtocolError(f"challenge names unknown replay unit {unit}")
@@ -366,10 +442,13 @@ class ProverSession:
                 if self._replay is None
                 else self._replay(unit, self._values)
             )
+            if self._declare is not None:
+                declared.update(self._declare(unit, _Overlay(interior_values, self._values)))
             domain = interior_domain(self._replay_phase, compiled, unit)
             commitments.append(self._commit(domain, interior_values).commitment)
-        message = InteriorMessage(tuple(commitments))
+        message = InteriorMessage(tuple(commitments), tuple(sorted(declared)))
         self._interior_phase = interior_phase(self._replay_phase, message)
+        self._declarations = message.declarations
         self._phase = "evidence"
         self.transcript_parts.extend((challenge, message))
         return message
@@ -383,7 +462,7 @@ class ProverSession:
         sample_phase(self._interior_phase, challenge)
         commitments = {owner: (tree.domain, tree.commitment) for owner, tree in self._trees.items()}
         obligations, kinds = derive_obligations(
-            self._layout, self.header, commitments, challenge.selected
+            self._layout, self.header, commitments, challenge.selected, set(self._declarations)
         )
         batches: list[tuple[Opening, ...]] = []
         for obligation in obligations:
@@ -489,6 +568,7 @@ class VerifierSession:
             outputs,
             weights,
             expectation.backend,
+            expectation.parameters.max_faults,
         )
         self._commitments: dict[int, tuple[CommitmentDomain, Commitment]] = {}
         if weights is not None:
@@ -500,6 +580,8 @@ class VerifierSession:
         self._boundary_phase = b""
         self._replay_phase = b""
         self._interior_phase = b""
+        self.declared_verification_units: tuple[int, ...] = ()
+        """The VUs the interior message declared incorrect, once accepted."""
         self.transcript_parts: list[object] = [self.header]
 
     def _admit(self) -> None:
@@ -540,7 +622,9 @@ class VerifierSession:
                 f"expected verifier work {work} exceeds W_max {budget}",
             )
         if parameters.max_capacity is not None:
-            capacity = bound(self._layout.compiled, policy, parameters.eta).bits
+            capacity = bound(
+                self._layout.compiled, policy, parameters.eta, max_faults=parameters.max_faults
+            ).bits
             if capacity > parameters.max_capacity:
                 raise self._reject(
                     VerificationCode.POLICY_REJECTED,
@@ -661,6 +745,7 @@ class VerifierSession:
                 self._accept_commitment(
                     interior_domain(self._replay_phase, compiled, unit), commitment
                 )
+            self._accept_declarations(message.declarations)
             self._interior_phase = interior_phase(self._replay_phase, message)
             sampled = derive_sample_selection(
                 self._expectation.s_seed,
@@ -676,6 +761,49 @@ class VerifierSession:
         self._phase = "evidence"
         self.transcript_parts.extend((message, challenge))
         return challenge
+
+    def _accept_declarations(self, declarations: tuple[int, ...]) -> None:
+        """Admit the prover's fault declarations or reject the run.
+
+        At most ``max_faults`` of them (``FAULTS_EXCEEDED``); each must name
+        an existing VU inside an opened RU whose relation there is something
+        to disclaim -- a VU of source gates alone has none
+        (``FAULT_DECLARATION_INVALID``).  Sortedness and uniqueness are the
+        message's own invariants.  Checked before the s-challenge is derived,
+        so the sample is drawn over a message the verifier has accepted.
+        """
+
+        header = self.header
+        if len(declarations) > header.max_faults:
+            raise self._reject(
+                VerificationCode.FAULTS_EXCEEDED,
+                f"{len(declarations)} fault declarations exceed max_faults {header.max_faults}",
+            )
+        if not declarations:
+            return
+        index = self._layout.index
+        circuit = self._layout.circuit
+        blocks = [index.verification_units(unit) for unit in self.selected_replay_units]
+        starts = [block.first for block in blocks]
+        for unit in declarations:
+            if unit >= index.verification_unit_count:
+                raise self._reject(
+                    VerificationCode.FAULT_DECLARATION_INVALID,
+                    f"declared VU {unit} does not exist",
+                )
+            block = bisect_right(starts, unit) - 1
+            if block < 0 or unit >= blocks[block].first + blocks[block].count:
+                raise self._reject(
+                    VerificationCode.FAULT_DECLARATION_INVALID,
+                    f"declared VU {unit} lies in no opened replay unit",
+                )
+            node = blocks[block].unit(unit - blocks[block].first)
+            if all(circuit[address].is_source for address in node.interval):
+                raise self._reject(
+                    VerificationCode.FAULT_DECLARATION_INVALID,
+                    f"declared VU {unit} has no relation to disclaim",
+                )
+        self.declared_verification_units = declarations
 
     def receive_evidence(self, message: EvidenceMessage) -> VerificationReport:
         """The reveal step: derive what every sampled VU obliges the prover to
@@ -703,7 +831,11 @@ class VerifierSession:
             )
         with self._rejecting_limits():
             demanded, kinds = derive_obligations(
-                self._layout, self.header, self._commitments, sampled
+                self._layout,
+                self.header,
+                self._commitments,
+                sampled,
+                set(self.declared_verification_units),
             )
             gate_set = self._layout.circuit.gate_set
             gate_set_digest = bytes.fromhex(gate_set.digest)
@@ -789,6 +921,7 @@ def run_protocol(
     weight_tree: MerkleTree | None = None,
     backend: ProofBackend | None = None,
     plan: BatchPlan | None = None,
+    declare: Declare | None = None,
 ) -> ProtocolRun:
     """Run prover and verifier against each other in one process.
 
@@ -800,6 +933,9 @@ def run_protocol(
     prover commits the weights in ``values`` (an honest prover's tree).
     ``backend`` (shared by both parties) and ``plan`` (the prover's batching)
     route the reveal step through a proof backend other than the default.
+    ``declare`` is the prover's fault-declaration policy; an honest server
+    that streamed a faulty result passes ``replay=assignment_replay(values)``
+    (it commits what it computed) and ``declare=honest_declare(compiled)``.
     """
 
     try:
@@ -821,6 +957,7 @@ def run_protocol(
         weight_tree=weight_tree,
         backend=backend,
         plan=plan,
+        declare=declare,
     )
     try:
         replay_challenge = verifier.receive_boundary(prover.boundary())

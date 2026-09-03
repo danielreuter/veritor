@@ -15,6 +15,16 @@ verifier's ``eta``, so the whole hash chain does.  It may also bind
 vector, which the circuit's ``weight`` gates read by rank and the verifier
 holds, so a run never carries the weights themselves.  A :class:`Transcript`
 is the header plus these five messages in order.
+
+The header also binds ``max_faults`` (``f_max``, default 0): how many VUs
+the prover may *declare* incorrect in the interior message
+(``InteriorMessage.declarations``).  A declared VU is committed like any
+other -- its value is authenticated and every VU reading it is checked
+against that value -- but its own relation check is skipped if it is
+sampled, so an honest server that finds a hardware fault when it replays an
+opened RU can own up to it instead of being rejected.  Declaring costs
+capacity, not soundness (``fault_allowance_bits`` in
+:mod:`veritor.analysis.faults`).
 """
 
 from __future__ import annotations
@@ -63,6 +73,8 @@ class VerificationCode(StrEnum):
     RESOURCE_LIMIT = "resource_limit"
     TRUSTED_SERVICE_FAILURE = "trusted_service_failure"
     PROOF_REJECTED = "proof_rejected"
+    FAULTS_EXCEEDED = "faults_exceeded"
+    FAULT_DECLARATION_INVALID = "fault_declaration_invalid"
 
 
 class Reject(ProtocolError):
@@ -200,6 +212,9 @@ class Header:
     through (:mod:`veritor.protocol.proofs`); the default, ``"transparent"``,
     is the openings-as-proof protocol and leaves the header's manifest and
     digest exactly as they were before backends were pluggable.
+    ``max_faults`` is the verifier's ``f_max``: how many VUs the interior
+    message may declare incorrect; the default 0 likewise leaves manifest and
+    digest untouched.
     """
 
     session_id: bytes
@@ -212,6 +227,7 @@ class Header:
     claimed_outputs: tuple[bytes, ...]
     weights: Weights | None
     backend: str = TRANSPARENT_BACKEND
+    max_faults: int = 0
     digest: bytes = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -235,6 +251,8 @@ class Header:
             raise ProtocolError("weights must be Weights or None")
         if type(self.backend) is not str or not self.backend:
             raise ProtocolError("backend must be a nonempty backend id")
+        if type(self.max_faults) is not int or self.max_faults < 0:
+            raise ProtocolError("max_faults must be a nonnegative integer")
         manifest: dict[str, JSONValue] = {
             "advice": self.advice.hex(),
             "claimed_outputs": [item.hex() for item in self.claimed_outputs],
@@ -249,6 +267,8 @@ class Header:
         }
         if self.backend != TRANSPARENT_BACKEND:
             manifest["backend"] = self.backend
+        if self.max_faults:
+            manifest["max_faults"] = self.max_faults
         object.__setattr__(self, "digest", raw_digest("veritor/protocol/header/v6", manifest))
 
 
@@ -289,19 +309,36 @@ class ReplayChallenge:
 
 @dataclass(frozen=True, slots=True)
 class InteriorMessage:
-    """One interior commitment per selected replay unit, in ``J`` order."""
+    """One interior commitment per selected replay unit, in ``J`` order, and
+    the prover's fault declarations.
+
+    ``declarations`` are global VU indices the prover declares incorrect
+    ("this VU holds the committed value; I do not claim it is correct"):
+    sorted, unique, each inside an opened RU and naming a VU with a relation,
+    at most ``Header.max_faults`` of them -- the verifier checks all of this
+    before deriving the s-challenge, whose seed binds them.  Empty (the
+    default) leaves the manifest exactly as it was before declarations
+    existed.
+    """
 
     commitments: tuple[Commitment, ...]
+    declarations: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.commitments) is not tuple or any(
             not isinstance(item, Commitment) for item in self.commitments
         ):
             raise ProtocolError("interior commitments must be a tuple of commitments")
+        _sorted_unique(self.declarations, "fault declarations")
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
-        return {"commitments": [item.manifest for item in self.commitments]}
+        manifest: dict[str, JSONValue] = {
+            "commitments": [item.manifest for item in self.commitments]
+        }
+        if self.declarations:
+            manifest["declarations"] = list(self.declarations)
+        return manifest
 
 
 @dataclass(frozen=True, slots=True)

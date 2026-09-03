@@ -67,6 +67,9 @@ def encode_transcript(transcript: Transcript) -> bytes:
         # The default backend is left implicit so transparent transcripts are
         # byte-identical to those written before backends were pluggable.
         header_document["backend"] = header.backend
+    if header.max_faults:
+        # Likewise f_max = 0 (no declarations admitted) is left implicit.
+        header_document["max_faults"] = header.max_faults
     document: dict[str, JSONValue] = {
         "version": PROTOCOL_VERSION,
         "header": header_document,
@@ -144,7 +147,15 @@ def _weights(value: object, where: str) -> Weights | None:
 def _optional_key(value: object, keys: set[str], optional: str, where: str) -> dict[str, object]:
     """An object with ``keys``, plus ``optional`` if present (its absence is the default)."""
 
-    if type(value) is not dict or not keys <= set(value) <= keys | {optional}:
+    return _optional_keys(value, keys, {optional}, where)
+
+
+def _optional_keys(
+    value: object, keys: set[str], optional: set[str], where: str
+) -> dict[str, object]:
+    """An object with ``keys``, plus any of ``optional`` (each absent one is its default)."""
+
+    if type(value) is not dict or not keys <= set(value) <= keys | optional:
         raise MalformedTranscript(f"{where} must be an object with keys {sorted(keys)}")
     return value
 
@@ -223,7 +234,7 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
     )
     if top["version"] != PROTOCOL_VERSION:
         raise MalformedTranscript("unsupported transcript version")
-    header_fields = _optional_key(
+    header_fields = _optional_keys(
         top["header"],
         {
             "advice",
@@ -236,7 +247,7 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
             "session_id",
             "weights",
         },
-        "backend",
+        {"backend", "max_faults"},
         "header",
     )
     policy_fields = _object(header_fields["policy"], {"q", "s"}, "header.policy")
@@ -248,6 +259,15 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
         raise MalformedTranscript("header.backend must be a nonempty string")
     if backend == TRANSPARENT_BACKEND and "backend" in header_fields:
         raise NoncanonicalTranscript("header.backend names the default; it must be omitted")
+    max_faults = _int(header_fields.get("max_faults", 0), "header.max_faults")
+    if max_faults == 0 and "max_faults" in header_fields:
+        raise NoncanonicalTranscript("header.max_faults is zero; it must be omitted")
+    interior_fields = _optional_key(top["interiors"], {"commitments"}, "declarations", "interiors")
+    declarations = _list(
+        interior_fields.get("declarations", []), _int, "interiors.declarations"
+    )
+    if not declarations and "declarations" in interior_fields:
+        raise NoncanonicalTranscript("interiors.declarations is empty; it must be omitted")
     try:
         policy = VerificationPolicy(
             _fraction(policy_fields["q"], "header.policy.q", checked),
@@ -264,6 +284,7 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
             _list(header_fields["claimed_outputs"], _hex, "header.claimed_outputs"),
             _weights(header_fields["weights"], "header.weights"),
             backend,
+            max_faults,
         )
         boundary_fields = _object(top["boundary"], {"commitment", "io_openings"}, "boundary")
         transcript = Transcript(
@@ -274,11 +295,8 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
             ),
             _challenge(ReplayChallenge, top["replay_challenge"], "replay_challenge"),
             InteriorMessage(
-                _list(
-                    _object(top["interiors"], {"commitments"}, "interiors")["commitments"],
-                    _commitment,
-                    "interiors.commitments",
-                )
+                _list(interior_fields["commitments"], _commitment, "interiors.commitments"),
+                declarations,
             ),
             _challenge(SampleChallenge, top["sample_challenge"], "sample_challenge"),
             _evidence(top["evidence"], "evidence"),
