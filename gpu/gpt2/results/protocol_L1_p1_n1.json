@@ -1,0 +1,54 @@
+{
+  "layers": 1,
+  "prompt_tokens": 1,
+  "max_new": 1,
+  "tokens": [
+    198
+  ],
+  "gates": 51985127,
+  "weights": 46523476,
+  "replay_units": 2,
+  "verification_units": 46644034,
+  "policy": {
+    "q": "1",
+    "s": "1/500"
+  },
+  "seconds": {
+    "forward_cpu": 0.30076233399995544,
+    "compile": 0.12387745799969707,
+    "commit_weights": 39.870208833000106,
+    "replay": 876.512274958
+  },
+  "honest": {
+    "code": "accepted",
+    "detail": "",
+    "sampled_replay_units": [
+      0,
+      1
+    ],
+    "sampled_vus": 93409,
+    "openings": 273099,
+    "interior_positions": [
+      0,
+      5461649
+    ],
+    "boundary_positions": 2,
+    "prover_seconds": 747.743024541001,
+    "verifier_seconds": 18.931177415999628,
+    "transcript_bytes": 470492422
+  },
+  "rejection": {
+    "flipped_address": 49111233,
+    "flipped_gate": "f32_to_bf16",
+    "inconsistent_vus": 769,
+    "detection_probability_per_session": 0.785520272109137,
+    "sessions": [
+      {
+        "code": "relation_rejected",
+        "detail": "gate at address 49117656 violates tc_dot16",
+        "sampled_vus": 93231,
+        "seconds": 801.2468989999998
+      }
+    ]
+  }
+}
