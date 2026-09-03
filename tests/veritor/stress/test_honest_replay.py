@@ -1051,7 +1051,6 @@ def test_phase_diagram_at_the_headline() -> None:
     ]
 
 
-@pytest.mark.slow
 def test_fold_and_closed_form_price_the_headline_declaration() -> None:
     """``bound(max_faults=1)`` on the headline table is the fold's price; the closed form's is the doc's."""
 

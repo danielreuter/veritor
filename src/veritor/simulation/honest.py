@@ -38,7 +38,7 @@ value, so its relation holds against it.  The pinned VUs are therefore
 exactly what the server must declare (M6) for the run to be accepted whatever
 the s-challenge samples, and :func:`~veritor.protocol.self_check` over the
 committed interior finds the same set (``tests/veritor/stress/test_honest_replay.py``
-asserts it).  Two consequences shape the declaration counts of section 4: a
+asserts it).  Two consequences shape the declaration counts of section 3: a
 fault that changed no recorded value costs no declaration, since the replay
 recomputes the correct interior and it agrees with the recording; and a fault
 that changed recorded values costs one declaration per recorded value it
@@ -247,7 +247,7 @@ def pin_everything(compiled: Compiled, recorded: Values) -> dict[int, tuple[int,
 
 
 class FaultClass(Enum):
-    """Where a silent fault lands and how (``docs/honest-prover.md``, section 4)."""
+    """Where a silent fault lands and how (``docs/honest-prover.md``, sections 3 and 4)."""
 
     INTERIOR_FLIP = "interior VU-output bit flip"
     """One bit of an interior dot product's output word, streamed tokens unchanged."""
@@ -558,7 +558,8 @@ def account(
     counts the RUs the strategy replayed by their replay cost: the opened
     ones for P0 and P1 -- the protocol requires their replay whether or not
     anything is declared -- the opened and flagged ones for P2, all of them
-    for P3.
+    for P3.  P2 spans the other two declaring strategies: with nothing
+    flagged it is P1, with every RU flagged it is P3.
     """
 
     circuit, index = compiled.circuit, compiled.index
