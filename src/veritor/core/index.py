@@ -52,6 +52,7 @@ from __future__ import annotations
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from functools import partial
 from math import gcd
 
 from .description import (
@@ -761,38 +762,45 @@ class _Interior:
         frame, base = self._frame, 0  # ``base``: the copy's offset within the replay unit
         while frame.definition.role != VERIFICATION:
             definition = frame.definition
-            steps, addresses, vout = definition.steps, definition.step_address, definition.step_vout
-
-            def before_step(i: int) -> int:  # interior members ahead of step ``i``
-                return vout[i] - self._out_between(base, base + addresses[i])
-
+            steps = definition.steps
+            before_step = partial(self._before_step, definition, base)
             index = _last_at_most(before_step, len(steps) - 1, rank)
             step = steps[index]
             if not isinstance(step, CallStep):
                 raise InvalidArtifact(f"{_short(definition)} holds a gate outside every verification unit")
             rank -= before_step(index)
-            child, start = step.child, base + addresses[index]
-
-            def before_copy(c: int) -> int:  # interior members ahead of copy ``c`` of the step
-                return c * child.vout_total - self._out_between(start, start + c * child.size)
-
+            start = base + definition.step_address[index]
+            before_copy = partial(self._before_copy, step.child, start)
             copy = _last_at_most(before_copy, step.count - 1, rank)
             rank -= before_copy(copy)
-            base = start + copy * child.size
+            base = start + copy * step.child.size
             frame = frame.child(index, copy)
         offsets = frame.definition.sorted_out_offsets
-
-        def through(j: int) -> int:  # interior members among the unit's first ``j + 1`` outputs
-            return j + 1 - self._out_between(base, base + offsets[j] + 1)
-
         low, high = 0, len(offsets) - 1
         while low < high:  # the first output with ``rank`` interior members ahead of it and itself one
             middle = (low + high) // 2
-            if through(middle) > rank:
+            if self._through(base, offsets, middle) > rank:
                 high = middle
             else:
                 low = middle + 1
         return self._frame.base + base + offsets[low]
+
+    def _before_step(self, definition: Definition, base: int, index: int) -> int:
+        """Interior members of the copy at ``base`` ahead of its step ``index``."""
+
+        return definition.step_vout[index] - self._out_between(
+            base, base + definition.step_address[index]
+        )
+
+    def _before_copy(self, child: Definition, start: int, copy: int) -> int:
+        """Interior members of the step at ``start`` ahead of its copy ``copy``."""
+
+        return copy * child.vout_total - self._out_between(start, start + copy * child.size)
+
+    def _through(self, base: int, offsets: tuple[int, ...], index: int) -> int:
+        """Interior members among the first ``index + 1`` outputs of the unit at ``base``."""
+
+        return index + 1 - self._out_between(base, base + offsets[index] + 1)
 
     def __iter__(self) -> Iterator[int]:
         replay = self._frame.definition

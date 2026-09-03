@@ -336,9 +336,9 @@ def test_every_committed_address_has_exactly_one_owner(sec, marks):
         assert not any(index.interior(r).contains(address) for r in interiors)
     # and the per-kind count the verifier prices from agrees with the enumeration
     kinds = {kind.kind: kind for kind in index.kinds()}
-    for r in interiors:
+    for r, interior in interiors.items():
         kind = kinds[index.replay_units.unit(r).kind]
-        assert kind.interior_count == len(interiors[r]) == index.interior(r).count
+        assert kind.interior_count == len(interior) == index.interior(r).count
 
 
 def test_the_wire_carries_no_prover_described_domain(honest_run, sec):

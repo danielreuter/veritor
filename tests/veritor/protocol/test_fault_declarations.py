@@ -52,8 +52,11 @@ OTHER_UNIT = 12
 SOURCE_UNIT = 0
 """An ``in`` gate's VU: nothing to declare."""
 
-BASELINE_TRANSCRIPT_SHA256 = "8b9991cd90a286a00e6d1774c647898de43c97541f190a9ec27c4e9657fcee76"
-"""SHA-256 of the fixture's honest transcript (17,219 bytes) as the code before M6 encoded it."""
+BASELINE_TRANSCRIPT_SHA256 = "7eb5a9da19f296b56e9a077c73653dc5cd77eda0daf4dbb471ed639b0ab08997"
+"""SHA-256 of the fixture's honest transcript as the code before M6 encoded it.
+
+Re-pinned when the interior moved to VU-output granularity (protocol v7: evidence
+opens a unit's inputs and outputs only, interior domain tag v2)."""
 
 
 def faults(max_faults: int = 0) -> VerifierParameters:
