@@ -4,9 +4,10 @@ This is the protocol as it stood before proofs were pluggable, expressed
 through :class:`ProofBackend`: the prover hands over the witness (values and
 Merkle paths), and the verifier authenticates every opening under the roots
 the statement names, compares pinned public inputs, decodes each value with
-the gate set's canonical codec and recomputes every relation with the gate
-set's pinned semantics.  It gives the verifier every value it checks, so it is
-not zero-knowledge; it is the reference every other backend must agree with.
+the gate set's canonical codec and recomputes every sampled unit's gates from
+its opened inputs with the gate set's pinned semantics, comparing the opened
+outputs.  It gives the verifier every value it checks, so it is not
+zero-knowledge; it is the reference every other backend must agree with.
 """
 
 from __future__ import annotations
@@ -169,7 +170,19 @@ class TransparentBackend:
     def _check_relations(
         self, statement: Statement, obligation: Obligation, values: list[int]
     ) -> None:
+        """Recompute the copy's gates from its opened inputs; every opened gate must agree.
+
+        A source gate has no relation: its opened value *is* its value (the
+        boundary pins an ``in`` gate to the public input, ``kappa_W`` a
+        weight).  Every other gate is evaluated from what it reads -- an
+        opened input, or an earlier gate of the copy -- and, when the kind
+        opens it, checked against the opened value; an internal gate is never
+        committed, so the recomputation is what stands for it.
+        """
+
         program = statement.program(obligation.kind)
+        opened = dict(zip(program.outputs, obligation.outputs, strict=True))
+        local: list[int] = []
         for offset, gate in enumerate(program.gates):
             try:
                 semantics = self._gate_set[gate.op]
@@ -177,20 +190,31 @@ class TransparentBackend:
                 raise Reject(
                     VerificationCode.INVALID_COMPILED_RESULT, f"unknown gate {gate.op}"
                 ) from error
+            slot = opened.get(offset)
             if semantics.source is not None:
+                if slot is None:
+                    raise Reject(
+                        VerificationCode.INVALID_COMPILED_RESULT,
+                        f"source gate {offset} of kind {obligation.kind.hex()[:12]} is not opened",
+                    )
+                local.append(values[slot])
                 continue
             args = tuple(
-                values[
-                    obligation.gates[value]
-                    if space == LOCAL
-                    else obligation.inputs[value]
-                ]
+                local[value] if space == LOCAL else values[obligation.inputs[value]]
                 for space, value in gate.args
             )
-            out_ref = obligation.positions[obligation.gates[offset]]
-            where = self._where(obligation, out_ref)
+            if slot is None:
+                try:
+                    local.append(semantics.evaluate(args))
+                except Exception as error:
+                    raise Reject(
+                        VerificationCode.TRUSTED_SERVICE_FAILURE,
+                        f"gate {gate.op} raised at offset {offset} of unit {obligation.unit}: {error}",
+                    ) from error
+                continue
+            where = self._where(obligation, obligation.positions[slot])
             try:
-                satisfied = semantics.check(args, values[obligation.gates[offset]])
+                satisfied = semantics.check(args, values[slot])
             except Exception as error:
                 raise Reject(
                     VerificationCode.TRUSTED_SERVICE_FAILURE,
@@ -201,3 +225,4 @@ class TransparentBackend:
                     VerificationCode.RELATION_REJECTED,
                     f"gate at {where} violates {gate.op}",
                 )
+            local.append(values[slot])

@@ -187,12 +187,14 @@ def test_oversized_units_are_rejected_at_session_start() -> None:
     compilation = one_unit_compiled(200)
     compiled = compilation.compiled
     expectation = expectation_for(compilation)
-    limits = VerificationLimits(max_positions_per_unit=200)
+    # the block's 200 adds are recomputed, not opened: the check touches its one
+    # declared output and the one input it reads
+    limits = VerificationLimits(max_positions_per_unit=1)
 
     with pytest.raises(Reject) as rejection:
         VerifierSession(expectation, compiled, limits=limits)
     assert rejection.value.code is VerificationCode.RESOURCE_LIMIT
-    assert "positions_per_unit is 201" in rejection.value.detail
+    assert "positions_per_unit is 2" in rejection.value.detail
 
     values = dict(enumerate(compiled.circuit.evaluate((3,))))
     run = run_protocol(compiled, expectation, values, limits=limits)
@@ -200,7 +202,7 @@ def test_oversized_units_are_rejected_at_session_start() -> None:
     assert run.transcript is None
 
     accepted = run_protocol(
-        compiled, expectation, values, limits=VerificationLimits(max_positions_per_unit=201)
+        compiled, expectation, values, limits=VerificationLimits(max_positions_per_unit=2)
     )
     assert accepted.report.accepted
 
@@ -210,12 +212,12 @@ def test_a_limit_hit_during_the_run_is_a_reject_not_an_exception() -> None:
     compiled = compilation.compiled
     expectation = expectation_for(compilation)
     values = dict(enumerate(compiled.circuit.evaluate((3,))))
-    limits = VerificationLimits(max_openings=100)
+    limits = VerificationLimits(max_openings=2)
 
     run = run_protocol(compiled, expectation, values, limits=limits)
 
     assert run.report.code is VerificationCode.RESOURCE_LIMIT
-    assert "openings is 202" in run.report.detail  # the input cell's one, then the block's 201
+    assert "openings is 3" in run.report.detail  # the input cell's one, then the block's two
     assert run.report.sampled_replay_units == (0,)
     assert run.report.sampled_verification_units == (0, 1)
 
@@ -237,15 +239,16 @@ def test_a_limit_hit_during_the_run_is_a_reject_not_an_exception() -> None:
 
 def test_expected_work_follows_the_documented_formula(compiled, workload) -> None:
     index = compiled.index
-    # every verification unit is priced at its gates plus its declared ports: a source
-    # cell at 1 + 0, a dot at its gates plus the 2k values it reads
+    # every verification unit is opened at its declared outputs and the ports it reads
+    # (a source cell at 1 + 0, a dot at its one sum plus the 2k values it reads) and
+    # its gates are recomputed from the opened inputs
     positions = gates = 0
     for unit in range(index.verification_unit_count):
         node = index.verification_unit(unit)
         reads = node.frame.definition.input_count
         assert reads == len(compiled.circuit.In(node))  # each unit reads each declared input
         assert (reads == 0) == compiled.circuit[node.interval.start].is_source
-        positions += node.size + reads
+        positions += len(compiled.circuit.Out(node)) + reads
         gates += node.size
     io = len(workload.public_inputs) + len(compiled.circuit.outputs)
     depth = merkle_depth(index.n)

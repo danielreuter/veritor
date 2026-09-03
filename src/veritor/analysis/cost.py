@@ -2,8 +2,9 @@
 
 Committing the boundary ``∂ = In ∪ ⋃_r Out(R_r)`` costs ``h`` per position; a
 replay unit, selected with probability ``q``, costs ``h`` per interior
-position it commits (its gates but ``Out`` and its pinned source gates) and
-the recomputation of its interior; a verification unit, selected with
+position it commits (the declared outputs of the verification units inside
+it, less its own ``Out``: :attr:`~veritor.core.KindSummary.interior_count`)
+and the recomputation of its interior; a verification unit, selected with
 probability ``q s``, costs its proof, ``alpha`` times its native execution
 ``Cost_proof(V_v)`` (the *proving factor*, ``1`` by default), and a fixed
 ``c_0``::
@@ -193,8 +194,7 @@ def cost(
     for kind in table.rows:
         if kind.role == REPLAY:
             boundary += kind.copies * kind.out_count
-            interior = kind.size - kind.out_count - kind.source_inputs - kind.source_weights
-            interior_total += kind.copies * h * interior
+            interior_total += kind.copies * h * kind.interior_count
         elif kind.role == VERIFICATION:
             proof += kind.copies * (alpha * kind.proof_cost + c0)
     return ExpectedCost(

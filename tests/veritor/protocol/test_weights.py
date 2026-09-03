@@ -9,10 +9,13 @@ from dataclasses import replace
 import pytest
 
 from veritor.constructors import (
+    DemoGCompileRequest,
     MatmulCompileRequest,
     MatmulG,
     MatmulWorkload,
     TracedDefinition,
+    compile_demo_g,
+    expected_dot_outputs,
 )
 from veritor.core import Gate, GateSet, VerificationPolicy, make_word_gate_set
 from veritor.protocol import (
@@ -329,8 +332,29 @@ def test_ownership_rule_weights_then_boundary_then_interior(model: Model) -> Non
     assert all(layout.owner(address) == BOUNDARY_OWNER for address in layout.public_inputs)
     assert all(layout.owner(address) == BOUNDARY_OWNER for address in model.circuit.outputs)
     assert index.interior(0).count == index.interior(1).count == 0  # the source units
-    interior = int(index.interior(2).unrank(0))
-    assert layout.owner(interior) == 2
+    # a dot's declared sum is its row's output, so the matmul commits no interior at
+    # all: every row output lives in the boundary and the products between are recomputed
+    assert all(index.interior(r).count == 0 for r in range(index.replay_units.count))
+    for row in range(2, index.replay_units.count):
+        assert all(
+            layout.owner(address) == BOUNDARY_OWNER
+            for address in model.circuit.Out(index.replay_units.unit(row))
+        )
+    # a chain of multiply-accumulates does have one: every sum but the last
+    demo = compile_demo_g()
+    session = VerifierSession(
+        make_expectation(
+            demo,
+            CHECK_EVERYTHING,
+            expected_dot_outputs(DemoGCompileRequest().batch, 8),
+            parameters=VerifierParameters(max_capacity=None),
+            **SEEDS,
+        ),
+        demo.compiled,
+    )
+    interior = demo.compiled.index.interior(0)
+    assert interior.count == 1
+    assert session._layout.owner(int(interior.unrank(0))) == 0
 
 
 # -- the verifier's work does not grow with |W| ----------------------------------

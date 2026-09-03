@@ -84,7 +84,9 @@ def synthetic_table(
         input_count=2,
         out_count=1,
         out_bits=width,
+        interior_count=0,
         reach_bits=width,
+        ancestor_bits=width,  # enclosed by its RU's one-value interface
         source_inputs=0,
         source_weights=0,
         min_depth=2,
@@ -108,7 +110,10 @@ def synthetic_table(
                 input_count=1,
                 out_count=1,
                 out_bits=width,
+                interior_count=units_per_copy
+                - 1,  # every VU output but the one the RU declares
                 reach_bits=width * (1 + k % 7),
+                ancestor_bits=width * total_out,
                 source_inputs=0,
                 source_weights=0,
                 min_depth=1,
@@ -129,7 +134,9 @@ def synthetic_table(
         input_count=0,
         out_count=total_out,
         out_bits=width * total_out,
+        interior_count=total_out * (units_per_copy - 1),
         reach_bits=width * total_out,
+        ancestor_bits=width * total_out,
         source_inputs=0,
         source_weights=0,
         min_depth=0,
@@ -169,8 +176,14 @@ def _fold_point(
             "rows": len(table.rows),
             "replay_kinds": len(replay_rows),
             "replay_copies": replay_copies,
-            "ru_positions": (
+            "ru_gates": (
                 sum(row.copies * row.size for row in replay_rows) / replay_copies
+                if replay_copies
+                else None
+            ),
+            "ru_positions": (
+                sum(row.copies * row.interior_count for row in replay_rows)
+                / replay_copies
                 if replay_copies
                 else None
             ),

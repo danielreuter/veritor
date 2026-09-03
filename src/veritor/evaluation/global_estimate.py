@@ -87,9 +87,12 @@ class Inputs:
     leaf; packing is a commitment-layout change, not a semantic one.
 
     ``interior``: what an opened RU's interior commitment covers: ``"vu"``,
-    the declared outputs of its VUs (the values other VUs read; the VU's own
-    gates are re-executed by the check), or ``"gate"``, every gate as the
-    prototype commits today.
+    the declared outputs of its VUs that are not the RU's own outputs (the
+    values other VUs read; the VU's own gates are re-executed by the check;
+    the RU's outputs are boundary positions), which is what the protocol
+    commits (:attr:`~veritor.core.KindSummary.interior_count`), or
+    ``"gate"``, every non-source gate of the RU, as the prototype committed
+    before the interior moved to VU-output granularity.
 
     ``budget``: the prover's work over the honest computation.  ``lam``:
     the security parameter ``lambda = log2 (1 / eta)``.
@@ -203,7 +206,7 @@ def estimate(inputs: Inputs | None = None, *, grid: int = 240) -> Estimate:
     honest = rows[table.root].replay_cost
     ru_cost = request.replay_cost
     if inputs.interior == "vu":
-        ru_positions = sum(count * rows[kind].out_count for kind, count in request.verification_kinds)
+        ru_positions = request.interior_count
     else:
         ru_positions = request.size - request.source_inputs - request.source_weights
     boundary_positions = request.copies * (request.out_count + request.source_inputs) + rows[table.root].source_inputs

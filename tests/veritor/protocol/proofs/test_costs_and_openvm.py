@@ -26,6 +26,7 @@ from veritor.protocol.proofs.costs import (
     SP1_CYCLES_PER_GATE,
     SP1_CYCLES_PER_LEAF,
     SP1_CYCLES_PER_MERKLE_LEVEL,
+    SP1_CYCLES_PER_PARSE_BYTE,
     alpha_dot,
     alpha_toy_isa,
     estimate_cycles,
@@ -63,7 +64,7 @@ class TestCosts:
         assert estimate.positions == sum(
             len(item.positions) for item in statement.obligations
         )
-        assert estimate.gates == sum(len(item.gates) for item in statement.obligations)
+        assert estimate.gates == sum(statement.program(item.kind).size for item in statement.obligations)
         assert estimate.statement_bytes == len(encode_statement(statement))
         # the implied witness size is within a few bytes of the real one
         assert abs(estimate.witness_bytes - len(encode_witness(witness))) < 64
@@ -81,8 +82,9 @@ class TestCosts:
                 estimate.relations,
             )
         )
-        # the measured value for this very batch (SP1 6.4.0 execute): 879,613 cycles
-        assert 0.95 < estimate.total / 879_613 < 1.05
+        # the measured value for this very batch (SP1 6.4.0 execute, the guest that
+        # opens inputs and outputs and recomputes the gates between): 761,710 cycles
+        assert 0.95 < estimate.total / 761_710 < 1.05
 
     def test_seconds_follow_the_machine_profile(self, batch) -> None:
         statement, _ = batch
@@ -148,7 +150,7 @@ class TestCosts:
         assert batched.proof_overhead < deep.proof_overhead / 100
         assert batched.hash_cost == deep.hash_cost
         assert float(deep.hash_cost) == pytest.approx(
-            (SP1_CYCLES_PER_LEAF + 20 * SP1_CYCLES_PER_MERKLE_LEVEL + 11.7 * (40 + 640))
+            (SP1_CYCLES_PER_LEAF + 20 * SP1_CYCLES_PER_MERKLE_LEVEL + SP1_CYCLES_PER_PARSE_BYTE * (40 + 640))
             / (LAPTOP_M_SERIES.khz * 1000)
         )
         with pytest.raises(ValueError):

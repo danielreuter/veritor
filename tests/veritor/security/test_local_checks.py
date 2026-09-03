@@ -1,10 +1,12 @@
 """Component 4: local checks (session._check_unit, circuit.check_gate / decode).
 
-Every non-source gate of a sampled verification unit is checked against
-values opened under their owners; input gates are compared with the public
-inputs exhaustively at the boundary; weights are accepted only as kappa_W's
-leaves; non-canonical or out-of-range encodings are INVALID_VALUE; the
-evidence must open exactly the required addresses, in order.
+Every gate of a sampled verification unit is recomputed from the values
+opened under their owners (its inputs) and every opened output (a declared
+output) must equal what was recomputed; input gates are compared with the
+public inputs exhaustively at the boundary; weights are accepted only as
+kappa_W's leaves; non-canonical or out-of-range encodings are INVALID_VALUE;
+the evidence must open exactly the required addresses -- inputs and
+outputs, never an internal gate -- in order.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from veritor.protocol import (
     Opening,
     VerificationCode,
 )
+from veritor.protocol.session import _Layout
 
 
 def non_source_addresses(model) -> list[int]:
@@ -36,6 +39,102 @@ def test_every_non_source_gate_of_a_sampled_unit_is_checked(model, offset):
     assert report.code == VerificationCode.RELATION_REJECTED
     assert f"address {address} " in report.detail
     assert model.unit_of(address) in report.sampled_verification_units
+
+
+@pytest.mark.parametrize("marks", ["whole", "wide"])
+@pytest.mark.parametrize("cell", [(0, 0), (1, 1)])
+def test_corrupting_an_internal_gate_is_caught_at_the_output_that_reads_it(sec, marks, cell):
+    """A ``mul`` internal to its unit is never opened: the recomputation stands for it.
+
+    The prover's transcript holds a wrong product and the sum that follows
+    from it.  The unit's check recomputes the product from the opened ``x``
+    and ``w``, adds ``x_next`` and finds the opened sum wrong: the rejection
+    names the *output*, the only committed value the corruption reaches.
+    """
+
+    model = sec.Model(2, 2, wide_units=marks == "wide", split_cells=False)
+    mul, add = model.cell_addresses(*cell)
+    assert model.unit_of(mul) == model.unit_of(add)
+    values, outputs = model.corrupt({mul: (model.values[mul] + 1) % (1 << model.width)})
+    assert values[add] != model.values[add]
+    report = model.run(model.expectation(claimed_outputs=outputs), values).report
+    assert report.code == VerificationCode.RELATION_REJECTED
+    assert f"address {add} " in report.detail and f"address {mul} " not in report.detail
+    assert model.unit_of(mul) in report.sampled_verification_units
+    # the same corruption with the product declared (split cells): the product's own
+    # unit is the one rejected, at the product's address
+    split = sec.Model(2, 2)
+    values, outputs = split.corrupt({mul: (split.values[mul] + 1) % (1 << split.width)})
+    report = split.run(split.expectation(claimed_outputs=outputs), values).report
+    assert report.code == VerificationCode.RELATION_REJECTED
+    assert f"address {mul} " in report.detail
+
+
+def test_a_recomputation_disagreeing_with_an_opened_output_is_relation_rejected(model, sec):
+    """Honest inputs, a wrong declared output: whether interior (a product) or boundary (a sum)."""
+
+    for address in (model.interior_addresses[0], model.hidden_boundary_addresses[0]):
+        forged = dict(model.values)
+        forged[address] = (forged[address] + 1) % (1 << model.width)
+        # the downstream values stay honest, so the claim is the honest output: only the
+        # sampled check of the unit computing (or reading) the address can notice
+        report = model.run(model.expectation(), forged).report
+        assert report.code == VerificationCode.RELATION_REJECTED
+        assert f"address {address} " in report.detail
+        assert model.unit_of(address) in report.sampled_verification_units
+        # nothing sampled: the forged value is committed and accepted
+        report = model.run(model.expectation(sec.VerificationPolicy(1, 0)), forged).report
+        assert report.accepted and report.sampled_verification_units == ()
+
+
+@pytest.mark.parametrize("marks", ["whole", "wide"])
+def test_evidence_opening_an_internal_gate_instead_of_an_output_is_rejected(sec, marks):
+    """No domain holds an internal gate, so no opening of it authenticates or is even required.
+
+    The prover swaps a unit's output opening for one at its internal ``mul``
+    (the address of the ``add`` is what the verifier requires there), or
+    appends such an opening: COVERAGE_MISMATCH before any hash is checked.
+    An internal gate under the *boundary's* address with the output's leaf
+    is INVALID_OPENING: the leaf binds its position.
+    """
+
+    model = sec.Model(2, 2, wide_units=marks == "wide", split_cells=False)
+    mul, add = model.cell_addresses(0, 0)
+    unit = model.unit_of(add)
+    layout = _Layout(model.compiled)
+    assert (BOUNDARY_OWNER, add) in layout.required(unit)
+    assert all(address != mul for _, address in layout.required(unit))
+
+    def find(message: EvidenceMessage, selected: tuple[int, ...]) -> tuple[int, int]:
+        batch = selected.index(unit)
+        slot = next(i for i, (_, address) in enumerate(layout.required(unit)) if address == add)
+        return batch, slot
+
+    class Swapping(sec.TamperingProver):
+        def evidence(self, challenge):
+            message = super().evidence(challenge)
+            batch, slot = find(message, challenge.selected)
+            units = list(message.units)
+            openings = list(units[batch])
+            item = openings[slot]
+            if self.mode == "swap":
+                openings[slot] = Opening(mul, item.value, item.path)
+            elif self.mode == "append":
+                openings.append(Opening(mul, item.value, item.path))
+            else:  # the internal gate's value shown under the output's address
+                encoded = self._layout.circuit.encode(mul, self._values[mul])
+                openings[slot] = Opening(add, encoded, item.path)
+            units[batch] = tuple(openings)
+            return EvidenceMessage(tuple(units))
+
+    for mode, code in (
+        ("swap", VerificationCode.COVERAGE_MISMATCH),
+        ("append", VerificationCode.COVERAGE_MISMATCH),
+        ("relabel", VerificationCode.INVALID_OPENING),
+    ):
+        Swapping.mode = mode
+        run = model.run(model.expectation(), model.values, prover=Swapping)
+        assert run.report.code == code, mode
 
 
 @pytest.mark.parametrize("rank", range(2))

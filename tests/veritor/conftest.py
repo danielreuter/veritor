@@ -114,22 +114,45 @@ def assert_interfaces_match_enumeration(index: Index, circuit: DescriptionCircui
 
     for r, unit in enumerate(units):
         interior = index.interior(r)
-        expected_interior = [
-            a for a in unit.interval if a not in expected_out[unit] and not circuit[a].is_source
-        ]
+        # the outputs of the verification units inside, less the unit's own (boundary) outputs
+        unit_outputs = {a for node in index.verification_units(r) for a in expected_out[node]}
+        assert set(expected_out[unit]) <= unit_outputs  # the refinement: Out(R) ⊆ ⋃ Out(V)
+        expected_interior = [a for a in unit.interval if a in unit_outputs and a not in expected_out[unit]]
+        assert not any(circuit[a].is_source for a in expected_interior)
         assert interior.count == len(interior) == len(expected_interior)
+        assert interior.count == rows[unit.kind].interior_count
         assert list(iter_domain(interior)) == expected_interior == list(interior)
+        assert [interior.unrank(rank) for rank in range(interior.count)] == expected_interior
         assert [interior.rank(a) for a in expected_interior] == list(range(len(expected_interior)))
-        assert [a for a in range(n) if interior.contains(a)] == expected_interior
+        assert [a for a in range(-1, n + 1) if interior.contains(a)] == expected_interior
         for address in unit.interval:
             if address not in expected_interior:
                 with pytest.raises(KeyError):
                     interior.rank(address)
-    # every address is exactly one of: input, weight, Out of its unit, interior of its unit
-    covered = set(expected_inputs) | set(expected_weights) | set(expected_boundary)
-    for r in range(len(units)):
-        covered |= set(iter_domain(index.interior(r)))
-    assert covered == set(range(n))
+        with pytest.raises(IndexError):
+            interior.unrank(interior.count)
+        with pytest.raises(IndexError):
+            interior.unrank(-1)
+    for node in nodes_below(index.root):
+        if node.role == "verification":
+            assert rows[node.kind].interior_count == 0
+    assert rows[index.root.kind].interior_count == sum(index.interior(r).count for r in range(len(units)))
+    # the owners partition the positions the relations touch: every address is exactly one of
+    # input, weight, Out of its unit, interior of its unit, or an internal gate of a verification
+    # unit (never committed: recomputed from the unit's opened inputs)
+    committed = [set(expected_inputs), set(expected_weights), set(expected_boundary) - set(expected_inputs)]
+    committed += [set(iter_domain(index.interior(r))) for r in range(len(units))]
+    assert sum(len(part) for part in committed) == len(set().union(*committed))  # pairwise disjoint
+    internal = set(range(n)) - set().union(*committed)
+    assert not any(circuit[a].is_source for a in internal)
+    for r, unit in enumerate(units):
+        for node in index.verification_units(r):
+            for address in node.interval:
+                if address in internal:
+                    assert address not in expected_out[node]  # an internal gate declares nothing
+            # what a unit's relation touches is committed somewhere: its declared outputs and its reads
+            touched = set(expected_out[node]) | set(circuit.In(node))
+            assert touched <= set().union(*committed)
 
 
 @pytest.fixture

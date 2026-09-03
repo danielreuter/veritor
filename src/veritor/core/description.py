@@ -142,6 +142,15 @@ class Run:
         k, remainder = divmod(offset - self.start, self.stride)
         return k if remainder == 0 and k < self.count else None
 
+    def count_below(self, offset: int) -> int:
+        """How many elements are strictly less than ``offset``."""
+
+        if offset <= self.start:
+            return 0
+        if self.stride == 0:
+            return 1
+        return min(self.count, (offset - 1 - self.start) // self.stride + 1)
+
 
 def extended_gcd(a: int, b: int) -> tuple[int, int, int]:
     """``(g, x, y)`` with ``a * x + b * y == g == gcd(a, b)``."""
@@ -525,6 +534,76 @@ class Definition:
             if k is not None:
                 return self.out_starts[index] + k
         return None
+
+    def out_below(self, offset: int) -> int:
+        """How many members of ``Out`` have a gate offset below ``offset``: a scan over runs."""
+
+        return sum(run.count_below(offset) for run in self.out_runs)
+
+    @cached_property
+    def sorted_out_offsets(self) -> tuple[int, ...]:
+        """``Out`` of a copy as sorted gate offsets, materialized.
+
+        Only the interior domain calls this, and only on verification units,
+        whose size the completeness cap bounds: a unit's ``Out`` in address
+        order is what the interior ranks, run order being address order only
+        when the runs do not interleave.
+        """
+
+        offsets = sorted({run.element(k) for run in self.out_runs for k in range(run.count)})
+        if len(offsets) != self.out_count:
+            raise InvalidArtifact(f"the output runs of {self.digest[:12]} overlap")
+        return tuple(offsets)
+
+    @cached_property
+    def vout_total(self) -> int:
+        """Verification-unit output positions inside one copy: ``|Out(V)|`` summed over the units inside."""
+
+        if self.role == VERIFICATION:
+            return self.out_count
+        return sum(
+            step.count * step.child.vout_total
+            for step in self.steps
+            if isinstance(step, CallStep)
+        )
+
+    @cached_property
+    def step_vout(self) -> tuple[int, ...]:
+        return prefix_sums(
+            [
+                0 if isinstance(s, GateStep) else s.count * s.child.vout_total
+                for s in self.steps
+            ]
+        )
+
+    @cached_property
+    def interior_total(self) -> int:
+        """Interior positions inside one copy: per replay unit inside, its units' outputs minus its own.
+
+        The interior of a replay unit is ``⋃_V Out(V)`` over the verification
+        units ``V`` inside it, minus its own ``Out`` (boundary positions).
+        The marks tile the unit with verification units and it has no gate
+        steps of its own, so each of its declared outputs resolves through
+        some ``V``'s declared outputs and ``Out(R) ⊆ ⋃_V Out(V)``; the
+        difference is a count.  Source gates are in neither set (``Out``
+        never holds a pinned gate).
+        """
+
+        if self.role == VERIFICATION:
+            return 0
+        if self.role == REPLAY:
+            interior = self.vout_total - self.out_count
+            if interior < 0:
+                raise InvalidArtifact(
+                    f"replay unit {self.digest[:12]} declares {self.out_count} outputs "
+                    f"but its verification units declare only {self.vout_total}"
+                )
+            return interior
+        return sum(
+            step.count * step.child.interior_total
+            for step in self.steps
+            if isinstance(step, CallStep)
+        )
 
     @cached_property
     def out_total(self) -> int:

@@ -123,7 +123,11 @@ def test_boundary_is_the_inputs_and_the_rows_outputs() -> None:
     for r in range(index.replay_units.count):
         unit = index.replay_units.unit(r)
         interior = index.interior(r)
-        assert set(interior) == set(unit.interval) - io - set(circuit.weights)
+        # the interior is the dots' declared sums that are not the row's outputs: none, so a
+        # sampled dot is checked from its opened inputs and its boundary output alone
+        declared = {a for node in index.verification_units(r) for a in circuit.Out(node)}
+        assert set(interior) == declared - io - set(circuit.weights) == set()
+        assert set(circuit.Out(unit)) <= declared
         assert all(index.replay_units.owner(a) == r for a in interior)
 
 

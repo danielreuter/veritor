@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 
-from veritor.constructors import expected_matmul_outputs
+import pytest
+
+from veritor.constructors import (
+    DemoGCompileRequest,
+    compile_demo_g,
+    expected_dot_outputs,
+    expected_matmul_outputs,
+)
 from veritor.core import Compiled, VerificationPolicy
 from veritor.protocol import (
+    Expectation,
     InteriorMessage,
     Opening,
     ProverSession,
@@ -14,17 +23,61 @@ from veritor.protocol import (
     assignment_replay,
     decode_transcript,
     encode_transcript,
+    make_expectation,
     run_protocol,
     verify_transcript,
 )
 
+from .conftest import (
+    CHECK_EVERYTHING,
+    NO_CAPACITY_STATEMENT,
+    Q_SEED,
+    S_SEED,
+    SESSION_ID,
+)
+
+
+@pytest.fixture(scope="module")
+def demo() -> tuple[Compiled, Callable[[VerificationPolicy], Expectation], dict[int, object]]:
+    """A DemoG run: chained multiply-accumulates, so every dot has an interior.
+
+    The matmul fixture has none: each dot output is a row output, hence a
+    boundary position, and (in the fixture) a circuit output as well.
+    """
+
+    compilation = compile_demo_g()
+    request = DemoGCompileRequest()
+    compiled = compilation.compiled
+    values = dict(enumerate(compiled.circuit.evaluate(request.public_inputs)))
+    outputs = expected_dot_outputs(request.batch, request.width)
+
+    def expectation(policy: VerificationPolicy) -> Expectation:
+        return make_expectation(
+            compilation,
+            policy,
+            outputs,
+            parameters=NO_CAPACITY_STATEMENT,
+            session_id=SESSION_ID,
+            q_seed=Q_SEED,
+            s_seed=S_SEED,
+        )
+
+    return compiled, expectation, values
+
 
 def forge_interior(compiled: Compiled, values: dict[int, object]) -> dict[int, object]:
+    """Corrupt the first interior position: a VU output that is not an RU output.
+
+    Only the VU that computes it (or the one that consumes it) can notice: the
+    public-I/O check never sees it and the interior commitment is whatever the
+    prover says.
+    """
+
     forged = dict(values)
     index = compiled.index
-    # the first replay unit with an interior (the source units have none: their gates are pinned)
     unit = next(r for r in range(index.replay_units.count) if index.interior(r).count)
     address = int(index.interior(unit).unrank(0))
+    assert address not in set(compiled.circuit.outputs)
     forged[address] = (forged[address] + 1) % 256  # type: ignore[operator]
     return forged
 
@@ -60,27 +113,34 @@ def test_sessions_produce_identical_transcripts_on_both_sides(
     assert prover.transcript == verifier.transcript
 
 
-def test_forged_interior_is_rejected_when_every_unit_is_checked(
-    compiled, honest_values, expect
-) -> None:
-    forged = forge_interior(compiled, honest_values)
+def test_forged_interior_is_rejected_when_every_unit_is_checked(demo) -> None:
+    compiled, expectation, honest = demo
+    forged = forge_interior(compiled, honest)
 
-    run = run_protocol(compiled, expect(), forged, replay=assignment_replay(forged))
+    run = run_protocol(
+        compiled, expectation(CHECK_EVERYTHING), forged, replay=assignment_replay(forged)
+    )
 
     assert run.report.code is VerificationCode.RELATION_REJECTED
     assert run.transcript is None
 
 
-def test_forged_interior_survives_when_nothing_is_sampled(
-    compiled, honest_values, expect
-) -> None:
-    forged = forge_interior(compiled, honest_values)
-    expectation = expect(VerificationPolicy(1, 0))
+def test_forged_interior_survives_when_nothing_is_sampled(demo) -> None:
+    compiled, expectation, honest = demo
+    forged = forge_interior(compiled, honest)
 
-    run = run_protocol(compiled, expectation, forged, replay=assignment_replay(forged))
+    run = run_protocol(
+        compiled, expectation(VerificationPolicy(1, 0)), forged, replay=assignment_replay(forged)
+    )
 
     assert run.report.code is VerificationCode.ACCEPTED
     assert run.report.sampled_verification_units == ()
+
+
+def test_matmul_commits_no_interior_because_every_dot_output_is_a_row_output(compiled) -> None:
+    index = compiled.index
+    assert all(index.interior(r).count == 0 for r in range(index.replay_units.count))
+    assert all(kind.interior_count == 0 for kind in index.kinds())
 
 
 def test_wrong_claimed_output_is_rejected_at_the_boundary(

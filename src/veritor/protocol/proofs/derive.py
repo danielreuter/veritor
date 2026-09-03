@@ -6,6 +6,12 @@ the commitments the verifier itself accepted, and the kind's program is read
 off the definition the VU is a copy of.  The prover runs the same code on the
 same trusted data, so both sides produce identical statement bytes.
 
+A sampled VU opens its *inputs* (the addresses its gates read outside it:
+boundary positions, weights under ``kappa_W``, or the interior of its own
+replay unit) and its *outputs* (its declared outputs -- interior positions,
+or boundary positions when they are the replay unit's own -- and its source
+gates), nothing else; the checker recomputes the gates in between.
+
 A sampled VU the prover *declared* incorrect (``InteriorMessage.declarations``,
 validated by the verifier before the s-challenge) is obliged to open exactly
 the same positions -- its values stay authenticated under the accepted roots,
@@ -78,12 +84,18 @@ def _resolve(root: Frame, frame: Frame, space: str, value: int) -> Arg:
 
 
 def kind_program(node: IndexNode) -> KindProgram:
-    """The program of ``node``'s kind, read off its definition in relative coordinates."""
+    """The program of ``node``'s kind, read off its definition in relative coordinates.
+
+    The opened offsets are the definition's ``Out`` (its declared, unpinned
+    outputs, in address order) and its source gates; everything else is an
+    internal gate the checker recomputes.
+    """
 
     root = node.frame
     gates: list[tuple[str, list[Arg]]] = []
     ports: set[int] = set()
-    for address in root.interval:
+    pinned: list[int] = []
+    for offset, address in enumerate(root.interval):
         frame, step = root.locate(address)
         args: list[Arg] = []
         for item in step.args:
@@ -93,11 +105,16 @@ def kind_program(node: IndexNode) -> KindProgram:
                     ports.add(arg[1])
                 args.append(arg)
         gates.append((step.gate.name, args))
+        if step.gate.source is not None:
+            pinned.append(offset)
     ordered = tuple(sorted(ports))
     if ordered != tuple(root.definition.reads):
         raise ProtocolError(
             "the kind's program reads ports other than its definition declares"
         )
+    declared = root.definition.sorted_out_offsets
+    if set(declared) & set(pinned):
+        raise ProtocolError("the kind declares a source gate as an output")
     slot = {ordinal: k for k, ordinal in enumerate(ordered)}
     return KindProgram(
         bytes.fromhex(node.kind),
@@ -107,13 +124,14 @@ def kind_program(node: IndexNode) -> KindProgram:
             GateOp(op, tuple((PORT, slot[v]) if s == PORT else (s, v) for s, v in args))
             for op, args in gates
         ),
+        tuple(sorted((*declared, *pinned))),
     )
 
 
-DECLARED_KIND = raw_digest("veritor/protocol/proofs/declared/v1", {"gates": 0})
-"""The kind digest of a declared VU's obligation: a program of no gates and no ports."""
+DECLARED_KIND = raw_digest("veritor/protocol/proofs/declared/v2", {"gates": 0, "outputs": 0})
+"""The kind digest of a declared VU's obligation: a program of no gates, ports or outputs."""
 
-DECLARED_PROGRAM = KindProgram(DECLARED_KIND, 0, (), ())
+DECLARED_PROGRAM = KindProgram(DECLARED_KIND, 0, (), (), ())
 """The vacuous relation every declared VU is checked against (its openings still are)."""
 
 
@@ -206,11 +224,13 @@ def derive_obligation(
         inputs = tuple(
             slot_of[frame.input_address(ordinal)] for ordinal in program.ports
         )
-        gates = () if declared else tuple(slot_of[address] for address in node.interval)
+        outputs = tuple(slot_of[frame.base + offset] for offset in program.outputs)
     except KeyError as error:
         raise ProtocolError(
             f"VU {unit} touches address {error.args[0]} outside its openings"
         ) from None
+    if not declared and len(set(inputs) | set(outputs)) != len(positions):
+        raise ProtocolError(f"VU {unit} would open a position its relation does not touch")
     replay_unit = node.replay_unit
     if replay_unit is None:
         raise ProtocolError(f"VU {unit} lies in no replay unit")
@@ -223,7 +243,7 @@ def derive_obligation(
         tuple(refs),
         tuple(positions),
         inputs,
-        gates,
+        outputs,
     )
 
 

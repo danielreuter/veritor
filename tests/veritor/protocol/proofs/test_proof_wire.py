@@ -41,6 +41,7 @@ def program(kind: str = "kind-a") -> KindProgram:
             GateOp("mul", (("port", 0), ("local", 0))),
             GateOp("add", (("local", 1), ("port", 1))),
         ),
+        (0, 2),  # the source gate and the declared sum are opened; the product is internal
     )
 
 
@@ -61,11 +62,10 @@ def obligation(
             PositionRef(0, 3, 30, "u16", b"\x00\x2a"),
             PositionRef(0, 4, 31, "u16"),
             PositionRef(1, 0, 40, "u16"),
-            PositionRef(1, 1, 41, "u16"),
-            PositionRef(1, 2, 42, "u16"),
+            PositionRef(1, 1, 42, "u16"),
         ),
         (0, 1),
-        (2, 3, 4),
+        (2, 3),
     )
 
 
@@ -102,7 +102,7 @@ def test_witness_round_trips() -> None:
             16,
             [
                 KindProgram(
-                    digest("k"), 1, (0,), (GateOp("add", (("port", 0), ("port", 0))),)
+                    digest("k"), 1, (0,), (GateOp("add", (("port", 0), ("port", 0))),), (0,)
                 )
             ],
             [
@@ -132,7 +132,7 @@ def test_make_statement_sorts_kinds_and_obligations_and_rejects_duplicates() -> 
     assert [item.unit for item in built.obligations] == [2, 9]
     with pytest.raises(ProtocolError, match="distinct"):
         make_statement("veritor.toy-isa@1", digest("g"), 16, [a], [late, late])
-    other = KindProgram(a.kind, 1, (), (GateOp("in", ()),))
+    other = KindProgram(a.kind, 1, (), (GateOp("in", ()),), (0,))
     with pytest.raises(ProtocolError, match="two different programs"):
         make_statement("veritor.toy-isa@1", digest("g"), 16, [a, other], [])
 
@@ -142,13 +142,21 @@ def test_statement_validation_is_strict() -> None:
         make_statement("veritor.toy-isa@1", digest("g"), 16, [], [obligation()])
     with pytest.raises(ProtocolError, match="ports"):
         replace(obligation(), inputs=(0,)).check_program(program())
+    with pytest.raises(ProtocolError, match="outputs"):
+        replace(obligation(), outputs=(2,)).check_program(program())
     with pytest.raises(ProtocolError, match="not earlier"):
-        KindProgram(digest("k"), 1, (), (GateOp("add", (("local", 0), ("local", 0))),))
+        KindProgram(digest("k"), 1, (), (GateOp("add", (("local", 0), ("local", 0))),), ())
     with pytest.raises(ProtocolError, match="port index"):
-        KindProgram(digest("k"), 1, (), (GateOp("add", (("port", 0), ("port", 0))),))
+        KindProgram(digest("k"), 1, (), (GateOp("add", (("port", 0), ("port", 0))),), ())
+    with pytest.raises(ProtocolError, match="gate offsets"):
+        KindProgram(digest("k"), 1, (), (GateOp("in", ()),), (1,))
+    with pytest.raises(ProtocolError, match="strictly increasing"):
+        KindProgram(digest("k"), 2, (), (GateOp("in", ()), GateOp("in", ())), (1, 0))
+    with pytest.raises(ProtocolError, match="distinct"):
+        replace(obligation(), outputs=(2, 2))
     with pytest.raises(ProtocolError, match="commitment the obligation lacks"):
         replace(
-            obligation(), positions=(PositionRef(5, 0, 0, "u16"),), inputs=(), gates=()
+            obligation(), positions=(PositionRef(5, 0, 0, "u16"),), inputs=(), outputs=()
         )
 
 

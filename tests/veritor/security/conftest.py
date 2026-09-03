@@ -8,12 +8,16 @@ the shape of ``kappa_W``) is a one-file adaptation.
 
 The fixture circuit is a *chain*: a replay unit of source gates (``cells``
 inputs and ``cells`` weights, each its own verification unit) followed by
-``stages`` replay units of ``cells`` verification units each.  Cell ``i`` of
-a stage computes ``u_i = add(mul(x_i, w_i), x_{i+1})`` from the previous
-stage's outputs ``x`` and the weights ``w``; its ``mul`` is an interior
-position, its ``add`` a declared output of the stage.  The last stage's
-outputs are the circuit's outputs, so every other stage's outputs are
-boundary positions that are *not* public I/O.
+``stages`` replay units of ``cells`` cells each.  Cell ``i`` of a stage
+computes ``u_i = add(mul(x_i, w_i), x_{i+1})`` from the previous stage's
+outputs ``x`` and the weights ``w`` as two verification units: ``prod``
+(the ``mul``, whose declared output is an interior position of the stage)
+and ``sum`` (the ``add``, a declared output of the stage and so a boundary
+position).  The last stage's outputs are the circuit's outputs, so every
+other stage's outputs are boundary positions that are *not* public I/O.
+Under ``wide_units`` a stage's cells form one verification unit, and
+without ``split_cells`` each cell is one; either way the ``mul`` gates are
+then internal to their unit (never committed, recomputed by the check).
 
 The test suite runs with ``--import-mode=importlib``, so test modules reach
 this module through the ``sec`` fixture (the module itself) rather than by
@@ -110,12 +114,18 @@ def seed(label: str, index: int = 0) -> bytes:
 
 
 def chain_description(
-    stages: int = 2, cells: int = 2, width: int = 8, *, wide_units: bool = False
+    stages: int = 2,
+    cells: int = 2,
+    width: int = 8,
+    *,
+    wide_units: bool = False,
+    split_cells: bool = True,
 ) -> tuple[GateSet, bytes]:
     """The chain circuit's gate set and canonical description bytes.
 
     With ``wide_units`` a stage's cells form one verification unit instead of
-    one per cell: the same gates at the same addresses under other marks.
+    two per cell; without ``split_cells`` each cell is one unit (its ``mul``
+    internal): the same gates at the same addresses under other marks.
     """
 
     gate_set = make_word_gate_set(width)
@@ -123,19 +133,34 @@ def chain_description(
     add, mul = tracer.gate("add"), tracer.gate("mul")
 
     def cell_gates(x, x_next, w):
-        product = mul(x, w)  # interior
+        product = mul(x, w)  # internal to a wide unit
         return add(product, x_next)  # Out of the stage
 
+    @tracer.definition(input_count=2, key="prod", role="verification")
+    def prod(v):
+        return mul(v[0], v[1])  # declared: an interior position of the stage
+
+    @tracer.definition(input_count=2, key="sum", role="verification")
+    def total(v):
+        return add(v[0], v[1])  # declared: Out of the stage, a boundary position
+
     @tracer.definition(input_count=3, key="cell", role="verification")
-    def cell(v):
-        return cell_gates(v[0], v[1], v[2])
+    def whole_cell(v):
+        return cell_gates(v[0], v[1], v[2])  # the mul internal, the add declared
+
+    def cell(x, x_next, w):
+        if split_cells:
+            return total(prod(x, w), x_next)
+        return whole_cell(x, x_next, w)
 
     @tracer.definition(input_count=2 * cells, key=("wide", cells), role="verification")
     def wide(v):
         x, w = v[:cells], v[cells:]
         return [cell_gates(x[i], x[(i + 1) % cells], w[i]) for i in range(cells)]
 
-    @tracer.definition(input_count=2 * cells, key=("stage", cells, wide_units), role="replay")
+    @tracer.definition(
+        input_count=2 * cells, key=("stage", cells, wide_units, split_cells), role="replay"
+    )
     def stage(v):
         x, w = v[:cells], v[cells:]
         if wide_units:
@@ -146,7 +171,7 @@ def chain_description(
     def sources(_v):
         return tracer.inputs(cells), tracer.weights(cells)
 
-    @tracer.definition(input_count=0, key=("root", stages, cells, wide_units))
+    @tracer.definition(input_count=0, key=("root", stages, cells, wide_units, split_cells))
     def root(_v):
         s = sources()
         x, w = s[0:cells], s[cells : 2 * cells]
@@ -158,11 +183,18 @@ def chain_description(
 
 
 def chain_compiled(
-    stages: int = 2, cells: int = 2, width: int = 8, *, wide_units: bool = False
+    stages: int = 2,
+    cells: int = 2,
+    width: int = 8,
+    *,
+    wide_units: bool = False,
+    split_cells: bool = True,
 ) -> Compiled:
     """The chain circuit described in the module docstring."""
 
-    gate_set, description = chain_description(stages, cells, width, wide_units=wide_units)
+    gate_set, description = chain_description(
+        stages, cells, width, wide_units=wide_units, split_cells=split_cells
+    )
     return Compiler(gate_set).compile(description, [0] * cells)
 
 
@@ -319,8 +351,12 @@ class Model:
         inputs: tuple[int, ...] | None = None,
         weights: tuple[int, ...] | None = None,
         wide_units: bool = False,
+        split_cells: bool = True,
     ) -> None:
-        self.compiled = chain_compiled(stages, cells, width, wide_units=wide_units)
+        self.compiled = chain_compiled(
+            stages, cells, width, wide_units=wide_units, split_cells=split_cells
+        )
+        self.wide_units, self.split_cells = wide_units, split_cells
         self.circuit = self.compiled.circuit
         self.index = self.compiled.index
         self.width = width
@@ -354,16 +390,28 @@ class Model:
     def outputs_of(self, values: Mapping[int, int]) -> tuple[int, ...]:
         return tuple(values[address] for address in self.circuit.outputs)
 
-    def cell_unit(self, stage: int, cell: int) -> int:
-        """The global verification unit index of a stage's cell."""
+    def cell_units(self, stage: int, cell: int) -> tuple[int, int]:
+        """The global verification unit indices ``(prod, sum)`` of a stage's cell.
 
-        return 2 * self.cells + stage * self.cells + cell
+        Without ``split_cells`` both are the cell's one unit.
+        """
+
+        if not self.split_cells:
+            unit = 2 * self.cells + stage * self.cells + cell
+            return unit, unit
+        first = 2 * self.cells + 2 * (stage * self.cells + cell)
+        return first, first + 1
+
+    def cell_unit(self, stage: int, cell: int) -> int:
+        """The verification unit computing a stage's cell's output (its ``sum``)."""
+
+        return self.cell_units(stage, cell)[1]
 
     def cell_addresses(self, stage: int, cell: int) -> tuple[int, int]:
-        """``(mul, add)`` addresses of a stage's cell."""
+        """``(mul, add)`` addresses of a stage's cell (under any of the markings)."""
 
-        node = self.index.verification_unit(self.cell_unit(stage, cell))
-        return node.interval.start, node.interval.start + 1
+        base = self.index.replay_units.unit(self.replay_unit_of(stage)).interval.start
+        return base + 2 * cell, base + 2 * cell + 1
 
     def replay_unit_of(self, stage: int) -> int:
         return 1 + stage

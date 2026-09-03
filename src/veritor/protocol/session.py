@@ -28,10 +28,12 @@ from veritor.compile import Compilation
 from veritor.core import (
     Compiled,
     Digest,
+    IndexedDomain,
     ResourceLimit,
     VerificationLimits,
     VerificationPolicy,
-    iter_domain,
+    encode_value,
+    iter_members,
 )
 
 from .challenge import derive_replay_selection, derive_sample_selection
@@ -246,7 +248,16 @@ class _Layout:
     the only addresses either party touches wholesale.
     """
 
-    __slots__ = ("boundary", "circuit", "compiled", "index", "io", "public_inputs", "weights")
+    __slots__ = (
+        "_interiors",
+        "boundary",
+        "circuit",
+        "compiled",
+        "index",
+        "io",
+        "public_inputs",
+        "weights",
+    )
 
     def __init__(self, compiled: Compiled) -> None:
         if not isinstance(compiled, Compiled):
@@ -256,6 +267,7 @@ class _Layout:
         self.index = compiled.index
         self.boundary = self.index.boundary()
         self.weights = self.index.weights()
+        self._interiors: dict[int, IndexedDomain[int]] = {}
         self.public_inputs: tuple[int, ...] = tuple(self.circuit.inputs)
         """The input gate addresses by rank (ascending)."""
         addresses = set(self.public_inputs)
@@ -285,16 +297,58 @@ class _Layout:
 
         return self.circuit.weight_rank(address) if owner == WEIGHT_OWNER else address
 
+    def interior(self, replay_unit: int) -> IndexedDomain[int]:
+        """The interior domain of ``replay_unit`` (built once per session)."""
+
+        domain = self._interiors.get(replay_unit)
+        if domain is None:
+            domain = self._interiors[replay_unit] = self.index.interior(replay_unit)
+        return domain
+
     def required(self, unit: int) -> tuple[tuple[int, int], ...]:
-        """``(owner, address)`` for every value a verification unit reads or writes."""
+        """``(owner, address)`` for every value a verification unit's check touches.
+
+        Its *inputs*, the addresses its gates read outside it (``In``), owned
+        by ``kappa_W``, the boundary or the interior of its own replay unit;
+        its *outputs*, the declared outputs (``Out``: boundary positions when
+        they are the replay unit's own, else interior positions of that
+        unit) and its source gates (boundary or ``kappa_W``); nothing else.
+        An internal gate of a unit is committed nowhere, so a ``(C, I)`` in
+        which a unit reads another unit's internal gate, or declares one it
+        does not own, is rejected as ``INVALID_COMPILED_RESULT``.
+        """
 
         node = self.index.verification_unit(unit)
         replay_unit = node.replay_unit
-        addresses = set(node.interval)
-        addresses.update(self.circuit.In(node))
+        if replay_unit is None:
+            raise Reject(
+                VerificationCode.INVALID_COMPILED_RESULT,
+                f"unit {unit} lies in no replay unit",
+            )
+        frame, definition = node.frame, node.frame.definition
+        inputs = set(self.circuit.In(node))
+        outputs = {frame.base + offset for offset in definition.sorted_out_offsets}
+        pinned = {
+            frame.base + run.element(k)
+            for runs in (definition.input_runs, definition.weight_runs)
+            for run in runs
+            for k in range(run.count)
+        }
+        if inputs & set(node.interval):
+            raise Reject(
+                VerificationCode.INVALID_COMPILED_RESULT,
+                f"unit {unit} reads its own gates from outside",
+            )
         result: list[tuple[int, int]] = []
-        for address in sorted(addresses):
+        for address in sorted(inputs | outputs | pinned):
             owner = self.owner(address)
+            if owner == replay_unit and not self.interior(replay_unit).contains(address):
+                raise Reject(
+                    VerificationCode.INVALID_COMPILED_RESULT,
+                    f"address {address} is {'read' if address in inputs else 'declared'} "
+                    f"by unit {unit} but is committed nowhere: it is an internal gate "
+                    f"of replay unit {owner}",
+                )
             if owner not in (WEIGHT_OWNER, BOUNDARY_OWNER, replay_unit):
                 raise Reject(
                     VerificationCode.INVALID_COMPILED_RESULT,
@@ -306,13 +360,21 @@ class _Layout:
 
 
 def replay_unit(compiled: Compiled, unit: int, boundary_values: Values) -> dict[int, object]:
-    """Honest replay: recompute ``Int(unit)`` from the boundary, in address order."""
+    """Honest replay: recompute every gate of ``R_unit`` from the boundary, in address order.
+
+    The result holds every computed gate of the unit (its interior positions,
+    the outputs of its verification units, among them); the source gates are
+    read from ``boundary_values``.
+    """
 
     circuit = compiled.circuit
     known: dict[int, object] = {}
-    for address in iter_domain(compiled.index.interior(unit)):
+    for address in compiled.index.replay_units.unit(unit).interval:
+        gate = circuit[address]
+        if gate.is_source:
+            continue
         arguments = []
-        for argument in circuit[address].args:
+        for argument in gate.args:
             if argument in known:
                 arguments.append(known[argument])
             else:
@@ -340,11 +402,13 @@ def self_check(compiled: Compiled, unit: int, values: Values) -> tuple[int, ...]
     """Replay-time fault detection: the VUs of replay unit ``unit`` whose values
     in ``values`` disobey their relation, as global VU indices in order.
 
-    This is what an honest server learns when it replays an opened RU: it
-    recomputes every gate from the values it actually holds (the ones it
-    streamed and is about to commit) and compares.  A hardware fault that
+    This is what an honest server learns when it replays an opened RU: the
+    verifier's own check, run over the values it actually holds (the ones it
+    streamed and is about to commit).  Each VU's gates are recomputed from
+    the values of its inputs and compared with the values of its declared
+    outputs; a VU whose outputs disagree is faulty.  A hardware fault that
     flipped one gate's output shows up as exactly that gate's VU -- every VU
-    downstream computed correctly *from* the faulty value, so their
+    downstream computed correctly *from* the faulty output, so their
     relations hold against it -- and that VU is what the server declares.
     ``values`` must cover the RU's interior and everything it reads.
     """
@@ -354,14 +418,16 @@ def self_check(compiled: Compiled, unit: int, values: Values) -> tuple[int, ...]
     faulty: list[int] = []
     for offset in range(units.count):
         node = units.unit(offset)
+        local: dict[int, object] = {}
         for address in node.interval:
             gate = circuit[address]
             if gate.is_source:
+                local[address] = values[address]
                 continue
-            args = [values[argument] for argument in gate.args]
-            if not circuit.check_gate(address, args, values[address]):  # type: ignore[arg-type]
-                faulty.append(units.first + offset)
-                break
+            args = [local[a] if a in local else values[a] for a in gate.args]
+            local[address] = circuit.evaluate_gate(address, args)  # type: ignore[arg-type]
+        if any(local[address] != values[address] for address in circuit.Out(node)):
+            faulty.append(units.first + offset)
     return tuple(faulty)
 
 
@@ -466,13 +532,17 @@ class ProverSession:
     def _commit(self, domain: CommitmentDomain, values: Values) -> MerkleTree:
         circuit = self._layout.circuit
         encoded: dict[int, bytes] = {}
-        for address in iter_domain(domain.positions):
+        schemas: dict[int, str] = {}
+        for member in iter_members(domain.positions):
+            address = int(member)
             try:
-                value = values[int(address)]
+                value = values[address]
             except KeyError as error:
                 raise ProtocolError(f"prover has no value for address {address}") from error
-            encoded[int(address)] = circuit.encode(address, value)
-        tree = MerkleTree(domain, encoded, lambda address: leaf_schema(circuit, address))
+            width = circuit[address].width  # one lazy lookup per position, shared by value and schema
+            encoded[address] = encode_value(width, value)
+            schemas[address] = f"u{width}"
+        tree = MerkleTree(domain, encoded, schemas.__getitem__)
         self._trees[domain.owner] = tree
         return tree
 

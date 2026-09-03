@@ -13,7 +13,7 @@ import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
-from veritor.core import IndexedDomain, VerificationLimits
+from veritor.core import IndexedDomain, VerificationLimits, iter_members
 
 from .messages import Commitment, Opening, ProtocolError
 
@@ -115,8 +115,8 @@ class MerkleTree:
             )
         ordered: list[bytes] = []
         leaves: list[bytes] = []
-        for rank in range(domain.count):
-            position = int(domain.positions.unrank(rank))
+        for rank, member in enumerate(iter_members(domain.positions)):
+            position = int(member)
             try:
                 value = values[position]
             except KeyError as error:

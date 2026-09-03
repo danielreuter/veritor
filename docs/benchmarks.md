@@ -6,7 +6,7 @@ How each component of `veritor` behaves as its size parameter grows, measured by
 
 - commit `ae1f20f3c6d8` on `scale-benchmarks` (dirty tree)
 - CPython 3.12.11 on macOS-26.5.1-arm64-arm-64bit (arm)
-- 2026-09-03T01:32:24+00:00, 3 timed repeats per point (median reported), 18.5 min in total
+- 2026-09-03T01:32:24+00:00, 3 timed repeats per point (median reported), 34.9 min in total
 - times are single-threaded CPython wall clock; peak memory is the `tracemalloc` peak of one extra run, above the baseline at the call
 
 ## Contents
@@ -183,7 +183,7 @@ Fitted exponents: `owner` ∝ x^0.01 (R² 0.51, 6 pts); time ∝ x^0.02 (R² 0.6
 
 `Index.kinds()` / `kind_table()` wall time against the description, and the per-call latency of the boundary and interior address sets and the unit lookups against the number of RUs.
 
-`kinds` ran in 4.55 s.
+`kinds` ran in 4.85 s.
 
 #### `kind_table_vs_definitions`
 
@@ -191,36 +191,36 @@ Fitted exponents: `owner` ∝ x^0.01 (R² 0.51, 6 pts); time ∝ x^0.02 (R² 0.6
 
 | kinds | time | peak mem | `kinds()` | definitions | n |
 |---:|---:|---:|---:|---:|---:|
-| 12 | 85.9 µs | 14.6 KB | 71.9 µs | 11 | 109 |
-| 36 | 228 µs | 34.3 KB | 246 µs | 35 | 1,585 |
-| 132 | 839 µs | 96.6 KB | 827 µs | 131 | 24,769 |
-| 516 | 3.56 ms | 338 KB | 3.68 ms | 515 | 393,985 |
-| 2,052 | 16.2 ms | 1.34 MB | 15.3 ms | 2,051 | 6,294,529 |
-| 8,196 | 85.6 ms | 5.71 MB | 79 ms | 8,195 | 100,675,585 |
+| 12 | 94.3 µs | 17.3 KB | 84.2 µs | 11 | 109 |
+| 36 | 276 µs | 39.3 KB | 260 µs | 35 | 1,585 |
+| 132 | 1.02 ms | 110 KB | 986 µs | 131 | 24,769 |
+| 516 | 4.45 ms | 359 KB | 4.13 ms | 515 | 393,985 |
+| 2,052 | 19.1 ms | 1.42 MB | 18 ms | 2,051 | 6,294,529 |
+| 8,196 | 92 ms | 5.71 MB | 88.6 ms | 8,195 | 100,675,585 |
 
-Fitted exponents: `kinds()` ∝ x^1.06 (R² 1.00, 6 pts); peak mem ∝ x^0.92 (R² 1.00, 6 pts); time ∝ x^1.06 (R² 1.00, 6 pts).
+Fitted exponents: `kinds()` ∝ x^1.06 (R² 1.00, 6 pts); peak mem ∝ x^0.89 (R² 1.00, 6 pts); time ∝ x^1.05 (R² 1.00, 6 pts).
 
 #### `vs_output_runs`
 
-1000 copies of one RU whose declared `Out` resolves to `R` runs (outputs at irregular gaps).  `time_s` is `kind_table()`.  `boundary.rank` and a boundary `contains` miss scan the runs (`O(R)`), `boundary.unrank` bisects (`O(log R)`); the interior's `contains`/`rank` are `O(R)` and its `unrank` `O(R log |R_r|)`.
+1000 copies of one RU whose declared `Out` resolves to `R` runs (outputs at irregular gaps); every gate is a one-gate VU, so the interior is the RU's gates minus its `Out`.  `time_s` is `kind_table()`.  `boundary.rank` and a boundary `contains` miss scan the runs (`O(R)`), `boundary.unrank` bisects (`O(log R)`); the interior's `contains`/`rank` subtract the RU outputs below the address (`O(R)`) after an `O(depth)` descent to the VU, and its `unrank` bisects the steps with the same subtraction per probe (`O(R log |R_r|)`).
 
 | runs in Out | RU size | #Out | #interior | time | ∂ `rank` | ∂ `unrank` | ∂ `contains` (miss) |
 |---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 64 | 2 | 62 | 313 µs | 3.47 µs | 1.18 µs | 3.4 µs |
-| 4 | 64 | 8 | 56 | 260 µs | 3.8 µs | 1.16 µs | 3.61 µs |
-| 16 | 64 | 32 | 32 | 195 µs | 3.98 µs | 1.24 µs | 4.16 µs |
-| 64 | 256 | 128 | 128 | 638 µs | 5.96 µs | 1.27 µs | 6.75 µs |
-| 128 | 512 | 256 | 256 | 1.25 ms | 7.67 µs | 1.26 µs | 9.7 µs |
+| 1 | 64 | 2 | 62 | 398 µs | 3.48 µs | 1.14 µs | 3.31 µs |
+| 4 | 64 | 8 | 56 | 394 µs | 3.54 µs | 1.18 µs | 3.66 µs |
+| 16 | 64 | 32 | 32 | 398 µs | 3.98 µs | 1.23 µs | 4.23 µs |
+| 64 | 256 | 128 | 128 | 1.75 ms | 5.55 µs | 1.21 µs | 6.55 µs |
+| 128 | 512 | 256 | 256 | 3.91 ms | 7.92 µs | 1.21 µs | 9.69 µs |
 
 | runs in Out | `interior(u)` | int. `rank` | int. `unrank` | int. `contains` |
 |---:|---:|---:|---:|---:|
-| 1 | 6.16 µs | 235 ns | 795 ns | 111 ns |
-| 4 | 9.35 µs | 564 ns | 1.8 µs | 249 ns |
-| 16 | 23.3 µs | 1.23 µs | 4.19 µs | 557 ns |
-| 64 | 75.9 µs | 4.47 µs | 19.1 µs | 1.97 µs |
-| 128 | 146 µs | 8.79 µs | 43.8 µs | 3.78 µs |
+| 1 | 3.77 µs | 1.61 µs | 5.42 µs | 1.6 µs |
+| 4 | 3.35 µs | 2.12 µs | 8.56 µs | 2 µs |
+| 16 | 3.49 µs | 3.3 µs | 17.2 µs | 3.64 µs |
+| 64 | 3.54 µs | 8.52 µs | 65.8 µs | 8.69 µs |
+| 128 | 3.62 µs | 15.9 µs | 144 µs | 16.3 µs |
 
-Fitted exponents: ∂ `contains` (miss) ∝ x^0.21 (R² 0.86, 5 pts); ∂ `rank` ∝ x^0.16 (R² 0.85, 5 pts); ∂ `unrank` ∝ x^0.02 (R² 0.76, 5 pts); `interior(u)` ∝ x^0.67 (R² 0.97, 5 pts); int. `contains` ∝ x^0.73 (R² 0.99, 5 pts); int. `unrank` ∝ x^0.82 (R² 0.97, 5 pts); time ∝ x^0.27 (R² 0.52, 5 pts).
+Fitted exponents: ∂ `contains` (miss) ∝ x^0.21 (R² 0.87, 5 pts); ∂ `rank` ∝ x^0.16 (R² 0.82, 5 pts); ∂ `unrank` ∝ x^0.01 (R² 0.64, 5 pts); `interior(u)` ∝ x^-0.00 (R² 0.02, 5 pts); int. `contains` ∝ x^0.48 (R² 0.94, 5 pts); int. `unrank` ∝ x^0.68 (R² 0.95, 5 pts); time ∝ x^0.47 (R² 0.74, 5 pts).
 
 #### `address_sets_vs_units_repeat`
 
@@ -228,23 +228,23 @@ Fitted exponents: ∂ `contains` (miss) ∝ x^0.21 (R² 0.86, 5 pts); ∂ `rank`
 
 | replay units | n | #∂ | `boundary()` | time | ∂ `unrank` | ∂ `contains` |
 |---:|---:|---:|---:|---:|---:|---:|
-| 100 | 2,401 | 101 | 5.67 µs | 5.08 µs | 2.11 µs | 5.17 µs |
-| 1,000 | 24,001 | 1,001 | 6.33 µs | 5.6 µs | 2.13 µs | 5.48 µs |
-| 10,000 | 240,001 | 10,001 | 7.87 µs | 5.78 µs | 2.4 µs | 5.76 µs |
-| 100,000 | 2,400,001 | 100,001 | 6.33 µs | 5.45 µs | 2.28 µs | 5.5 µs |
-| 1,000,000 | 24,000,001 | 1,000,001 | 8.75 µs | 5.19 µs | 2.26 µs | 5.38 µs |
-| 10,000,000 | 240,000,001 | 10,000,001 | 5.87 µs | 5.51 µs | 2.11 µs | 5.86 µs |
+| 100 | 2,401 | 101 | 5.42 µs | 5.29 µs | 2.01 µs | 5.07 µs |
+| 1,000 | 24,001 | 1,001 | 5.62 µs | 5.38 µs | 2.07 µs | 5.18 µs |
+| 10,000 | 240,001 | 10,001 | 5.46 µs | 5.04 µs | 2.13 µs | 5.33 µs |
+| 100,000 | 2,400,001 | 100,001 | 5.38 µs | 5.29 µs | 2.15 µs | 5.24 µs |
+| 1,000,000 | 24,000,001 | 1,000,001 | 5.37 µs | 5.41 µs | 2.13 µs | 5.27 µs |
+| 10,000,000 | 240,000,001 | 10,000,001 | 5.42 µs | 5.51 µs | 2.28 µs | 5.25 µs |
 
 | replay units | `interior(u)` | int. `unrank` | int. `contains` | `unit` | `owner` | `verification_unit` | `verification_units` |
 |---:|---:|---:|---:|---:|---:|---:|---:|
-| 100 | 7.72 µs | 829 ns | 115 ns | 2.34 µs | 2.2 µs | 3.43 µs | 2.44 µs |
-| 1,000 | 6.93 µs | 431 ns | 112 ns | 2.27 µs | 2.35 µs | 3.05 µs | 2.22 µs |
-| 10,000 | 7.51 µs | 432 ns | 113 ns | 2.14 µs | 2.1 µs | 3.17 µs | 2.3 µs |
-| 100,000 | 7.13 µs | 438 ns | 113 ns | 2.11 µs | 2.07 µs | 3.1 µs | 2.27 µs |
-| 1,000,000 | 6.99 µs | 458 ns | 112 ns | 2.1 µs | 2.05 µs | 3.08 µs | 2.25 µs |
-| 10,000,000 | 7.35 µs | 444 ns | 113 ns | 2.09 µs | 2.03 µs | 3.06 µs | 2.23 µs |
+| 100 | 4.68 µs | 3.43 µs | 1.63 µs | 2.01 µs | 1.95 µs | 3.05 µs | 2.19 µs |
+| 1,000 | 4.77 µs | 3.48 µs | 1.41 µs | 2.04 µs | 2 µs | 3.21 µs | 2.34 µs |
+| 10,000 | 4.41 µs | 3.15 µs | 1.48 µs | 2.2 µs | 2.06 µs | 3.29 µs | 2.25 µs |
+| 100,000 | 4.57 µs | 3.52 µs | 1.44 µs | 2.33 µs | 2.07 µs | 3.06 µs | 2.27 µs |
+| 1,000,000 | 4.43 µs | 3.46 µs | 1.45 µs | 2.03 µs | 2.05 µs | 3.02 µs | 2.3 µs |
+| 10,000,000 | 4.81 µs | 3.73 µs | 1.4 µs | 2.14 µs | 2.08 µs | 3.34 µs | 2.26 µs |
 
-Fitted exponents: ∂ `contains` ∝ x^0.01 (R² 0.38, 6 pts); ∂ `unrank` ∝ x^0.00 (R² 0.01, 6 pts); `interior(u)` ∝ x^-0.00 (R² 0.12, 6 pts); int. `unrank` ∝ x^-0.04 (R² 0.36, 6 pts); `owner` ∝ x^-0.01 (R² 0.63, 6 pts); time ∝ x^0.00 (R² 0.02, 6 pts); `unit` ∝ x^-0.01 (R² 0.84, 6 pts); `verification_unit` ∝ x^-0.01 (R² 0.47, 6 pts).
+Fitted exponents: ∂ `contains` ∝ x^0.00 (R² 0.40, 6 pts); ∂ `unrank` ∝ x^0.01 (R² 0.85, 6 pts); `interior(u)` ∝ x^-0.00 (R² 0.01, 6 pts); int. `unrank` ∝ x^0.01 (R² 0.24, 6 pts); `owner` ∝ x^0.01 (R² 0.73, 6 pts); time ∝ x^0.00 (R² 0.22, 6 pts); `unit` ∝ x^0.00 (R² 0.10, 6 pts); `verification_unit` ∝ x^0.00 (R² 0.07, 6 pts).
 
 #### `address_sets_vs_units_unrolled`
 
@@ -252,25 +252,25 @@ A root of `U` separate `call` steps of one RU: descent bisects the root's step l
 
 | replay units | n | #∂ | `boundary()` | time | ∂ `unrank` | ∂ `contains` |
 |---:|---:|---:|---:|---:|---:|---:|
-| 100 | 301 | 101 | 7.21 µs | 3.25 µs | 1.35 µs | 3.31 µs |
-| 1,000 | 3,001 | 1,001 | 5.92 µs | 3.53 µs | 1.28 µs | 3.57 µs |
-| 10,000 | 30,001 | 10,001 | 6.54 µs | 3.97 µs | 1.36 µs | 4.33 µs |
-| 50,000 | 150,001 | 50,001 | 6.67 µs | 3.63 µs | 1.83 µs | 4.03 µs |
+| 100 | 301 | 101 | 4.92 µs | 3.16 µs | 1.1 µs | 3.26 µs |
+| 1,000 | 3,001 | 1,001 | 5.46 µs | 3.63 µs | 1.27 µs | 3.52 µs |
+| 10,000 | 30,001 | 10,001 | 5.67 µs | 3.55 µs | 1.28 µs | 3.73 µs |
+| 50,000 | 150,001 | 50,001 | 6.17 µs | 3.63 µs | 1.37 µs | 3.82 µs |
 
-| replay units | `interior(u)` | int. `unrank` | int. `contains` | `unit` | `owner` | `verification_unit` | `verification_units` |
-|---:|---:|---:|---:|---:|---:|---:|---:|
-| 100 | 5.95 µs | 254 ns | 112 ns | 1.15 µs | 1.09 µs | 2.05 µs | 1.26 µs |
-| 1,000 | 6.58 µs | 268 ns | 121 ns | 1.25 µs | 1.21 µs | 2.19 µs | 1.35 µs |
-| 10,000 | 6.34 µs | 336 ns | 111 ns | 1.31 µs | 1.38 µs | 2.54 µs | 1.46 µs |
-| 50,000 | 6.89 µs | 263 ns | 116 ns | 1.67 µs | 1.61 µs | 2.24 µs | 1.45 µs |
+| replay units | `interior(u)` | `unit` | `owner` | `verification_unit` | `verification_units` |
+|---:|---:|---:|---:|---:|---:|
+| 100 | 3.66 µs | 1.13 µs | 1.13 µs | 2.08 µs | 1.25 µs |
+| 1,000 | 3.7 µs | 1.3 µs | 1.25 µs | 2.24 µs | 1.39 µs |
+| 10,000 | 4.33 µs | 1.26 µs | 1.2 µs | 2.31 µs | 1.4 µs |
+| 50,000 | 4.26 µs | 1.34 µs | 1.3 µs | 2.73 µs | 1.41 µs |
 
-Fitted exponents: ∂ `contains` ∝ x^0.04 (R² 0.77, 4 pts); ∂ `unrank` ∝ x^0.04 (R² 0.52, 4 pts); `interior(u)` ∝ x^0.02 (R² 0.68, 4 pts); `owner` ∝ x^0.06 (R² 0.97, 4 pts); time ∝ x^0.02 (R² 0.57, 4 pts); `unit` ∝ x^0.05 (R² 0.83, 4 pts); `verification_unit` ∝ x^0.02 (R² 0.42, 4 pts).
+Fitted exponents: ∂ `contains` ∝ x^0.03 (R² 0.98, 4 pts); ∂ `unrank` ∝ x^0.03 (R² 0.87, 4 pts); `interior(u)` ∝ x^0.03 (R² 0.82, 4 pts); `owner` ∝ x^0.02 (R² 0.66, 4 pts); time ∝ x^0.02 (R² 0.62, 4 pts); `unit` ∝ x^0.02 (R² 0.69, 4 pts); `verification_unit` ∝ x^0.04 (R² 0.85, 4 pts).
 
 ## 4. Bound, Cost, expected_work and Optimize
 
 Folds over the kind table.  `time_s` is `Bound` with the Laplace fold alone (`FRONTIER_OPTIONS`: `knapsack=False, max_buckets=2**22`); `knapsack_s` is `Bound` with the default options (knapsack on a 2048-bucket grid plus Laplace); `cost_s` and `work_s` are `Cost` and `expected_work`.  Policy `q = 1/128, s = 1/8`, `eta = 1/100`.
 
-`analysis` ran in 3.8 min.
+`analysis` ran in 3.68 min.
 
 #### `serving_request_row`
 
@@ -278,19 +278,19 @@ Folds over the kind table.  `time_s` is `Bound` with the Laplace fold alone (`FR
 
 | kinds | shape | replay kinds | n | `serving_table` | time | Laplace bits | peak mem |
 |---:|---:|---:|---:|---:|---:|---:|---:|
-| 33 | toy | 2 | 8,673 | 367 µs | 6.28 ms | 192 | 116 KB |
-| 101 | small | 2 | 325,958,913 | 1.57 ms | 25.4 ms | 8,192 | 135 KB |
-| 661 | mid | 2 | 1.89e+13 | 13 ms | 220 ms | 524,288 | 252 KB |
-| 2,578 | frontier-70B | 2 | 2.74e+17 | 58.3 ms | 1.09 s | 16,777,216 | 657 KB |
+| 33 | toy | 2 | 8,673 | 434 µs | 6.56 ms | 192 | 116 KB |
+| 101 | small | 2 | 325,958,913 | 1.81 ms | 24.8 ms | 8,192 | 137 KB |
+| 661 | mid | 2 | 1.89e+13 | 13.1 ms | 205 ms | 524,288 | 253 KB |
+| 2,578 | frontier-70B | 2 | 2.74e+17 | 58.8 ms | 1.02 s | 16,777,216 | 657 KB |
 
 | kinds | knapsack | knapsack bits | buckets | `cost` | `expected_work` |
 |---:|---:|---:|---:|---:|---:|
-| 33 | 6.17 ms | 192 | 2,048 | 31.3 µs | 6.08 µs |
-| 101 | 24 ms | 8,192 | 2,048 | 74.6 µs | 7.71 µs |
-| 661 | 196 ms | 524,288 | 2,048 | 396 µs | 27.3 µs |
-| 2,578 | 922 ms | 16,777,216 | 2,048 | 1.41 ms | 87.5 µs |
+| 33 | 6.42 ms | 192 | 2,048 | 33 µs | 6.29 µs |
+| 101 | 23.2 ms | 8,192 | 2,048 | 69.1 µs | 7.83 µs |
+| 661 | 183 ms | 524,288 | 2,048 | 367 µs | 27.6 µs |
+| 2,578 | 875 ms | 16,777,216 | 2,048 | 1.68 ms | 94 µs |
 
-Fitted exponents: `serving_table` ∝ x^1.16 (R² 1.00, 4 pts); `cost` ∝ x^0.88 (R² 1.00, 4 pts); knapsack ∝ x^1.14 (R² 1.00, 4 pts); time ∝ x^1.18 (R² 1.00, 4 pts); `expected_work` ∝ x^0.63 (R² 0.97, 4 pts).
+Fitted exponents: `serving_table` ∝ x^1.11 (R² 1.00, 4 pts); `cost` ∝ x^0.90 (R² 0.99, 4 pts); knapsack ∝ x^1.12 (R² 1.00, 4 pts); time ∝ x^1.15 (R² 1.00, 4 pts); `expected_work` ∝ x^0.63 (R² 0.96, 4 pts).
 
 #### `serving_step_row`
 
@@ -298,19 +298,19 @@ Fitted exponents: `serving_table` ∝ x^1.16 (R² 1.00, 4 pts); `cost` ∝ x^0.8
 
 | kinds | shape | replay kinds | n | `serving_table` | time | Laplace bits | peak mem |
 |---:|---:|---:|---:|---:|---:|---:|---:|
-| 35 | toy | 4 | 8,673 | 374 µs | 8.39 ms | 192 | 119 KB |
-| 116 | small | 17 | 325,958,913 | 1.66 ms | 45.1 ms | 8,192 | 160 KB |
-| 788 | mid | 129 | 1.89e+13 | 14.9 ms | 403 ms | 524,288 | 457 KB |
-| 3,089 | frontier-70B | 513 | 2.74e+17 | 61.1 ms | 1.83 s | 16,777,216 | 1.45 MB |
+| 35 | toy | 4 | 8,673 | 480 µs | 9.15 ms | 192 | 119 KB |
+| 116 | small | 17 | 325,958,913 | 1.81 ms | 45.6 ms | 8,192 | 160 KB |
+| 788 | mid | 129 | 1.89e+13 | 14.4 ms | 391 ms | 524,288 | 601 KB |
+| 3,089 | frontier-70B | 513 | 2.74e+17 | 63.2 ms | 1.78 s | 16,777,216 | 2.26 MB |
 
 | kinds | knapsack | knapsack bits | buckets | `cost` | `expected_work` |
 |---:|---:|---:|---:|---:|---:|
-| 35 | 26.6 ms | 192 | 2,048 | 47.7 µs | 6.17 µs |
-| 116 | 174 ms | 8,192 | 2,048 | 111 µs | 9.5 µs |
-| 788 | 1.51 s | 524,288 | 2,048 | 791 µs | 28.6 µs |
-| 3,089 | 7.5 s | 16,777,216 | 2,048 | 2.79 ms | 90.2 µs |
+| 35 | 25.7 ms | 192 | 2,048 | 42.3 µs | 5.46 µs |
+| 116 | 172 ms | 8,192 | 2,048 | 112 µs | 8.21 µs |
+| 788 | 1.47 s | 524,288 | 2,048 | 728 µs | 29.6 µs |
+| 3,089 | 7.23 s | 16,777,216 | 2,048 | 2.91 ms | 95.8 µs |
 
-Fitted exponents: `serving_table` ∝ x^1.14 (R² 1.00, 4 pts); `cost` ∝ x^0.93 (R² 1.00, 4 pts); knapsack ∝ x^1.24 (R² 1.00, 4 pts); time ∝ x^1.19 (R² 1.00, 4 pts); `expected_work` ∝ x^0.60 (R² 0.98, 4 pts).
+Fitted exponents: `serving_table` ∝ x^1.09 (R² 1.00, 4 pts); `cost` ∝ x^0.95 (R² 1.00, 4 pts); knapsack ∝ x^1.24 (R² 0.99, 4 pts); time ∝ x^1.17 (R² 1.00, 4 pts); `expected_work` ∝ x^0.65 (R² 0.98, 4 pts).
 
 #### `serving_cell_gate`
 
@@ -318,41 +318,41 @@ Fitted exponents: `serving_table` ∝ x^1.14 (R² 1.00, 4 pts); `cost` ∝ x^0.9
 
 | kinds | shape | replay kinds | n | `serving_table` | time | Laplace bits | peak mem |
 |---:|---:|---:|---:|---:|---:|---:|---:|
-| 44 | toy | 17 | 8,673 | 515 µs | 20.4 ms | 192 | 34.3 KB |
-| 113 | small | 45 | 325,958,913 | 1.9 ms | 54.7 ms | 8,192 | 134 KB |
-| 673 | mid | 269 | 1.89e+13 | 17.1 ms | 342 ms | 185,847 | 521 KB |
-| 2,590 | frontier-70B | 1,036 | 2.74e+17 | 66.2 ms | 1.34 s | 236,711 | 1.69 MB |
+| 44 | toy | 17 | 8,673 | 536 µs | 19.9 ms | 192 | 34.5 KB |
+| 113 | small | 45 | 325,958,913 | 2.14 ms | 55.1 ms | 8,192 | 135 KB |
+| 673 | mid | 269 | 1.89e+13 | 14.6 ms | 357 ms | 185,847 | 880 KB |
+| 2,590 | frontier-70B | 1,036 | 2.74e+17 | 67.5 ms | 1.4 s | 236,711 | 3.39 MB |
 
 | kinds | knapsack | knapsack bits | buckets | `cost` | `expected_work` |
 |---:|---:|---:|---:|---:|---:|
-| 44 | 184 ms | 192 | 2,048 | 163 µs | 5.67 µs |
-| 113 | 1.71 s | 8,192 | 2,048 | 414 µs | 7.71 µs |
-| 673 | 12.3 s | 185,847 | 2,048 | 2.58 ms | 14.5 µs |
-| 2,590 | — | — | — | 10.5 ms | 38.2 µs |
+| 44 | 181 ms | 192 | 2,048 | 175 µs | 5.67 µs |
+| 113 | 1.57 s | 8,192 | 2,048 | 366 µs | 5.92 µs |
+| 673 | 11.6 s | 185,847 | 2,048 | 2.57 ms | 12.3 µs |
+| 2,590 | — | — | — | 10.1 ms | 31.7 µs |
 
-Fitted exponents: `serving_table` ∝ x^1.19 (R² 1.00, 4 pts); `cost` ∝ x^1.02 (R² 1.00, 4 pts); knapsack ∝ x^1.49 (R² 0.96, 3 pts); time ∝ x^1.03 (R² 1.00, 4 pts); `expected_work` ∝ x^0.45 (R² 0.97, 4 pts).
+Fitted exponents: `serving_table` ∝ x^1.17 (R² 1.00, 4 pts); `cost` ∝ x^1.01 (R² 1.00, 4 pts); knapsack ∝ x^1.47 (R² 0.96, 3 pts); time ∝ x^1.04 (R² 1.00, 4 pts); `expected_work` ∝ x^0.43 (R² 0.93, 4 pts).
 
 #### `synthetic_vs_replay_kinds`
 
 A synthetic table of `K` distinct RU kinds (1000 copies each, 64 VUs of one kind per copy): the Laplace fold is one series per kind and ~130 evaluations of a `K`-term sum (linear in `K`); the knapsack forms a cost polynomial per kind and convolves `K` of them on the grid.
 
-| replay kinds | time | peak mem | rows | replay copies | ru positions | n | Laplace bits | knapsack |
+| replay kinds | time | peak mem | rows | replay copies | ru gates | ru positions | n | Laplace bits |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 4 | 4.87 ms | 25.9 KB | 6 | 4,000 | 256 | 1,024,000 | 64,000 | 207 ms |
-| 16 | 19.7 ms | 45.4 KB | 18 | 16,000 | 256 | 4,096,000 | 89,408 | 883 ms |
-| 64 | 78.2 ms | 120 KB | 66 | 64,000 | 256 | 16,384,000 | 99,695 | 3.57 s |
-| 256 | 309 ms | 419 KB | 258 | 256,000 | 256 | 65,536,000 | 109,316 | 14.4 s |
-| 1,024 | 1.26 s | 1.58 MB | 1,026 | 1,024,000 | 256 | 262,144,000 | 118,790 | — |
+| 4 | 5.94 ms | 28.9 KB | 6 | 4,000 | 256 | 63 | 1,024,000 | 64,000 |
+| 16 | 21.1 ms | 69.7 KB | 18 | 16,000 | 256 | 63 | 4,096,000 | 89,408 |
+| 64 | 81.6 ms | 230 KB | 66 | 64,000 | 256 | 63 | 16,384,000 | 99,695 |
+| 256 | 324 ms | 874 KB | 258 | 256,000 | 256 | 63 | 65,536,000 | 109,316 |
+| 1,024 | 1.31 s | 3.36 MB | 1,026 | 1,024,000 | 256 | 63 | 262,144,000 | 118,790 |
 
-| replay kinds | knapsack bits | buckets | `cost` | `expected_work` |
-|---:|---:|---:|---:|---:|
-| 4 | 64,000 | 2,048 | 43 µs | 4.71 µs |
-| 16 | 89,408 | 2,048 | 56.7 µs | 4.17 µs |
-| 64 | 99,695 | 2,048 | 166 µs | 6.37 µs |
-| 256 | 109,316 | 2,048 | 622 µs | 5.88 µs |
-| 1,024 | — | — | 2.7 ms | 14.7 µs |
+| replay kinds | knapsack | knapsack bits | buckets | `cost` | `expected_work` |
+|---:|---:|---:|---:|---:|---:|
+| 4 | 196 ms | 64,000 | 2,048 | 22.7 µs | 4.29 µs |
+| 16 | 839 ms | 89,408 | 2,048 | 48.8 µs | 4.08 µs |
+| 64 | 3.38 s | 99,695 | 2,048 | 159 µs | 4.42 µs |
+| 256 | 13.6 s | 109,316 | 2,048 | 643 µs | 6.21 µs |
+| 1,024 | — | — | — | 2.4 ms | 12 µs |
 
-Fitted exponents: `cost` ∝ x^0.77 (R² 0.95, 5 pts); knapsack ∝ x^1.02 (R² 1.00, 4 pts); time ∝ x^1.00 (R² 1.00, 5 pts); `expected_work` ∝ x^0.19 (R² 0.70, 5 pts).
+Fitted exponents: `cost` ∝ x^0.86 (R² 0.99, 5 pts); knapsack ∝ x^1.02 (R² 1.00, 4 pts); time ∝ x^0.97 (R² 1.00, 5 pts); `expected_work` ∝ x^0.18 (R² 0.75, 5 pts).
 
 #### `knapsack_vs_buckets`
 
@@ -360,13 +360,13 @@ Fitted exponents: `cost` ∝ x^0.77 (R² 0.95, 5 pts); knapsack ∝ x^1.02 (R² 
 
 | max_buckets | time | peak mem | bits | knapsack bits |
 |---:|---:|---:|---:|---:|
-| 128 | 41.1 ms | 576 KB | 8,192 | 69,664 |
-| 512 | 50.2 ms | 4.12 MB | 8,192 | 69,664 |
-| 2,048 | 177 ms | 13.4 MB | 8,192 | 69,879 |
-| 8,192 | 1.51 s | 52.1 MB | 8,192 | 69,911 |
-| 32,768 | 24 s | — | 8,192 | 69,951 |
+| 128 | 39.6 ms | 577 KB | 8,192 | 69,664 |
+| 512 | 49.2 ms | 4.11 MB | 8,192 | 69,664 |
+| 2,048 | 172 ms | 13.4 MB | 8,192 | 69,879 |
+| 8,192 | 1.53 s | 52.1 MB | 8,192 | 69,911 |
+| 32,768 | 23.3 s | — | 8,192 | 69,951 |
 
-Fitted exponents: peak mem ∝ x^1.07 (R² 0.99, 4 pts); time ∝ x^1.16 (R² 0.91, 5 pts).
+Fitted exponents: peak mem ∝ x^1.06 (R² 0.99, 4 pts); time ∝ x^1.17 (R² 0.91, 5 pts).
 
 #### `optimize_vs_grid`
 
@@ -374,11 +374,11 @@ Fitted exponents: peak mem ∝ x^1.07 (R² 0.99, 4 pts); time ∝ x^1.16 (R² 0.
 
 | grid points | time | steps |
 |---:|---:|---:|
-| 4 | 258 ms | 1 |
-| 9 | 460 ms | 2 |
-| 25 | 1.11 s | 4 |
-| 81 | 3.44 s | 8 |
-| 289 | 12.4 s | 16 |
+| 4 | 253 ms | 1 |
+| 9 | 442 ms | 2 |
+| 25 | 1.06 s | 4 |
+| 81 | 3.3 s | 8 |
+| 289 | 12.1 s | 16 |
 
 Fitted exponents: time ∝ x^0.91 (R² 1.00, 5 pts).
 
@@ -441,7 +441,7 @@ Fitted exponents: `derive_sample_selection` ∝ x^0.03 (R² 0.56, 6 pts); time �
 
 `MerkleTree(domain, values, schema)` over `L` 16-bit leaves on a range domain: build wall time and `tracemalloc` peak, then the per-call latency of `tree.open(position)` and `verify_opening`, with the opening's size in bytes.  `commit_weights_s` builds `kappa_W` for `L` weights through `commit_weights`.
 
-`merkle` ran in 86.2 s.
+`merkle` ran in 81.2 s.
 
 #### `build_vs_leaves`
 
@@ -449,12 +449,12 @@ Linear in `L`: `2L - 1` domain-bound SHA-256 calls.  `values_per_s` is the build
 
 | leaves | time | peak mem | values/s | hashes/s | retained/leaf | `commit_weights` | depth |
 |---:|---:|---:|---:|---:|---:|---:|---:|
-| 100 | 240 µs | 22.1 KB | 416k/s | 1.06M/s | 226 B | 258 µs | 7 |
-| 1,000 | 1.83 ms | 172 KB | 545k/s | 1.12M/s | 177 B | 2.17 ms | 10 |
-| 10,000 | 27.7 ms | 2.57 MB | 361k/s | 1.18M/s | 270 B | 28.5 ms | 14 |
-| 100,000 | 234 ms | 20.9 MB | 427k/s | 1.12M/s | 219 B | 249 ms | 17 |
-| 1,000,000 | 2.01 s | 170 MB | 499k/s | 1.05M/s | 178 B | 2.2 s | 20 |
-| 2,000,000 | 3.97 s | 340 MB | 504k/s | 1.06M/s | 178 B | 4.33 s | 21 |
+| 100 | 222 µs | 22.1 KB | 451k/s | 1.15M/s | 226 B | 245 µs | 7 |
+| 1,000 | 1.8 ms | 172 KB | 556k/s | 1.14M/s | 177 B | 2.06 ms | 10 |
+| 10,000 | 26.8 ms | 2.57 MB | 372k/s | 1.22M/s | 270 B | 28.4 ms | 14 |
+| 100,000 | 224 ms | 20.9 MB | 447k/s | 1.17M/s | 219 B | 239 ms | 17 |
+| 1,000,000 | 1.89 s | 170 MB | 529k/s | 1.11M/s | 178 B | 2.05 s | 20 |
+| 2,000,000 | 3.81 s | 340 MB | 525k/s | 1.1M/s | 178 B | 4.15 s | 21 |
 
 Fitted exponents: `commit_weights` ∝ x^0.99 (R² 1.00, 6 pts); peak mem ∝ x^0.98 (R² 1.00, 6 pts); time ∝ x^0.99 (R² 1.00, 6 pts).
 
@@ -464,20 +464,20 @@ Fitted exponents: `commit_weights` ∝ x^0.99 (R² 1.00, 6 pts); peak mem ∝ x^
 
 | leaves | time | `verify_opening` | proof | depth |
 |---:|---:|---:|---:|---:|
-| 100 | 911 ns | 7.4 µs | 226 B | 7 |
-| 1,000 | 1.07 µs | 11.1 µs | 322 B | 10 |
-| 10,000 | 1.37 µs | 15.3 µs | 450 B | 14 |
-| 100,000 | 1.75 µs | 16.4 µs | 546 B | 17 |
-| 1,000,000 | 2.12 µs | 21.8 µs | 642 B | 20 |
-| 2,000,000 | 2.35 µs | 22.6 µs | 674 B | 21 |
+| 100 | 794 ns | 7.56 µs | 226 B | 7 |
+| 1,000 | 988 ns | 10.2 µs | 322 B | 10 |
+| 10,000 | 1.29 µs | 13.9 µs | 450 B | 14 |
+| 100,000 | 1.44 µs | 17.2 µs | 546 B | 17 |
+| 1,000,000 | 1.69 µs | 20.5 µs | 642 B | 20 |
+| 2,000,000 | 2.03 µs | 21.4 µs | 674 B | 21 |
 
-Fitted exponents: proof ∝ x^0.11 (R² 0.97, 6 pts); time ∝ x^0.10 (R² 1.00, 6 pts); `verify_opening` ∝ x^0.11 (R² 0.96, 6 pts).
+Fitted exponents: proof ∝ x^0.11 (R² 0.97, 6 pts); time ∝ x^0.09 (R² 0.98, 6 pts); `verify_opening` ∝ x^0.10 (R² 0.98, 6 pts).
 
 ## 7. The protocol end to end: prover and verifier phases, message bytes
 
-`time_s` is the prover's total (setup, boundary commitment, replay + interior commitments, openings); `verifier_total_s` the verifier's (admission, boundary check and `J`, interior check and `T`, evidence check).  `evaluate_s` is the honest computation itself through the lazy circuit (`circuit.evaluate`, `gates_per_s`), `kappa_w_s` the one-off weight commitment.  Sizes: `boundary_count = |∂|`, `interior_positions` committed, `openings` sent, message bytes as canonical JSON.
+`time_s` is the prover's total (setup, boundary commitment, replay + interior commitments, openings); `verifier_total_s` the verifier's (admission, boundary check and `J`, interior check and `T`, evidence check).  `evaluate_s` is the honest computation itself through the lazy circuit (`circuit.evaluate`, `gates_per_s`), `kappa_w_s` the one-off weight commitment.  Sizes: `boundary_count = |∂|`, `replayed_gates` recomputed (every non-source gate of the selected RUs), `interior_positions` committed (the VU outputs among them that are not RU outputs), `openings` sent, message bytes as canonical JSON.
 
-`protocol` ran in 7.63 min.
+`protocol` ran in 5.63 min.
 
 #### `cluster_vs_n`
 
@@ -485,33 +485,33 @@ Fitted exponents: proof ∝ x^0.11 (R² 0.97, 6 pts); time ∝ x^0.10 (R² 1.00,
 
 | n (gates) | case | RUs | VUs | evaluate | gates/s | `kappa_W` | time | V total | transcript |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 4,437 | d4-L1 | 4 | 771 | 37.3 ms | 119k/s | 547 µs | 127 ms | 61.5 ms | 917 KB |
-| 27,169 | d8-L1 | 7 | 2,749 | 233 ms | 117k/s | 1.8 ms | 735 ms | 339 ms | 5.36 MB |
-| 509,833 | d16-L2 | 9 | 25,569 | 4.5 s | 113k/s | 14 ms | 5.4 s | 2.11 s | 39.7 MB |
-| 980,233 | d32-L2-r4 | 5 | 37,813 | 8.46 s | 116k/s | 56.2 ms | 21.1 s | 7.88 s | 166 MB |
+| 4,437 | d4-L1 | 4 | 771 | 34.2 ms | 130k/s | 536 µs | 126 ms | 68.4 ms | 786 KB |
+| 27,169 | d8-L1 | 7 | 2,749 | 222 ms | 122k/s | 1.86 ms | 670 ms | 328 ms | 4.48 MB |
+| 509,833 | d16-L2 | 9 | 25,569 | 4.27 s | 119k/s | 17.7 ms | 6.88 s | 3.6 s | 58.2 MB |
+| 980,233 | d32-L2-r4 | 5 | 37,813 | 8.12 s | 121k/s | 55 ms | 24.2 s | 12.4 s | 235 MB |
 
 | n (gates) | P setup | P commit ∂ | P replay | P commit interiors | P openings | V admit | V ∂ + `J` | V interiors + `T` | V Merkle | V recompute |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 4,437 | 223 µs | 2.09 ms | 47.3 ms | 60.9 ms | 16.7 ms | 1.84 ms | 389 µs | 442 µs | 15.9 ms | 42.9 ms |
-| 27,169 | 379 µs | 7.37 ms | 280 ms | 351 ms | 96.4 ms | 2.24 ms | 641 µs | 1.23 ms | 91.9 ms | 243 ms |
-| 509,833 | 794 µs | 74.9 ms | 1.97 s | 2.77 s | 580 ms | 4.73 ms | 2.06 ms | 6.98 ms | 687 ms | 1.41 s |
-| 980,233 | 430 µs | 75.1 ms | 7.74 s | 11.1 s | 2.13 s | 4.4 ms | 986 µs | 25.4 ms | 2.75 s | 5.1 s |
+| 4,437 | 168 µs | 1.19 ms | 67.8 ms | 10.1 ms | 47.1 ms | 2.1 ms | 348 µs | 976 µs | 16 ms | 49.1 ms |
+| 27,169 | 288 µs | 5.21 ms | 395 ms | 31.9 ms | 236 ms | 2.57 ms | 769 µs | 2.93 ms | 88.7 ms | 233 ms |
+| 509,833 | 738 µs | 51 ms | 4.28 s | 216 ms | 2.32 s | 6.14 ms | 2.01 ms | 14.5 ms | 1.11 s | 2.47 s |
+| 980,233 | 461 µs | 45.6 ms | 16.1 s | 399 ms | 7.72 s | 5.26 ms | 1.21 ms | 39.5 ms | 4.33 s | 8 s |
 
-| n (gates) | #∂ | #J | interior positions | #T | openings | ∂ msg | interiors msg | evidence msg |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 4,437 | 92 | 1 | 2,224 | 79 | 1,204 | 6.1 KB | 106 B | 910 KB |
-| 27,169 | 344 | 3 | 13,088 | 270 | 6,696 | 15.2 KB | 284 B | 5.35 MB |
-| 509,833 | 3,648 | 3 | 75,264 | 1,822 | 39,253 | 53.1 KB | 283 B | 39.6 MB |
-| 980,233 | 3,616 | 3 | 279,168 | 5,732 | 145,570 | 26.6 KB | 285 B | 165 MB |
+| n (gates) | #∂ | #J | replayed gates | interior positions | #T | openings | ∂ msg | interiors msg | evidence msg |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4,437 | 92 | 4 | 4,230 | 568 | 196 | 1,378 | 6.1 KB | 367 B | 778 KB |
+| 27,169 | 344 | 5 | 23,658 | 1,808 | 466 | 6,860 | 15.2 KB | 457 B | 4.46 MB |
+| 509,833 | 3,648 | 5 | 252,720 | 9,760 | 3,782 | 69,080 | 53.1 KB | 459 B | 58.2 MB |
+| 980,233 | 3,616 | 5 | 963,312 | 19,168 | 9,530 | 250,773 | 26.6 KB | 460 B | 235 MB |
 
-| n (gates) | replay / position | commit / position | open / opening | V Merkle / opening | V recompute / opening | bytes / opening |
+| n (gates) | replay / gate | commit / position | open / opening | V Merkle / opening | V recompute / opening | bytes / opening |
 |---:|---:|---:|---:|---:|---:|---:|
-| 4,437 | 21.3 µs | 27.4 µs | 13.9 µs | 13.2 µs | 35.6 µs | 774 B |
-| 27,169 | 21.4 µs | 26.8 µs | 14.4 µs | 13.7 µs | 36.3 µs | 837 B |
-| 509,833 | 26.2 µs | 36.8 µs | 14.8 µs | 17.5 µs | 36 µs | 1.03 KB |
-| 980,233 | 27.7 µs | 39.8 µs | 14.7 µs | 18.9 µs | 35 µs | 1.16 KB |
+| 4,437 | 16 µs | 17.8 µs | 34.2 µs | 11.6 µs | 35.6 µs | 578 B |
+| 27,169 | 16.7 µs | 17.7 µs | 34.4 µs | 12.9 µs | 33.9 µs | 682 B |
+| 509,833 | 17 µs | 22.1 µs | 33.6 µs | 16.1 µs | 35.7 µs | 883 B |
+| 980,233 | 16.7 µs | 20.8 µs | 30.8 µs | 17.3 µs | 31.9 µs | 982 B |
 
-Fitted exponents: evaluate ∝ x^1.01 (R² 1.00, 4 pts); P commit ∂ ∝ x^0.70 (R² 0.99, 4 pts); P commit interiors ∝ x^0.90 (R² 0.98, 4 pts); P openings ∝ x^0.83 (R² 0.97, 4 pts); P replay ∝ x^0.87 (R² 0.98, 4 pts); time ∝ x^0.88 (R² 0.98, 4 pts); transcript ∝ x^0.89 (R² 0.98, 4 pts); V ∂ + `J` ∝ x^0.24 (R² 0.73, 4 pts); V interiors + `T` ∝ x^0.70 (R² 0.96, 4 pts); V Merkle ∝ x^0.88 (R² 0.98, 4 pts); V recompute ∝ x^0.81 (R² 0.97, 4 pts); V total ∝ x^0.83 (R² 0.98, 4 pts).
+Fitted exponents: evaluate ∝ x^1.01 (R² 1.00, 4 pts); P commit ∂ ∝ x^0.71 (R² 0.98, 4 pts); P commit interiors ∝ x^0.67 (R² 1.00, 4 pts); P openings ∝ x^0.90 (R² 0.99, 4 pts); P replay ∝ x^0.96 (R² 0.99, 4 pts); time ∝ x^0.92 (R² 0.99, 4 pts); transcript ∝ x^1.01 (R² 0.99, 4 pts); V ∂ + `J` ∝ x^0.27 (R² 0.83, 4 pts); V interiors + `T` ∝ x^0.64 (R² 0.98, 4 pts); V Merkle ∝ x^0.99 (R² 0.99, 4 pts); V recompute ∝ x^0.90 (R² 0.99, 4 pts); V total ∝ x^0.92 (R² 0.99, 4 pts).
 
 #### `requests_vs_n`
 
@@ -519,33 +519,33 @@ Fitted exponents: evaluate ∝ x^1.01 (R² 1.00, 4 pts); P commit ∂ ∝ x^0.70
 
 | n (gates) | case | RUs | VUs | evaluate | gates/s | `kappa_W` | time | V total | transcript |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 4,437 | d4-L1 | 3 | 771 | 35.5 ms | 125k/s | 514 µs | 110 ms | 61.9 ms | 949 KB |
-| 27,169 | d8-L1 | 5 | 2,749 | 232 ms | 117k/s | 1.77 ms | 687 ms | 326 ms | 5.4 MB |
-| 509,833 | d16-L2 | 9 | 25,569 | 4.36 s | 117k/s | 14.5 ms | 17.5 s | 8.3 s | 162 MB |
-| 980,233 | d32-L2-r4 | 5 | 37,813 | 8.4 s | 117k/s | 55.9 ms | 54.2 s | 29.3 s | 433 MB |
+| 4,437 | d4-L1 | 3 | 771 | 34.4 ms | 129k/s | 545 µs | 2.27 ms | 4.31 ms | 27.9 KB |
+| 27,169 | d8-L1 | 5 | 2,749 | 226 ms | 120k/s | 2.07 ms | 560 ms | 298 ms | 4.12 MB |
+| 509,833 | d16-L2 | 9 | 25,569 | 4.2 s | 122k/s | 13.9 ms | 6.39 s | 3.19 s | 56 MB |
+| 980,233 | d32-L2-r4 | 5 | 37,813 | 8.16 s | 120k/s | 56 ms | 11.8 s | 5.99 s | 114 MB |
 
 | n (gates) | P setup | P commit ∂ | P replay | P commit interiors | P openings | V admit | V ∂ + `J` | V interiors + `T` | V Merkle | V recompute |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 4,437 | 165 µs | 324 µs | 40.8 ms | 51.3 ms | 16.9 ms | 1.48 ms | 285 µs | 557 µs | 15.9 ms | 43.8 ms |
-| 27,169 | 296 µs | 610 µs | 267 ms | 330 ms | 89 ms | 1.76 ms | 555 µs | 1.79 ms | 90.5 ms | 232 ms |
-| 509,833 | 692 µs | 1.49 ms | 6.72 s | 8.3 s | 2.51 s | 3.36 ms | 1.44 ms | 17.4 ms | 2.68 s | 5.59 s |
-| 980,233 | 375 µs | 791 µs | 21.9 s | 26.4 s | 5.85 s | 3.09 ms | 687 µs | 30.2 ms | 10.1 s | 19.2 s |
+| 4,437 | 154 µs | 261 µs | 463 µs | 462 µs | 933 µs | 1.78 ms | 268 µs | 206 µs | 687 µs | 1.29 ms |
+| 27,169 | 293 µs | 510 µs | 331 ms | 31 ms | 198 ms | 2.05 ms | 523 µs | 2.38 ms | 82.2 ms | 210 ms |
+| 509,833 | 739 µs | 1.23 ms | 4.19 s | 194 ms | 2.01 s | 4.6 ms | 1.3 ms | 14 ms | 1.06 s | 2.11 s |
+| 980,233 | 388 µs | 759 µs | 8.09 s | 206 ms | 3.54 s | 4.02 ms | 721 µs | 13.4 ms | 2.1 s | 3.87 s |
 
-| n (gates) | #∂ | #J | interior positions | #T | openings | ∂ msg | interiors msg | evidence msg |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 4,437 | 12 | 2 | 2,112 | 121 | 1,243 | 3.74 KB | 192 B | 944 KB |
-| 27,169 | 24 | 3 | 13,248 | 425 | 6,564 | 8.96 KB | 281 B | 5.39 MB |
-| 509,833 | 64 | 6 | 315,880 | 4,460 | 158,805 | 28 KB | 553 B | 161 MB |
-| 980,233 | 32 | 4 | 722,472 | 8,263 | 378,785 | 12 KB | 376 B | 433 MB |
+| n (gates) | #∂ | #J | replayed gates | interior positions | #T | openings | ∂ msg | interiors msg | evidence msg |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4,437 | 12 | 1 | 0 | 0 | 41 | 41 | 3.74 KB | 103 B | 23.2 KB |
+| 27,169 | 24 | 4 | 19,881 | 1,752 | 581 | 6,056 | 8.96 KB | 367 B | 4.11 MB |
+| 509,833 | 64 | 5 | 252,720 | 11,552 | 3,724 | 66,815 | 28 KB | 459 B | 55.9 MB |
+| 980,233 | 32 | 2 | 481,656 | 11,376 | 2,601 | 122,501 | 12 KB | 195 B | 114 MB |
 
-| n (gates) | replay / position | commit / position | open / opening | V Merkle / opening | V recompute / opening | bytes / opening |
+| n (gates) | replay / gate | commit / position | open / opening | V Merkle / opening | V recompute / opening | bytes / opening |
 |---:|---:|---:|---:|---:|---:|---:|
-| 4,437 | 19.3 µs | 24.3 µs | 13.6 µs | 12.8 µs | 35.2 µs | 778 B |
-| 27,169 | 20.2 µs | 24.9 µs | 13.6 µs | 13.8 µs | 35.3 µs | 861 B |
-| 509,833 | 21.3 µs | 26.3 µs | 15.8 µs | 16.9 µs | 35.2 µs | 1.04 KB |
-| 980,233 | 30.3 µs | 36.5 µs | 15.4 µs | 26.7 µs | 50.6 µs | 1.17 KB |
+| 4,437 | — | — | 22.7 µs | 16.8 µs | 31.5 µs | 579 B |
+| 27,169 | 16.7 µs | 17.7 µs | 32.6 µs | 13.6 µs | 34.6 µs | 711 B |
+| 509,833 | 16.6 µs | 16.8 µs | 30 µs | 15.8 µs | 31.6 µs | 878 B |
+| 980,233 | 16.8 µs | 18.1 µs | 28.9 µs | 17.1 µs | 31.6 µs | 978 B |
 
-Fitted exponents: evaluate ∝ x^1.01 (R² 1.00, 4 pts); P commit ∂ ∝ x^0.21 (R² 0.73, 4 pts); P commit interiors ∝ x^1.13 (R² 1.00, 4 pts); P openings ∝ x^1.09 (R² 1.00, 4 pts); P replay ∝ x^1.14 (R² 1.00, 4 pts); time ∝ x^1.13 (R² 1.00, 4 pts); transcript ∝ x^1.14 (R² 1.00, 4 pts); V ∂ + `J` ∝ x^0.22 (R² 0.68, 4 pts); V interiors + `T` ∝ x^0.74 (R² 1.00, 4 pts); V Merkle ∝ x^1.17 (R² 0.99, 4 pts); V recompute ∝ x^1.10 (R² 0.99, 4 pts); V total ∝ x^1.12 (R² 0.99, 4 pts).
+Fitted exponents: evaluate ∝ x^1.01 (R² 1.00, 4 pts); P commit ∂ ∝ x^0.23 (R² 0.82, 4 pts); P commit interiors ∝ x^1.06 (R² 0.88, 4 pts); P openings ∝ x^1.41 (R² 0.90, 4 pts); P replay ∝ x^1.66 (R² 0.88, 4 pts); time ∝ x^1.46 (R² 0.90, 4 pts); transcript ∝ x^1.44 (R² 0.93, 4 pts); V ∂ + `J` ∝ x^0.23 (R² 0.76, 4 pts); V interiors + `T` ∝ x^0.76 (R² 0.94, 4 pts); V Merkle ∝ x^1.38 (R² 0.93, 4 pts); V recompute ∝ x^1.37 (R² 0.91, 4 pts); V total ∝ x^1.25 (R² 0.93, 4 pts).
 
 #### `cluster_vs_q`
 
@@ -553,33 +553,33 @@ Fitted exponents: evaluate ∝ x^1.01 (R² 1.00, 4 pts); P commit ∂ ∝ x^0.21
 
 | q | case | n | RUs | VUs | evaluate | gates/s | `kappa_W` | time | V total | transcript |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1/32 | d8-r32 | 212,809 | 49 | 17,449 | 1.85 s | 115k/s | 2.13 ms | 742 ms | 309 ms | 3.33 MB |
-| 1/8 | d8-r32 | 212,809 | 49 | 17,449 | 1.85 s | 115k/s | 2.13 ms | 2.02 s | 865 ms | 10.5 MB |
-| 1/2 | d8-r32 | 212,809 | 49 | 17,449 | 1.85 s | 115k/s | 2.13 ms | 6.42 s | 3 s | 47.6 MB |
-| 1 | d8-r32 | 212,809 | 49 | 17,449 | 1.85 s | 115k/s | 2.13 ms | 11.7 s | 5.53 s | 86.7 MB |
+| 1/32 | d8-r32 | 212,809 | 49 | 17,449 | 1.78 s | 120k/s | 2 ms | 395 ms | 184 ms | 2.51 MB |
+| 1/8 | d8-r32 | 212,809 | 49 | 17,449 | 1.78 s | 120k/s | 2 ms | 762 ms | 369 ms | 5.05 MB |
+| 1/2 | d8-r32 | 212,809 | 49 | 17,449 | 1.78 s | 120k/s | 2 ms | 3.04 s | 1.46 s | 20.3 MB |
+| 1 | d8-r32 | 212,809 | 49 | 17,449 | 1.78 s | 120k/s | 2 ms | 5.82 s | 2.82 s | 39.1 MB |
 
 | q | P setup | P commit ∂ | P replay | P commit interiors | P openings | V admit | V ∂ + `J` | V interiors + `T` | V Merkle | V recompute |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1/32 | 4.07 ms | 87.2 ms | 244 ms | 308 ms | 95.7 ms | 10.7 ms | 6.14 ms | 786 µs | 85.4 ms | 209 ms |
-| 1/8 | 2.87 ms | 92.6 ms | 697 ms | 868 ms | 260 ms | 7.41 ms | 8.74 ms | 2.68 ms | 248 ms | 598 ms |
-| 1/2 | 2.17 ms | 58.6 ms | 2.44 s | 3.06 s | 863 ms | 6.62 ms | 5.7 ms | 10.2 ms | 821 ms | 2.15 s |
-| 1 | 2.25 ms | 57.5 ms | 4.54 s | 5.59 s | 1.54 s | 6.77 ms | 5.32 ms | 18 ms | 1.52 s | 3.98 s |
+| 1/32 | 2.04 ms | 36.6 ms | 220 ms | 17.6 ms | 118 ms | 6.95 ms | 5.22 ms | 1.03 ms | 47.4 ms | 124 ms |
+| 1/8 | 2.11 ms | 36.5 ms | 445 ms | 35.9 ms | 243 ms | 7.04 ms | 5.25 ms | 2.3 ms | 98.3 ms | 256 ms |
+| 1/2 | 2.13 ms | 36.7 ms | 1.85 s | 148 ms | 1.01 s | 6.78 ms | 5.6 ms | 8.84 ms | 398 ms | 1.04 s |
+| 1 | 2.08 ms | 36.3 ms | 3.54 s | 284 ms | 1.95 s | 6.84 ms | 5.4 ms | 17.3 ms | 769 ms | 2.02 s |
 
-| q | #∂ | #J | interior positions | #T | openings | ∂ msg | interiors msg | evidence msg |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1/32 | 2,752 | 1 | 7,392 | 146 | 3,842 | 159 KB | 106 B | 3.17 MB |
-| 1/8 | 2,752 | 4 | 23,616 | 574 | 12,544 | 159 KB | 372 B | 10.3 MB |
-| 1/2 | 2,752 | 26.5 | 114,160 | 2,286 | 58,994 | 159 KB | 2.32 KB | 47.4 MB |
-| 1 | 2,752 | 49 | 209,408 | 4,354 | 107,574 | 159 KB | 4.27 KB | 86.5 MB |
+| q | #∂ | #J | replayed gates | interior positions | #T | openings | ∂ msg | interiors msg | evidence msg |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1/32 | 2,752 | 3 | 13,222 | 1,008 | 264 | 3,596 | 159 KB | 281 B | 2.35 MB |
+| 1/8 | 2,752 | 6 | 26,508 | 2,016 | 536 | 7,444 | 159 KB | 545 B | 4.88 MB |
+| 1/2 | 2,752 | 26 | 110,307 | 8,376 | 2,237 | 30,744 | 159 KB | 2.25 KB | 20.2 MB |
+| 1 | 2,752 | 49 | 212,064 | 16,128 | 4,365 | 59,220 | 159 KB | 4.23 KB | 38.9 MB |
 
-| q | replay / position | commit / position | open / opening | V Merkle / opening | V recompute / opening | bytes / opening |
+| q | replay / gate | commit / position | open / opening | V Merkle / opening | V recompute / opening | bytes / opening |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1/32 | 33 µs | 41.7 µs | 24.9 µs | 22.2 µs | 54.4 µs | 865 B |
-| 1/8 | 29.5 µs | 36.7 µs | 20.8 µs | 19.8 µs | 47.7 µs | 860 B |
-| 1/2 | 21.4 µs | 26.8 µs | 14.6 µs | 13.9 µs | 36.5 µs | 843 B |
-| 1 | 21.7 µs | 26.7 µs | 14.3 µs | 14.1 µs | 37 µs | 843 B |
+| 1/32 | 16.6 µs | 17.5 µs | 32.9 µs | 13.2 µs | 34.4 µs | 686 B |
+| 1/8 | 16.8 µs | 17.8 µs | 32.7 µs | 13.2 µs | 34.4 µs | 688 B |
+| 1/2 | 16.7 µs | 17.7 µs | 32.8 µs | 13 µs | 33.8 µs | 687 B |
+| 1 | 16.7 µs | 17.6 µs | 32.9 µs | 13 µs | 34.1 µs | 689 B |
 
-Fitted exponents: evaluate ∝ x^0.00 (R² 1.00, 4 pts); P commit ∂ ∝ x^-0.14 (R² 0.77, 4 pts); P commit interiors ∝ x^0.84 (R² 1.00, 4 pts); P openings ∝ x^0.81 (R² 1.00, 4 pts); P replay ∝ x^0.85 (R² 1.00, 4 pts); time ∝ x^0.80 (R² 1.00, 4 pts); transcript ∝ x^0.96 (R² 1.00, 4 pts); V ∂ + `J` ∝ x^-0.07 (R² 0.21, 4 pts); V interiors + `T` ∝ x^0.91 (R² 1.00, 4 pts); V Merkle ∝ x^0.83 (R² 1.00, 4 pts); V recompute ∝ x^0.86 (R² 1.00, 4 pts); V total ∝ x^0.84 (R² 1.00, 4 pts).
+Fitted exponents: evaluate ∝ x^0.00 (R² 1.00, 4 pts); P commit ∂ ∝ x^-0.00 (R² 0.12, 4 pts); P commit interiors ∝ x^0.82 (R² 0.98, 4 pts); P openings ∝ x^0.83 (R² 0.98, 4 pts); P replay ∝ x^0.82 (R² 0.98, 4 pts); time ∝ x^0.79 (R² 0.97, 4 pts); transcript ∝ x^0.81 (R² 0.98, 4 pts); V ∂ + `J` ∝ x^0.02 (R² 0.56, 4 pts); V interiors + `T` ∝ x^0.82 (R² 0.99, 4 pts); V Merkle ∝ x^0.82 (R² 0.98, 4 pts); V recompute ∝ x^0.82 (R² 0.98, 4 pts); V total ∝ x^0.80 (R² 0.98, 4 pts).
 
 #### `cluster_vs_s`
 
@@ -587,33 +587,33 @@ Fitted exponents: evaluate ∝ x^0.00 (R² 1.00, 4 pts); P commit ∂ ∝ x^-0.1
 
 | s | case | n | RUs | VUs | evaluate | gates/s | `kappa_W` | time | V total | transcript |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1/64 | d8-r32 | 212,809 | 49 | 17,449 | 1.85 s | 115k/s | 2.13 ms | 6.15 s | 224 ms | 3.51 MB |
-| 1/16 | d8-r32 | 212,809 | 49 | 17,449 | 1.85 s | 115k/s | 2.13 ms | 4.68 s | 624 ms | 9.8 MB |
-| 1/4 | d8-r32 | 212,809 | 49 | 17,449 | 1.85 s | 115k/s | 2.13 ms | 6.36 s | 3.01 s | 47.6 MB |
-| 1 | d8-r32 | 212,809 | 49 | 17,449 | 1.85 s | 115k/s | 2.13 ms | 9.45 s | 12.5 s | 199 MB |
+| 1/64 | d8-r32 | 212,809 | 49 | 17,449 | 1.78 s | 120k/s | 2 ms | 2.47 s | 128 ms | 1.74 MB |
+| 1/16 | d8-r32 | 212,809 | 49 | 17,449 | 1.78 s | 120k/s | 2 ms | 2 s | 330 ms | 4.46 MB |
+| 1/4 | d8-r32 | 212,809 | 49 | 17,449 | 1.78 s | 120k/s | 2 ms | 3.03 s | 1.46 s | 20.3 MB |
+| 1 | d8-r32 | 212,809 | 49 | 17,449 | 1.78 s | 120k/s | 2 ms | 5.4 s | 5.18 s | 72.7 MB |
 
 | s | P setup | P commit ∂ | P replay | P commit interiors | P openings | V admit | V ∂ + `J` | V interiors + `T` | V Merkle | V recompute |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1/64 | 2.14 ms | 57.5 ms | 2.68 s | 3.35 s | 63.3 ms | 6.4 ms | 5.72 ms | 1.34 ms | 57.7 ms | 153 ms |
-| 1/16 | 2.04 ms | 57.2 ms | 1.97 s | 2.48 s | 180 ms | 6.38 ms | 5.33 ms | 2.54 ms | 167 ms | 443 ms |
-| 1/4 | 2.12 ms | 57.5 ms | 2.42 s | 3.03 s | 844 ms | 6.61 ms | 5.81 ms | 9.35 ms | 822 ms | 2.16 s |
-| 1 | 2.21 ms | 56.6 ms | 2.57 s | 3.2 s | 3.62 s | 6.36 ms | 5.24 ms | 3.14 ms | 3.43 s | 9.03 s |
+| 1/64 | 2.02 ms | 36.3 ms | 2.17 s | 174 ms | 80.8 ms | 6.94 ms | 5.34 ms | 1.13 ms | 31.2 ms | 83.3 ms |
+| 1/16 | 2.09 ms | 36.1 ms | 1.61 s | 130 ms | 219 ms | 6.91 ms | 5.43 ms | 2.13 ms | 86.1 ms | 229 ms |
+| 1/4 | 2.13 ms | 36.5 ms | 1.84 s | 146 ms | 1 s | 6.98 ms | 5.33 ms | 8.82 ms | 400 ms | 1.04 s |
+| 1 | 2.05 ms | 36.4 ms | 1.64 s | 132 ms | 3.6 s | 6.78 ms | 5.45 ms | 2.13 ms | 1.44 s | 3.73 s |
 
-| s | #∂ | #J | interior positions | #T | openings | ∂ msg | interiors msg | evidence msg |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1/64 | 2,752 | 26.5 | 123,216 | 160 | 4,160 | 159 KB | 2.32 KB | 3.35 MB |
-| 1/16 | 2,752 | 22.5 | 93,088 | 502 | 12,004 | 159 KB | 1.97 KB | 9.64 MB |
-| 1/4 | 2,752 | 26.5 | 114,160 | 2,286 | 58,994 | 159 KB | 2.32 KB | 47.4 MB |
-| 1 | 2,752 | 28.5 | 120,640 | 9,990 | 247,222 | 159 KB | 2.49 KB | 199 MB |
+| s | #∂ | #J | replayed gates | interior positions | #T | openings | ∂ msg | interiors msg | evidence msg |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1/64 | 2,752 | 29 | 130,553 | 9,960 | 170 | 2,380 | 159 KB | 2.51 KB | 1.58 MB |
+| 1/16 | 2,752 | 24 | 96,190 | 7,280 | 494 | 6,586 | 159 KB | 2.08 KB | 4.3 MB |
+| 1/4 | 2,752 | 26 | 110,307 | 8,376 | 2,237 | 30,744 | 159 KB | 2.25 KB | 20.2 MB |
+| 1 | 2,752 | 20.5 | 98,281 | 7,528 | 7,845 | 109,525 | 159 KB | 1.78 KB | 72.5 MB |
 
-| s | replay / position | commit / position | open / opening | V Merkle / opening | V recompute / opening | bytes / opening |
+| s | replay / gate | commit / position | open / opening | V Merkle / opening | V recompute / opening | bytes / opening |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1/64 | 21.8 µs | 27.2 µs | 15.2 µs | 13.9 µs | 36.7 µs | 845 B |
-| 1/16 | 21.1 µs | 26.6 µs | 15 µs | 13.9 µs | 36.9 µs | 842 B |
-| 1/4 | 21.2 µs | 26.6 µs | 14.3 µs | 13.9 µs | 36.7 µs | 843 B |
-| 1 | 21.3 µs | 26.5 µs | 14.6 µs | 13.9 µs | 36.5 µs | 843 B |
+| 1/64 | 16.6 µs | 17.4 µs | 33.9 µs | 13.1 µs | 35 µs | 694 B |
+| 1/16 | 16.7 µs | 17.8 µs | 33.2 µs | 13.1 µs | 34.8 µs | 685 B |
+| 1/4 | 16.7 µs | 17.4 µs | 32.6 µs | 13 µs | 34 µs | 687 B |
+| 1 | 16.6 µs | 17.5 µs | 32.8 µs | 13.1 µs | 34 µs | 695 B |
 
-Fitted exponents: evaluate ∝ x^0.00 (R² 1.00, 4 pts); P commit ∂ ∝ x^-0.00 (R² 0.59, 4 pts); P commit interiors ∝ x^0.00 (R² 0.00, 4 pts); P openings ∝ x^0.99 (R² 0.99, 4 pts); P replay ∝ x^0.01 (R² 0.00, 4 pts); time ∝ x^0.11 (R² 0.51, 4 pts); transcript ∝ x^0.99 (R² 0.99, 4 pts); V ∂ + `J` ∝ x^-0.01 (R² 0.20, 4 pts); V interiors + `T` ∝ x^0.28 (R² 0.38, 4 pts); V Merkle ∝ x^1.00 (R² 0.99, 4 pts); V recompute ∝ x^1.00 (R² 0.99, 4 pts); V total ∝ x^0.98 (R² 0.99, 4 pts).
+Fitted exponents: evaluate ∝ x^0.00 (R² 1.00, 4 pts); P commit ∂ ∝ x^0.00 (R² 0.26, 4 pts); P commit interiors ∝ x^-0.05 (R² 0.46, 4 pts); P openings ∝ x^0.93 (R² 0.99, 4 pts); P replay ∝ x^-0.05 (R² 0.45, 4 pts); time ∝ x^0.20 (R² 0.70, 4 pts); transcript ∝ x^0.92 (R² 0.99, 4 pts); V ∂ + `J` ∝ x^0.00 (R² 0.22, 4 pts); V interiors + `T` ∝ x^0.24 (R² 0.24, 4 pts); V Merkle ∝ x^0.94 (R² 0.99, 4 pts); V recompute ∝ x^0.93 (R² 0.99, 4 pts); V total ∝ x^0.91 (R² 0.99, 4 pts).
 
 ## 8. `output_reach` vs description size
 
@@ -716,18 +716,18 @@ What limits each component asymptotically, the constant this CPython prototype m
 
 ### Kind table and address sets
 
-- **`kind_table()` is linear in the definitions**: ∝ kinds^1.06, 85.6 ms for 8,196 kinds (10.4 µs per kind; `kinds()` alone 79 ms), with n = 100,675,585 gates behind it.  It never touches n.
-- **The output runs of one RU are the only per-call factor.**  With 128 runs in one RU's `Out`, the boundary barely moves (`∂.rank` 7.67 µs, ∝ runs^0.16; `∂.unrank` 1.26 µs, ∝ runs^0.02) while the interior grows with them: `interior(u)` 146 µs (∝ runs^0.67), its `unrank` 43.8 µs (∝ runs^0.82), its `contains` 3.78 µs.  `IntervalDifferenceDomain` subtracts the output runs one by one and `unrank` walks the pieces; `max_output_runs = 256` caps this at a few hundred microseconds per call, so it is bounded, not asymptotic, but a hot loop over interior positions should iterate the domain rather than `unrank` each position.
-- **Flat in the RU count.**  `∂.unrank`/`contains`, `interior(u)`, `unit(k)`, `owner(a)` and `verification_unit(k)` do not move from 100 to 10,000,000 RUs under a `repeat` (exponents 0.00, -0.00, -0.01) nor across 50,000 unrolled `call` steps (`owner` 1.61 µs, exponent 0.06): the unrolled root binary-searches its step table, the `repeat` divides.  `boundary()` itself is O(#definitions) and cached.
+- **`kind_table()` is linear in the definitions**: ∝ kinds^1.05, 92 ms for 8,196 kinds (11.2 µs per kind; `kinds()` alone 88.6 ms), with n = 100,675,585 gates behind it.  It never touches n.
+- **The output runs of one RU are the only per-call factor.**  With 128 runs in one RU's `Out`, the boundary barely moves (`∂.rank` 7.92 µs, ∝ runs^0.16; `∂.unrank` 1.21 µs, ∝ runs^0.01) while the interior grows with them: `interior(u)` 3.62 µs (∝ runs^-0.00), its `unrank` 144 µs (∝ runs^0.68), its `contains` 16.3 µs.  The interior (`_Interior`: the VU outputs of the RU minus its own `Out`) descends to the VU in `O(depth)` and then subtracts the RU outputs below the address run by run, and `unrank` repeats that subtraction at each bisection probe; `max_output_runs = 256` caps this at a few hundred microseconds per call, so it is bounded, not asymptotic, but a hot loop over interior positions should iterate the domain rather than `unrank` each position.
+- **Flat in the RU count.**  `∂.unrank`/`contains`, `interior(u)`, `unit(k)`, `owner(a)` and `verification_unit(k)` do not move from 100 to 10,000,000 RUs under a `repeat` (exponents 0.01, -0.00, 0.00) nor across 50,000 unrolled `call` steps (`owner` 1.3 µs, exponent 0.02): the unrolled root binary-searches its step table, the `repeat` divides.  `boundary()` itself is O(#definitions) and cached.
 
 ### Analysis
 
-- **`serving_request_row`**: the largest shape (`frontier-70B`, 2,578 rows, 2 replay kinds, n = 2.74e+17, 1.34e+14 positions per RU) folds in 1.09 s (Laplace only; ∝ kinds^1.18), knapsack 922 ms (∝ kinds^1.14), `cost` 1.41 ms, `serving_table` itself 58.3 ms.
-- **`serving_step_row`**: the largest shape (`frontier-70B`, 3,089 rows, 513 replay kinds, n = 2.74e+17, 8.38e+12 positions per RU) folds in 1.83 s (Laplace only; ∝ kinds^1.19), knapsack 7.5 s (∝ kinds^1.24), `cost` 2.79 ms, `serving_table` itself 61.1 ms.
-- **`serving_cell_gate`**: the largest shape (`frontier-70B`, 2,590 rows, 1,036 replay kinds, n = 2.74e+17, 7,912 positions per RU) folds in 1.34 s (Laplace only; ∝ kinds^1.03), knapsack skipped at this size, `cost` 10.5 ms, `serving_table` itself 66.2 ms.
-- **Linear in the kinds; the knapsack is the constant.**  On synthetic tables the Laplace fold is ∝ kinds^1.00 (1.23 ms per replay kind at 1,024 kinds) and the knapsack ∝ kinds^1.02 (14.4 s vs 309 ms at 256 kinds, 46.6×; not run at 1,024 kinds, where it would take about a minute).
-- **Buckets**: `max_buckets` from 128 to 32,768 moves the knapsack ∝ buckets^1.16 in time and ∝ buckets^1.07 in memory (24 s at the top, 52.1 MB at 8,192 buckets); the knapsack term goes from 69,664 to 69,951 bits over that range and the reported bound stays 8,192 bits (the Laplace term is the minimum here).
-- **`optimize` is one fold per grid point**: ∝ points^0.91, 42.9 ms per policy on the shape used, 12.4 s for 289 policies.  A `(q, s)` grid of 10^4 points is minutes; a coarse-to-fine search is the obvious deployment move.
+- **`serving_request_row`**: the largest shape (`frontier-70B`, 2,578 rows, 2 replay kinds, n = 2.74e+17, 1.34e+14 gates and 1.08e+10 interior positions per RU) folds in 1.02 s (Laplace only; ∝ kinds^1.15), knapsack 875 ms (∝ kinds^1.12), `cost` 1.68 ms, `serving_table` itself 58.8 ms.
+- **`serving_step_row`**: the largest shape (`frontier-70B`, 3,089 rows, 513 replay kinds, n = 2.74e+17, 8.38e+12 gates and 590,278,562 interior positions per RU) folds in 1.78 s (Laplace only; ∝ kinds^1.17), knapsack 7.23 s (∝ kinds^1.24), `cost` 2.91 ms, `serving_table` itself 63.2 ms.
+- **`serving_cell_gate`**: the largest shape (`frontier-70B`, 2,590 rows, 1,036 replay kinds, n = 2.74e+17, 7,912 gates and 7,911 interior positions per RU) folds in 1.4 s (Laplace only; ∝ kinds^1.04), knapsack skipped at this size, `cost` 10.1 ms, `serving_table` itself 67.5 ms.
+- **Linear in the kinds; the knapsack is the constant.**  On synthetic tables the Laplace fold is ∝ kinds^0.97 (1.27 ms per replay kind at 1,024 kinds) and the knapsack ∝ kinds^1.02 (13.6 s vs 324 ms at 256 kinds, 41.9×; not run at 1,024 kinds, where it would take about a minute).
+- **Buckets**: `max_buckets` from 128 to 32,768 moves the knapsack ∝ buckets^1.17 in time and ∝ buckets^1.06 in memory (23.3 s at the top, 52.1 MB at 8,192 buckets); the knapsack term goes from 69,664 to 69,951 bits over that range and the reported bound stays 8,192 bits (the Laplace term is the minimum here).
+- **`optimize` is one fold per grid point**: ∝ points^0.91, 41.8 ms per policy on the shape used, 12.1 s for 289 policies.  A `(q, s)` grid of 10^4 points is minutes; a coarse-to-fine search is the obvious deployment move.
 
 ### Challenge sampling
 
@@ -737,19 +737,19 @@ What limits each component asymptotically, the constant this CPython prototype m
 
 ### Merkle commitments
 
-- **Build is linear: 504k/s values, 1.06M/s domain-separated SHA-256 calls** at 2,000,000 leaves (∝ leaves^0.99), retaining 178 B per leaf (∝ leaves^0.98; 340 MB at the top).  `commit_weights` runs at the same rate (4.33 s for 2,000,000 weights).  The 32-byte digests are Python `bytes` objects and every level is a list: the memory constant is ~3× the digests themselves.
-- **Open and verify are O(log L)**: `open` 2.35 µs, `verify_opening` 22.6 µs, proof 674 B at 2,000,000 leaves (depth 21; exponents 0.10, 0.11).
-- **Deployment.**  Committing the interior of a sampled RU costs one leaf hash per position plus the tree (2 hashes per position).  In this gate model every multiply-add is a position: a `step` RU of the largest serving shape measured (`frontier-70B`, the 70B-class shape of `docs/frontier-report.md`) has 8.38e+12 positions, a `cell` RU 7,912.  At the measured 1.06M/s one `step` interior is 183 days in this prototype; at 1G/s (a GPU-class SHA-256 rate, taken as 10^9/s here) it is 4.65 h, far longer than the decode step it belongs to, so a per-value hash over a whole step cannot hide behind the computation at any hashing rate; a `cell` interior is 15.8 µs.  This is the `h` per committed value that the frontier report's cost model charges.  Memory is the other constraint: at 178 B per leaf the Python tree for a `step` interior would be 1.33 PB; a packed tree is 64 B per leaf.
+- **Build is linear: 525k/s values, 1.1M/s domain-separated SHA-256 calls** at 2,000,000 leaves (∝ leaves^0.99), retaining 178 B per leaf (∝ leaves^0.98; 340 MB at the top).  `commit_weights` runs at the same rate (4.15 s for 2,000,000 weights).  The 32-byte digests are Python `bytes` objects and every level is a list: the memory constant is ~3× the digests themselves.
+- **Open and verify are O(log L)**: `open` 2.03 µs, `verify_opening` 21.4 µs, proof 674 B at 2,000,000 leaves (depth 21; exponents 0.09, 0.10).
+- **Deployment.**  Committing the interior of a sampled RU costs one leaf hash per position plus the tree (2 hashes per position).  The positions are the declared outputs of the RU's verification units (not its own outputs), so the VU marks set the count: a `step` RU of the largest serving shape measured (`frontier-70B`, the 70B-class shape of `docs/frontier-report.md`) has 590,278,562 positions, a `cell` RU 7,911.  At the measured 1.1M/s one `step` interior is 17.9 min in this prototype; at 1G/s (a GPU-class SHA-256 rate, taken as 10^9/s here) it is 1.18 s, far longer than the decode step it belongs to, so a per-value hash over a whole step cannot hide behind the computation at any hashing rate; a `cell` interior is 15.8 µs.  This is the `h` per committed value that the frontier report's cost model charges.  Memory is the other constraint: at 178 B per leaf the Python tree for a `step` interior would be 98 GB; a packed tree is 64 B per leaf.
 
 ### Protocol end to end
 
-- **Everything is linear in what the policy selects, and the constants are per position.**  On `ClusterG` up to n = 980,233 (`d32-L2-r4`, q = 1/2, s = 1/4) the prover's total is ∝ n^0.88 and the verifier's ∝ n^0.83; the honest evaluation through the lazy circuit runs at 116k/s gates (8.46 s at the top), the prover then spends 21.1 s (2.5× the evaluation) and the verifier 7.88 s (0.9×).
-- **Prover constants** (mean over the ladder): replay 24.1 µs per interior position (`replay_unit`: one lazy frame walk and one gate evaluation per position), interior commitment 32.7 µs per position (value encoding plus the Merkle build), openings 14.4 µs per opening.  Replay + commit together are ~56.8 µs per selected interior position, so the prover's marginal cost is q × (interior size) × that, independent of s.  The constants drift up along the ladder (21.3 µs → 27.7 µs replay, 27.4 µs → 39.8 µs commit) as the per-RU value dictionaries and the transcript strings reach hundreds of megabytes: allocator and cache pressure, not an asymptotic term.
-- **Verifier constants**: 15.8 µs per opening for the Merkle path (145,570 openings at the top, ~5,732 VUs) and 35.7 µs per opening to recompute the gate and compare (the gate lookup dominates); the boundary check and the two challenge derivations are 26.4 ms, i.e. noise.
-- **Bytes**: 966 B per opening as canonical JSON (hex digests, one path per opening, no sibling sharing), 166 MB for the whole transcript at the top; the boundary and interior commitment messages are 26.6 KB and 285 B.  Evidence dominates and it is the one message that grows with q·s·|VU|; batching the openings of one VU into a multiproof would cut it by the shared prefix, about `depth - log2(positions per VU)` hashes per opening.
-- **`RequestsG` vs `ClusterG`**: per-request RUs make the boundary the prompts and tokens only (|∂| = 32 vs 3,616 at the same n), so the boundary commitment is 791 µs vs 75.1 ms; the per-position constants are the same (22.8 µs replay).
-- **Along q** the replay and interior-commitment phases scale with the realized |J| (∝ q^0.85 on `d8-r32`, 49 RUs; sublinear because |J| is a binomial draw, mean over the seeds 1 at q = 1/32, 4 at q = 1/8, 26.5 at q = 1/2, 49 at q = 1, and the fixed costs show at small q); **along s** the openings and the verifier's evidence check scale ∝ s^0.99 and ∝ s^1.00 while replay stays put (∝ s^0.01).
-- **Deployment.**  The prover's marginal cost is q × Σ_selected |interior| × (56.8 µs here), 6.6× the honest per-gate evaluation in the same interpreter — the ratio is the meaningful number: the prover re-runs the selected RUs and hashes every intermediate value, so it pays the honest computation once more (at the model's own rate on real hardware) plus one hash per value.  The hash is the part that does not shrink: at 1G/s a `step` RU of the `frontier-70B` serving shape (8.38e+12 positions) commits in 4.65 h, so a deployment either marks RUs at a granularity whose interiors it can afford to hash (the `cell`/`request` trade-off the frontier report prices) or commits to a compressed digest of the interior.  The verifier's work is q·s·|VU| × (positions per VU) × (51.6 µs per opening here, 19,398 openings/s): 10^6 openings a step is 51.6 s in this prototype and a few seconds compiled, and the evidence for them is 921 MB as JSON (610 MB as packed 20-deep paths).
+- **Everything is linear in what the policy selects, and the constants are per position.**  On `ClusterG` up to n = 980,233 (`d32-L2-r4`, q = 1/2, s = 1/4) the prover's total is ∝ n^0.92 and the verifier's ∝ n^0.92; the honest evaluation through the lazy circuit runs at 121k/s gates (8.12 s at the top), the prover then spends 24.2 s (3.0× the evaluation) and the verifier 12.4 s (1.5×).
+- **Prover constants** (mean over the ladder): replay 16.6 µs per replayed gate (`replay_unit`: one lazy frame walk and one gate evaluation for every non-source gate of a selected RU), interior commitment 19.6 µs per committed position (value encoding plus the Merkle build), openings 33.2 µs per opening.  The interior is committed at VU-output granularity -- the declared outputs of the RU's verification units that are not its own outputs -- so it holds 3% of the replayed gates on this ladder (19,168 positions for 963,312 gates at the top) and replay + commit together are ~17.1 µs per replayed gate; the prover's marginal cost is q × Σ_selected (|R| × replay + |interior| × commit), independent of s.  The constants drift along the ladder (16 µs → 16.7 µs replay, 17.8 µs → 20.8 µs commit) as the per-RU value dictionaries and the transcript strings grow: allocator and cache pressure, not an asymptotic term.
+- **Verifier constants**: 14.5 µs per opening for the Merkle path (250,773 openings at the top, ~9,530 VUs) and 34.3 µs per opening to recompute the gate and compare (the gate lookup dominates); the boundary check and the two challenge derivations are 40.8 ms, i.e. noise.
+- **Bytes**: 781 B per opening as canonical JSON (hex digests, one path per opening, no sibling sharing), 235 MB for the whole transcript at the top; the boundary and interior commitment messages are 26.6 KB and 460 B.  Evidence dominates and it is the one message that grows with q·s·|VU|; batching the openings of one VU into a multiproof would cut it by the shared prefix, about `depth - log2(positions per VU)` hashes per opening.
+- **`RequestsG` vs `ClusterG`**: per-request RUs make the boundary the prompts and tokens only (|∂| = 32 vs 3,616 at the same n), so the boundary commitment is 759 µs vs 45.6 ms; the per-gate constants are the same (16.7 µs replay).
+- **Along q** the replay and interior-commitment phases scale with the realized |J| (∝ q^0.82 on `d8-r32`, 49 RUs; sublinear because |J| is a binomial draw, mean over the seeds 3 at q = 1/32, 6 at q = 1/8, 26 at q = 1/2, 49 at q = 1, and the fixed costs show at small q); **along s** the openings and the verifier's evidence check scale ∝ s^0.93 and ∝ s^0.93 while replay stays put (∝ s^-0.05).
+- **Deployment.**  The prover's marginal cost is q × Σ_selected (|R| × 16.6 µs + |interior| × 19.6 µs here), 2.1× the honest per-gate evaluation in the same interpreter at this ladder's interior density — the ratio is the meaningful number: the prover re-runs the selected RUs, so it pays the honest computation once more (at the model's own rate on real hardware), and hashes one value per VU output rather than per gate.  The hash is the part that does not shrink with a faster evaluator, and the VU marks decide how many there are: at 1G/s a `step` RU of the `frontier-70B` serving shape (590,278,562 VU-output positions) commits in 1.18 s, so a deployment either marks VUs coarse enough that the interiors it must hash are affordable (the `cell`/`request` trade-off the frontier report prices) or commits to a compressed digest of the interior.  The verifier's work is q·s·|VU| × (inputs + outputs per VU) × (48.8 µs per opening here, 20,508 openings/s): 10^6 openings a step is 48.8 s in this prototype and a few seconds compiled, and the evidence for them is 745 MB as JSON (610 MB as packed 20-deep paths).
 
 ### `output_reach`
 

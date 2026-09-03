@@ -32,6 +32,7 @@ from veritor.protocol import (
     weight_domain,
 )
 from veritor.protocol.domains import leaf_schema
+from veritor.protocol.session import _Layout
 
 
 def honest_boundary(model, expectation) -> tuple[MerkleTree, CommitmentDomain]:
@@ -275,10 +276,21 @@ def test_two_units_reading_one_address_cannot_be_shown_different_values(model, s
     assert len(values) == 1  # one owner, one leaf, one value
 
 
-def test_every_address_has_exactly_one_owner(model):
-    """kappa_W for weights, the boundary for inputs and declared outputs, else one replay unit."""
+@pytest.mark.parametrize("marks", ["split", "whole", "wide"])
+def test_every_committed_address_has_exactly_one_owner(sec, marks):
+    """kappa_W, the boundary and the interiors are disjoint and cover exactly what is checked.
 
+    The domains partition the positions the sampled checks touch: every
+    verification unit's inputs, declared outputs and source gates.  An
+    internal gate of a unit (a ``mul`` of a whole or wide cell) is in no
+    domain, so no opening of it exists and its value is whatever the
+    recomputation says; a declared output has one owner, so a stage output
+    committed in the boundary has no interior copy to disagree with.
+    """
+
+    model = sec.Model(2, 2, wide_units=marks == "wide", split_cells=marks == "split")
     circuit, index = model.circuit, model.index
+    layout = _Layout(model.compiled)
     weights = set(circuit.weights)
     boundary = set(iter_domain(index.boundary()))
     interiors = {
@@ -289,8 +301,44 @@ def test_every_address_has_exactly_one_owner(model):
         assert not (interior & boundary) and not (interior & weights)
         for other, theirs in interiors.items():
             assert other == r or not (interior & theirs)
+        assert interior <= set(index.replay_units.unit(r).interval)
     covered = weights | boundary | set().union(*interiors.values())
-    assert covered == set(range(circuit.n))
+
+    touched: set[int] = set()
+    for unit in range(index.verification_unit_count):
+        node = index.verification_unit(unit)
+        declared = set(circuit.Out(node))
+        sources = {a for a in node.interval if circuit[a].is_source}
+        required = layout.required(unit)
+        assert [a for _, a in required] == sorted(set(circuit.In(node)) | declared | sources)
+        for owner, address in required:
+            assert owner == layout.owner(address)
+            if owner >= 0:
+                assert owner == node.replay_unit and address in interiors[owner]
+            elif owner == BOUNDARY_OWNER:
+                assert address in boundary
+            else:
+                assert owner == WEIGHT_OWNER and address in weights
+        touched.update(address for _, address in required)
+    assert covered == touched
+    assert all(circuit[a].is_source or index.boundary().contains(a) or any(
+        a in interior for interior in interiors.values()
+    ) for a in covered)
+
+    internal = set(range(circuit.n)) - covered
+    expected_internal = set()
+    if marks != "split":  # a whole or wide cell's mul is read only inside its unit
+        expected_internal = {a for a in range(circuit.n) if circuit[a].op == "mul"}
+        assert len(expected_internal) == 4
+    assert internal == expected_internal
+    for address in internal:
+        assert not index.boundary().contains(address) and not index.weights().contains(address)
+        assert not any(index.interior(r).contains(address) for r in interiors)
+    # and the per-kind count the verifier prices from agrees with the enumeration
+    kinds = {kind.kind: kind for kind in index.kinds()}
+    for r, interior in interiors.items():
+        kind = kinds[index.replay_units.unit(r).kind]
+        assert kind.interior_count == len(interior) == index.interior(r).count
 
 
 def test_the_wire_carries_no_prover_described_domain(honest_run, sec):

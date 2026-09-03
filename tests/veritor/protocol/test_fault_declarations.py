@@ -52,8 +52,11 @@ OTHER_UNIT = 12
 SOURCE_UNIT = 0
 """An ``in`` gate's VU: nothing to declare."""
 
-BASELINE_TRANSCRIPT_SHA256 = "8b9991cd90a286a00e6d1774c647898de43c97541f190a9ec27c4e9657fcee76"
-"""SHA-256 of the fixture's honest transcript (17,219 bytes) as the code before M6 encoded it."""
+BASELINE_TRANSCRIPT_SHA256 = "7eb5a9da19f296b56e9a077c73653dc5cd77eda0daf4dbb471ed639b0ab08997"
+"""SHA-256 of the fixture's honest transcript as the code before M6 encoded it.
+
+Re-pinned when the interior moved to VU-output granularity (protocol v7: evidence
+opens a unit's inputs and outputs only, interior domain tag v2)."""
 
 
 def faults(max_faults: int = 0) -> VerifierParameters:
@@ -250,9 +253,9 @@ def test_declared_unit_is_obliged_under_the_vacuous_program(compiled, honest_val
         if plain.unit != FAULTY_UNIT:
             assert plain == declared
             continue
-        assert declared.kind == DECLARED_KIND and declared.gates == () and declared.inputs == ()
+        assert declared.kind == DECLARED_KIND and declared.outputs == () and declared.inputs == ()
         assert declared.positions == plain.positions and declared.commitments == plain.commitments
-        assert plain.gates and plain.kind != DECLARED_KIND
+        assert plain.outputs and plain.kind != DECLARED_KIND
     assert verifier.receive_evidence(prover.evidence(sample_challenge)).accepted
 
 
@@ -321,7 +324,11 @@ def test_a_declaration_outside_the_opened_rus_is_rejected(compiled, honest_value
     replay_challenge = verifier.receive_boundary(prover.boundary())
     opened = set(replay_challenge.selected)
     index = compiled.index
-    compute = [unit for unit in range(index.replay_units.count) if index.interior(unit).count]
+    compute = [
+        unit
+        for unit in range(index.replay_units.count)
+        if not compiled.circuit[index.replay_units.unit(unit).interval.start].is_source
+    ]
     assert opened & set(compute) and set(compute) - opened, "the seeds open some compute RUs, not all"
     outside = index.verification_units(next(u for u in compute if u not in opened)).first
     interiors = prover.interiors(replay_challenge)

@@ -66,7 +66,7 @@ def test_a_declared_unit_is_proved_under_the_vacuous_program(
     declared = [o for o in statement.obligations if o.kind == DECLARED_KIND]
     assert [o.unit for o in declared] == [FAULTY_UNIT]
     (obligation,) = declared
-    assert obligation.gates == () and obligation.inputs == ()
+    assert obligation.outputs == () and obligation.inputs == ()
     checked = next(o for o in statement.obligations if o.unit == FAULTY_UNIT + 1)
     assert len(obligation.positions) == len(checked.positions)  # same openings, no relation
     slot = statement.obligations.index(obligation)
