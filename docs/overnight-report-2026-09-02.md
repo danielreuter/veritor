@@ -353,5 +353,8 @@ Decisions the implementation surfaced that belong in the paper.
   format for `RoundChallenge`/`EpochReport`, a beacon binding for the `q` side, and rewiring the
   datacenter simulation onto the layer (the adversary test is dedicated).
 - **Proof layer**: guest SHA over a precompile, vk caching, the OpenVM host binary (§3.2).
+- **RunPod**: none of this work's pods is running (both 4090 pods were terminated, $0.63 each). A
+  pod that is not ours, `porep-h100-b` at $3.29/h, was running on the account at 23:50 PDT with
+  42 minutes of uptime; left alone.
 - **Unfinished in the scenarios**: bounded expert capacity for MoE, multi-layer routing, workload
   size in the crossover sweep (the ladder stops at E = 16, where advice first wins).
