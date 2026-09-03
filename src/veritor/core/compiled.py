@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 
 from .circuit import Circuit
+from .description import Check
 from .identity import Digest, identity_digest
 from .index import Index, KindTable
 
@@ -35,6 +37,17 @@ class Compiled:
         """The index's per-kind table under ``H(C, I)``, what the analysis folds read."""
 
         return replace(self.index.kind_table(), digest=self.digest)
+
+    @property
+    def checks(self) -> tuple[Check, ...]:
+        """The check outputs: output ordinals the verifier requires to equal a constant."""
+
+        return self.index.checks
+
+    def check_values(self) -> Iterator[tuple[int, int]]:
+        """``(output ordinal, constant)`` for every check output."""
+
+        return self.index.check_values()
 
 
 def as_kind_table(target: Compiled | KindTable) -> KindTable:

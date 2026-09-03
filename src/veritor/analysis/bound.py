@@ -59,6 +59,16 @@ only admissible value is its opening under ``kappa_W``.  The fold therefore
 gives a kind with no non-source gate the series of the empty subset alone
 (``l = 0``); counting its ``l >= 1`` subsets would add terms of weight one
 for error sets that never survive.
+
+Check outputs (:class:`~veritor.core.description.Check`) are declared
+outputs the description fixes at a constant and the verifier compares at
+the boundary, before any sampling.  They contribute ``0`` to the root's
+``out_bits`` and to every node's ``reach_bits`` and ``ancestor_bits``: a
+transcript whose check output differs from its constant is rejected
+whatever the sampling does, so ``Y_eta`` holds one value at every check
+position and a cut may drop those positions without losing a reachable
+output.  A node that can only move check outputs therefore has capacity
+``2**0`` through them, exactly like one that holds only source gates.
 """
 
 from __future__ import annotations

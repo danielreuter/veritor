@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import itertools
 import math
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from fractions import Fraction
 
 from circuit_cut_analysis.capacity import GateCapacity
@@ -71,18 +71,29 @@ def unit_owner(index: Index) -> dict[int, int]:
     return owner
 
 
-def out_bits(circuit: Circuit, node: IndexNode) -> int:
-    return sum(circuit[address].width for address in circuit.Out(node))
+def check_addresses(compiled: Compiled) -> frozenset[int]:
+    """The addresses of the check outputs, which the verifier fixes at their constants."""
+
+    outputs = compiled.circuit.outputs
+    return frozenset(outputs[ordinal] for ordinal, _ in compiled.check_values())
 
 
-def reach_bits(circuit: Circuit, node: IndexNode) -> int:
+def out_bits(circuit: Circuit, node: IndexNode, checked: frozenset[int] = frozenset()) -> int:
+    """The width of ``Out(node)`` in bits; at the root, less its check outputs."""
+
+    skipped = checked if node.frame.parent is None else frozenset()
+    return sum(circuit[address].width for address in circuit.Out(node) if address not in skipped)
+
+
+def reach_bits(circuit: Circuit, node: IndexNode, checked: frozenset[int] = frozenset()) -> int:
     """The width of the circuit outputs reachable from the node's gates, in bits.
 
     Forward along argument reads from every gate of the node but its source
     gates (which hold their pinned values): the exact value of what
     :attr:`~veritor.core.KindSummary.reach_bits` bounds over the copies of
     a kind.  Those outputs are a downstream cut for the node, like its
-    interface.
+    interface.  Check outputs (``checked``) are fixed by the verifier and
+    count for nothing.
     """
 
     reached = bytearray(circuit.n)
@@ -90,10 +101,14 @@ def reach_bits(circuit: Circuit, node: IndexNode) -> int:
         reached[address] = not circuit[address].is_source
     for address in range(node.interval.stop, circuit.n):
         reached[address] = any(reached[arg] for arg in circuit[address].args)
-    return sum(circuit[address].width for address in circuit.outputs if reached[address])
+    return sum(
+        circuit[address].width
+        for address in circuit.outputs
+        if reached[address] and address not in checked
+    )
 
 
-def ancestor_bits(circuit: Circuit, node: IndexNode) -> int:
+def ancestor_bits(circuit: Circuit, node: IndexNode, checked: frozenset[int] = frozenset()) -> int:
     """The narrowest declared interface among the node's proper ancestors, in bits.
 
     The exact value of what :attr:`~veritor.core.KindSummary.ancestor_bits`
@@ -105,11 +120,11 @@ def ancestor_bits(circuit: Circuit, node: IndexNode) -> int:
 
     frame = node.frame
     if frame.parent is None:
-        return out_bits(circuit, node)
+        return out_bits(circuit, node, checked)
     narrowest = math.inf
     parent: Frame | None = frame.parent
     while parent is not None:
-        narrowest = min(narrowest, out_bits(circuit, IndexNode(parent)))
+        narrowest = min(narrowest, out_bits(circuit, IndexNode(parent), checked))
         parent = parent.parent
     return int(narrowest)
 
@@ -125,9 +140,10 @@ def cover_bits(compiled: Compiled, errors: ErrorSet) -> int:
 
     owner = unit_owner(compiled.index)
     circuit = compiled.circuit
+    checked = check_addresses(compiled)
 
     def charge(node: IndexNode, enclosing: int) -> int:
-        return min(out_bits(circuit, node), reach_bits(circuit, node), enclosing)
+        return min(out_bits(circuit, node, checked), reach_bits(circuit, node, checked), enclosing)
 
     def value(node: IndexNode, enclosing: int) -> int:
         """The cover of the errors under ``node``; ``enclosing`` is the narrowest interface above it."""
@@ -135,12 +151,12 @@ def cover_bits(compiled: Compiled, errors: ErrorSet) -> int:
         own = charge(node, enclosing)
         if node.role == VERIFICATION:
             return own if owner[node.interval.start] in errors else 0
-        inside = min(enclosing, out_bits(circuit, node))
+        inside = min(enclosing, out_bits(circuit, node, checked))
         below = sum(value(child, inside) for child in node.children())
         return min(below, own) if below else 0
 
     root = compiled.index.root
-    return value(root, out_bits(circuit, root))
+    return value(root, out_bits(circuit, root, checked))
 
 
 def cut_bits(compiled: Compiled, errors: ErrorSet) -> int:
@@ -151,6 +167,7 @@ def cut_bits(compiled: Compiled, errors: ErrorSet) -> int:
     """
 
     circuit = compiled.circuit
+    checked = check_addresses(compiled)
     gates = [
         Gate(str(address), GateCapacity.values(1 << circuit[address].width), op=circuit[address].op)
         for address in range(circuit.n)
@@ -160,15 +177,17 @@ def cut_bits(compiled: Compiled, errors: ErrorSet) -> int:
         for address in range(circuit.n)
         for arg in circuit[address].args
     }
-    dag = CircuitDAG(gates, edges, {str(address) for address in circuit.outputs})
+    # a check output is fixed by the verifier, so it is not a sink of the cut
+    sinks = {str(address) for address in circuit.outputs if address not in checked}
     sources = {
         str(address)
         for unit in errors
         for address in compiled.index.verification_unit(unit).interval
         if not circuit[address].is_source  # a source gate holds its pinned value
     }
-    if not sources:
+    if not sources or not sinks:
         return 0
+    dag = CircuitDAG(gates, edges, sinks)
     capacity = minimum_vertex_cut(dag, sources, dag.outputs).exact_capacity
     if capacity is None:  # pragma: no cover - the all-gate cut policy is exact
         raise AssertionError("the explicit min-cut is exact")
@@ -247,12 +266,22 @@ def accepted_outputs(
     outputs: dict[Output, set[ErrorCounts]],
     policy: VerificationPolicy,
     eta: Fraction,
+    checks: Iterable[tuple[int, int]] = (),
 ) -> set[Output]:
-    """``Y_eta``: the outputs whose best transcript survives with probability above ``eta``."""
+    """``Y_eta``: the outputs whose best transcript survives with probability above ``eta``.
 
+    ``checks`` are ``(output ordinal, constant)`` pairs
+    (:meth:`~veritor.core.compiled.Compiled.check_values`): the verifier
+    rejects a transcript whose output differs from the constant at a check
+    position before any sampling, so such outputs are never in ``Y_eta``.
+    """
+
+    required = tuple(checks)
     chances: dict[ErrorCounts, Fraction] = {}
     accepted: set[Output] = set()
     for output, variants in outputs.items():
+        if any(output[ordinal] != value for ordinal, value in required):
+            continue
         for counts in variants:
             chance = chances.get(counts)
             if chance is None:
@@ -270,6 +299,7 @@ __all__ = [
     "accepted_outputs",
     "admissible_sets",
     "ancestor_bits",
+    "check_addresses",
     "cover_bits",
     "cut_bits",
     "error_counts",

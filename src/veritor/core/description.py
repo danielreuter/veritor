@@ -35,6 +35,16 @@ compiler requires the runs to be pairwise disjoint.  The source gates inside
 a definition are runs too (``input_runs``, ``weight_runs``), and their
 counts are prefix-summed per step so the rank of an input or weight gate in
 address order is an ``O(depth)`` descent.
+
+Checks.  The root may mark declared outputs as *checks*: a :class:`Check` is
+a progression of output ordinals with the constant value the verifier
+requires every one of them to hold (the MoE and speculative ``ok`` words, the
+blank slots after an advised stop).  A check output is still a declared
+output (an address of ``Out``, a boundary position the header's
+``claimed_outputs`` name, at exactly the constant) but it carries no
+information the prover chooses, so ``out_bits`` and the reach and ancestor
+accounting of the index leave it out; ``checked_runs`` are the gates it
+resolves to.
 """
 
 from __future__ import annotations
@@ -101,6 +111,31 @@ class Range:
 
 def ranges_total(ranges: tuple[Range, ...]) -> int:
     return sum(item.count for item in ranges)
+
+
+@dataclass(frozen=True, slots=True)
+class Check:
+    """Declared outputs ``start + k * stride`` (``k < count``) the verifier requires to equal ``value``.
+
+    The ordinals are over the definition's declared outputs; the compiler
+    requires them to resolve to computed gates the copy owns, to be pairwise
+    distinct and ``value`` to fit every such gate's width.
+    """
+
+    start: int
+    count: int
+    stride: int
+    value: int
+
+    def element(self, k: int) -> int:
+        return self.start + k * self.stride
+
+    @property
+    def last(self) -> int:
+        return self.start + (self.count - 1) * self.stride
+
+    def ordinals(self) -> Iterator[int]:
+        return (self.start + k * self.stride for k in range(self.count))
 
 
 def range_at(
@@ -258,7 +293,8 @@ class Definition:
     ``weight_total``: the input and weight gates inside, counted through
     calls and repeats) feed the prefix sums that make unit, boundary, input
     and weight lookups ``O(depth)``.  ``input_count`` is the number of
-    *ports*, the declared interface ``In``.
+    *ports*, the declared interface ``In``.  ``checks`` are the root's check
+    outputs (see the module docstring); every other definition has none.
     """
 
     digest: str
@@ -266,6 +302,7 @@ class Definition:
     steps: tuple[Step, ...]
     outputs: tuple[Range, ...]
     role: str | None
+    checks: tuple[Check, ...] = ()
     step_address: tuple[int, ...] = _derived()
     step_slot: tuple[int, ...] = _derived()
     step_replay: tuple[int, ...] = _derived()
@@ -506,10 +543,41 @@ class Definition:
         return self.out_starts[-1]
 
     @cached_property
-    def out_bits(self) -> int:
-        """Bits carried by ``Out`` of a copy: the widths of its runs."""
+    def checked_runs(self) -> tuple[Run, ...]:
+        """The gates of ``Out`` that the check outputs resolve to, ordered by start.
 
-        return sum(run.count * run.width for run in self.out_runs)
+        Empty except at the root of a description with checks.  The compiler
+        requires every check output to resolve to a computed gate of the copy
+        (a ``GATE`` piece), so these runs are a sub-collection of ``out_runs``.
+        """
+
+        return _sorted_runs(
+            run
+            for check in self.checks
+            for kind, run in self.check_pieces(check)
+            if kind is PieceKind.GATE
+        )
+
+    def check_pieces(self, check: Check) -> tuple[tuple[PieceKind, Run], ...]:
+        """The pieces the output ordinals of ``check`` resolve to (see :attr:`resolved_outputs`)."""
+
+        return tuple(_merge(_declared_pieces(self, check.start, check.count, check.stride)))
+
+    @cached_property
+    def checked_bits(self) -> int:
+        """The width of the check outputs: bits of ``Out`` the verifier fixes."""
+
+        return sum(run.count * run.width for run in self.checked_runs)
+
+    @cached_property
+    def out_bits(self) -> int:
+        """Bits carried by ``Out`` of a copy: the widths of its runs, less the checked ones.
+
+        A check output is a member of ``Out`` the verifier requires to equal a
+        constant of the description, so it carries none of the prover's bits.
+        """
+
+        return sum(run.count * run.width for run in self.out_runs) - self.checked_bits
 
     def out_offset(self, rank: int) -> int:
         """The gate offset of member ``rank`` of ``Out``: bisect the run prefix sums."""
