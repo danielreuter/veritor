@@ -67,8 +67,9 @@ and the budget, and depends on the size of the year's computation only through l
 - `alpha` is measured on an RTX 4090 for the dot relations of an fp8 tile; the elementwise gates
   (LayerNorm, softmax, GELU) are not in the measurement and are a small fraction of the compute.
 - The cost model is the recompute-honest one: replaying any part of a request re-executes the request.
-- `values_per_leaf = 32` and `interior = "vu"` describe the commitment layout the real-scale path needs;
-  the prototype commits one value per leaf at gate granularity (the `gate` and `values_per_leaf = 1` rows).
+- `interior = "vu"` is what the protocol commits (VU outputs); the `gate` row prices the interior at
+  gate granularity, as the prototype did before. `values_per_leaf = 32` is the packed commitment
+  layout the real-scale path needs; the prototype hashes one value per leaf (the `values_per_leaf = 1` row).
 - W_V = 16 takes a VU's declared output to be its 16-bit activation; if the fp32 accumulator of a
   dot product is the declared output instead, W_V = 32 and U grows by (32 + log2 #VUs + 2) / (16 + log2 #VUs + 2),
   about 17%.
