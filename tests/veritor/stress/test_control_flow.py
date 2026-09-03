@@ -303,7 +303,7 @@ def test_c5_variable_length_generation() -> None:
     for value, (r, g) in zip(by_step.outputs, layout, strict=True):
         got[r][g] = value
     assert tuple(tuple(g) for g in got) == streamed
-    assert by_step.advice_bits == 8 * len(a) == 8 * (20 + 16 + 20 * len(joins))
+    assert by_step.advice_bits == 8 * len(a) == 8 * (20 + 16 + 28 * len(joins))  # Schedule v3: 7 words per join
 
     record(
         [
@@ -328,13 +328,13 @@ def test_c5_variable_length_generation() -> None:
             Row(
                 id="C5b",
                 what="variable-length generation, step RUs (ClusterG, 1 pod x 2 slots): the same requests",
-                mechanism="M4 charged advice: the schedule (Schedule.encode(): a header and 5 words per join)",
+                mechanism="M4 charged advice: the schedule (Schedule.encode(): a header and 7 words per join)",
                 advice_bits=by_step.advice_bits,
                 capacity_bits=math.ceil(by_step.capacity),
                 overhead=by_step.overhead,
                 description_bytes=by_step.description_bytes,
                 gates=by_step.gates,
-                verdict="advice = the schedule; each request's length rides in its join (20 bytes)",
+                verdict="advice = the schedule; each request's length rides in its join (28 bytes)",
                 notes=(
                     f"U = {by_step.bound_bits:.0f} bits{' (interface-capped)' if by_step.capped else ''} + "
                     f"{by_step.advice_bits} advice bits for {len(joins)} joins over {steps} steps; "

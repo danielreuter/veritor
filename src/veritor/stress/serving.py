@@ -26,7 +26,9 @@ Layout = Sequence[tuple[int, int]]
 """``(request, generated position)`` per circuit output, as the constructors' ``output_layout`` give it."""
 
 
-def by_request(layout: Layout, outputs: Sequence[int], count: int) -> tuple[tuple[int, ...], ...]:
+def by_request(
+    layout: Layout, outputs: Sequence[int], count: int
+) -> tuple[tuple[int, ...], ...]:
     """The outputs regrouped as each request's tokens in position order."""
 
     grouped: list[list[int | None]] = [[] for _ in range(count)]
@@ -80,7 +82,10 @@ class Served:
         result = self.price.bound
         parts = list(extra)
         if result.capped:
-            parts.insert(0, f"U capped at |Out| = {result.out_bits} bits (uncapped {math.ceil(result.knapsack_bits)} bits)")
+            parts.insert(
+                0,
+                f"U capped at |Out| = {result.out_bits} bits (uncapped {math.ceil(result.knapsack_bits)} bits)",
+            )
         return "; ".join(part for part in parts if part)
 
     def kinds(self, role: str | None = None) -> dict[str, int]:
@@ -109,4 +114,9 @@ def serve(
 
     measurement = compile_scenario(constructor, x, a, gate_set, limits=limits)
     outputs = evaluate(measurement, weights)
-    return Served(measurement, price(measurement.compiled, policy), outputs, by_request(layout, outputs, count))
+    return Served(
+        measurement,
+        price(measurement.compiled, policy),
+        outputs,
+        by_request(layout, outputs, count),
+    )

@@ -19,13 +19,17 @@ from veritor.stress.models import SAMPLED, SHAPE, Model, make_model
 from veritor.stress.rows import Recorder, record
 
 ROOT = Path(__file__).resolve().parents[3]
-DATA = Path(os.environ.get("VERITOR_STRESS_DATA", ROOT / "docs" / "data" / "stress.json"))
+DATA = Path(
+    os.environ.get("VERITOR_STRESS_DATA", ROOT / "docs" / "data" / "stress.json")
+)
 
 _PASSED = pytest.StashKey[bool]()
 
 
 @pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) -> Iterator[None]:
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Iterator[None]:
     outcome = yield
     report: pytest.TestReport = outcome.get_result()  # type: ignore[attr-defined]
     if report.when == "call":

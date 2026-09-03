@@ -22,6 +22,7 @@ from veritor.compile.compiler import Compiler
 from veritor.compile.constructor import Compilation, Constructor
 from veritor.core.compiled import Compiled
 from veritor.core.gates import GateSet
+from veritor.core.identity import validate_digest
 from veritor.core.index import KindTable
 from veritor.core.limits import CompilationLimits
 from veritor.core.policy import VerificationPolicy
@@ -81,7 +82,9 @@ def compile_scenario(
     traced = time.perf_counter()
     compiled = Compiler(gate_set, limits).compile(description, inputs)
     finished = time.perf_counter()
-    compilation = Compilation(compiled, constructor.digest, inputs, a)
+    compilation = Compilation(
+        compiled, validate_digest(constructor.digest, "constructor digest"), inputs, a
+    )
     return Measurement(compilation, description, traced - started, finished - traced)
 
 

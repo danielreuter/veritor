@@ -57,7 +57,9 @@ class PrefixG:
         self.shape = shape
         self.lm = ToyLM(shape)
         self.gate_set = self.lm.tracer.gate_set
-        self.digest: Digest = constructor_digest(type(self).__name__, self.VERSION, self.manifest)
+        self.digest: Digest = constructor_digest(
+            type(self).__name__, self.VERSION, self.manifest
+        )
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
@@ -66,24 +68,34 @@ class PrefixG:
     # -- validation -----------------------------------------------------------------
 
     def requests(self, x: object) -> tuple[Request, ...]:
-        if type(x) is not tuple or not x or any(type(item) is not Request for item in x):
+        if (
+            type(x) is not tuple
+            or not x
+            or any(type(item) is not Request for item in x)
+        ):
             raise TracerError("PrefixG expects a nonempty tuple of Request")
         for index, request in enumerate(x):
             if any(token >= self.shape.vocab for token in request.prompt):
-                raise TracerError(f"request {index} has a prompt token outside the vocabulary")
+                raise TracerError(
+                    f"request {index} has a prompt token outside the vocabulary"
+                )
             if len(request.prompt) + request.max_new > self.shape.context:
                 raise TracerError(
                     f"request {index} needs {len(request.prompt) + request.max_new} positions; "
                     f"the context is {self.shape.context}"
                 )
             if request.banned:
-                raise TracerError(f"request {index} bans tokens: PrefixG serves unconstrained requests")
+                raise TracerError(
+                    f"request {index} bans tokens: PrefixG serves unconstrained requests"
+                )
             try:
                 self.shape.check_randomness(request)
             except ValueError as error:
                 raise TracerError(f"request {index}: {error}") from error
         if shared_prefix(x) < 1:
-            raise TracerError("PrefixG needs prompts that share at least one token and each have one more")
+            raise TracerError(
+                "PrefixG needs prompts that share at least one token and each have one more"
+            )
         return x
 
     # -- layouts ---------------------------------------------------------------------
@@ -95,7 +107,9 @@ class PrefixG:
         prefix = shared_prefix(requests)
         groups: dict[SuffixKind, list[int]] = {}
         for index, request in enumerate(requests):
-            groups.setdefault((len(request.prompt) - prefix, request.max_new), []).append(index)
+            groups.setdefault(
+                (len(request.prompt) - prefix, request.max_new), []
+            ).append(index)
         return tuple((kind, tuple(members)) for kind, members in groups.items())
 
     def order(self, x: object) -> tuple[int, ...]:
@@ -105,7 +119,9 @@ class PrefixG:
         """``(request, generated position)`` of every circuit output, in output order."""
 
         requests = self.requests(x)
-        return tuple((r, g) for r in self.order(requests) for g in range(requests[r].max_new))
+        return tuple(
+            (r, g) for r in self.order(requests) for g in range(requests[r].max_new)
+        )
 
     def flatten_inputs(self, x: object) -> tuple[int, ...]:
         requests = self.requests(x)
@@ -121,7 +137,9 @@ class PrefixG:
     def prefix_unit(self, prefix: int) -> TracedDefinition:
         """The shared prefix: ports the weights; outputs its KV blocks (``state_size(prefix)``)."""
 
-        @self.lm.tracer.definition(input_count=self.shape.weight_count, key=("prefix", prefix), role=REPLAY)
+        @self.lm.tracer.definition(
+            input_count=self.shape.weight_count, key=("prefix", prefix), role=REPLAY
+        )
         def prefix_unit(w: Wires) -> object:
             return self.lm.chunk(prefix, 0)(w)
 
@@ -136,30 +154,44 @@ class PrefixG:
         shape, layers, d = self.shape, self.shape.layers, self.shape.d_model
         weights, cache = shape.weight_count, shape.state_size(prefix)
 
-        @self.lm.tracer.definition(input_count=weights + cache, key=("suffix", prefix, length, max_new), role=REPLAY)
+        @self.lm.tracer.definition(
+            input_count=weights + cache,
+            key=("suffix", prefix, length, max_new),
+            role=REPLAY,
+        )
         def suffix(v: Wires) -> object:
             w, kv = v[:weights], v[weights:]
             block = prefix * d
-            keys: list[list[Wires]] = [[kv[2 * layer * block : 2 * layer * block + block]] for layer in range(layers)]
+            keys: list[list[Wires]] = [
+                [kv[2 * layer * block : 2 * layer * block + block]]
+                for layer in range(layers)
+            ]
             values: list[list[Wires]] = [
-                [kv[2 * layer * block + block : 2 * (layer + 1) * block]] for layer in range(layers)
+                [kv[2 * layer * block + block : 2 * (layer + 1) * block]]
+                for layer in range(layers)
             ]
 
             def remember(produced: Wires, positions: int) -> Wire:
                 for layer in range(layers):
                     start = 2 * layer * positions * d
                     keys[layer].append(produced[start : start + positions * d])
-                    values[layer].append(produced[start + positions * d : start + 2 * positions * d])
+                    values[layer].append(
+                        produced[start + positions * d : start + 2 * positions * d]
+                    )
                 return produced[-1]
 
-            token = remember(wires(self.lm.prefill(length, cached=prefix)(w, kv)), length)
+            token = remember(
+                wires(self.lm.prefill(length, cached=prefix)(w, kv)), length
+            )
             tokens = [token]
             for step in range(1, max_new):
                 args: list[Wire | Wires] = [w, token]
                 for layer in range(layers):
                     args.extend(keys[layer])
                     args.extend(values[layer])
-                token = remember(wires(self.lm.decode(prefix + length + step)(*args)), 1)
+                token = remember(
+                    wires(self.lm.decode(prefix + length + step)(*args)), 1
+                )
                 tokens.append(token)
             return tokens
 
@@ -178,7 +210,9 @@ class PrefixG:
                 if len(members) == 1:
                     outputs.append(definition(w, kv))
                 else:
-                    outputs.append(self.lm.tracer.repeat(len(members), definition, w, kv))
+                    outputs.append(
+                        self.lm.tracer.repeat(len(members), definition, w, kv)
+                    )
             return outputs
 
         return root
@@ -189,7 +223,9 @@ class PrefixG:
         if a:
             raise TracerError("PrefixG takes no advice")
         requests = self.requests(x)
-        return self.lm.tracer.serialize(self.root(requests)), self.flatten_inputs(requests)
+        return self.lm.tracer.serialize(self.root(requests)), self.flatten_inputs(
+            requests
+        )
 
 
 __all__ = ["PrefixG", "SuffixKind", "shared_prefix"]

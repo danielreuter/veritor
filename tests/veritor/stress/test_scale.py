@@ -42,14 +42,22 @@ def workload(count: int, context: int, seed: int = 2026) -> tuple[Request, ...]:
     rng = random.Random(seed)
     requests = []
     for _ in range(count):
-        prompt = min(context - 2, int(rng.paretovariate(1.2)))  # Zipf-like: many short prompts, a heavy tail
+        prompt = min(
+            context - 2, int(rng.paretovariate(1.2))
+        )  # Zipf-like: many short prompts, a heavy tail
         room = context - prompt
-        max_new = rng.randint(1, min(3, room)) if rng.random() < 0.5 else rng.randint(1, room)
-        requests.append(Request(tuple(rng.randrange(8) for _ in range(prompt)), max_new))
+        max_new = (
+            rng.randint(1, min(3, room)) if rng.random() < 0.5 else rng.randint(1, room)
+        )
+        requests.append(
+            Request(tuple(rng.randrange(8) for _ in range(prompt)), max_new)
+        )
     return tuple(requests)
 
 
-def test_s2_the_default_run_limit_is_exceeded_by_shapes_not_by_requests(model: Model) -> None:
+def test_s2_the_default_run_limit_is_exceeded_by_shapes_not_by_requests(
+    model: Model,
+) -> None:
     """A thousand requests of a hundred-odd shapes already exceed 256 root output runs; a thousand of one
     shape do not."""
 
@@ -62,11 +70,20 @@ def test_s2_the_default_run_limit_is_exceeded_by_shapes_not_by_requests(model: M
     with pytest.raises(CompileError, match="max_output_runs = 256"):
         Compiler(model.gate_set).compile(description, inputs)
     compiled = Compiler(model.gate_set, LIMITS).compile(description, inputs)
-    assert 256 < len(compiled.index.root.frame.definition.out_runs) <= runs  # weaving merges a few
+    assert (
+        256 < len(compiled.index.root.frame.definition.out_runs) <= runs
+    )  # weaving merges a few
 
     uniform = tuple(Request((1, 2, 3), 4) for _ in range(1000))
     description, inputs = constructor(uniform, b"")
-    assert len(Compiler(model.gate_set).compile(description, inputs).index.root.frame.definition.out_runs) == 4
+    assert (
+        len(
+            Compiler(model.gate_set)
+            .compile(description, inputs)
+            .index.root.frame.definition.out_runs
+        )
+        == 4
+    )
 
 
 @pytest.mark.parametrize("count, letter", ((1_000, "a"), (10_000, "b"), (100_000, "c")))
@@ -84,7 +101,9 @@ def run_scale(scenario: Recorder, model: Model, count: int, identifier: str) -> 
     requests = workload(count, model.shape.context)
     kinds = {constructor.kind_of(request) for request in requests}
 
-    measurement = compile_scenario(constructor, requests, b"", model.gate_set, limits=LIMITS)
+    measurement = compile_scenario(
+        constructor, requests, b"", model.gate_set, limits=LIMITS
+    )
     started = time.perf_counter()
     table = measurement.compiled.kind_table()
     table_seconds = time.perf_counter() - started
@@ -92,9 +111,18 @@ def run_scale(scenario: Recorder, model: Model, count: int, identifier: str) -> 
     root = measurement.compiled.index.root.frame.definition
 
     assert measurement.compiled.index.replay_units.count == count + 1
-    assert measurement.compiled.index.input_count == sum(len(request.prompt) for request in requests)
-    assert 256 < len(root.out_runs) <= sum(max_new for _, max_new, _ in kinds) <= LIMITS.max_output_runs
-    assert measurement.description_bytes < 400_000  # a function of the shapes, not of the requests
+    assert measurement.compiled.index.input_count == sum(
+        len(request.prompt) for request in requests
+    )
+    assert (
+        256
+        < len(root.out_runs)
+        <= sum(max_new for _, max_new, _ in kinds)
+        <= LIMITS.max_output_runs
+    )
+    assert (
+        measurement.description_bytes < 400_000
+    )  # a function of the shapes, not of the requests
     assert measurement.compile_seconds < 2.0
 
     scenario.record(

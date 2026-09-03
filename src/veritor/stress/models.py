@@ -18,7 +18,9 @@ __all__ = ["SAMPLED", "SHAPE", "Model", "make_model"]
 SHAPE = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=16, width=16)
 """The catalogue's toy LM: the simulated datacenter's shape, with the argmax head."""
 
-SAMPLED = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=16, width=16, sampling=True)
+SAMPLED = LMShape(
+    vocab=8, d_model=4, heads=2, layers=1, context=16, width=16, sampling=True
+)
 """The same model with the ``sample`` VU over public randomness."""
 
 

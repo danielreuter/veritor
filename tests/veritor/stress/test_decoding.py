@@ -28,7 +28,9 @@ from veritor.stress.serving import Served, serve
 def per_request(model: Model, requests: tuple[Request, ...]) -> Served:
     constructor = RequestsG(model.shape)
     layout = constructor.output_layout(requests)
-    return serve(constructor, requests, b"", model.gate_set, model.weights, layout, len(requests))
+    return serve(
+        constructor, requests, b"", model.gate_set, model.weights, layout, len(requests)
+    )
 
 
 def constrained(model: Model, seed: int) -> tuple[Request, ...]:
@@ -41,7 +43,11 @@ def constrained(model: Model, seed: int) -> tuple[Request, ...]:
     for _ in range(6):
         prompt = tuple(rng.randrange(shape.vocab) for _ in range(rng.randint(1, 4)))
         max_new = rng.randint(2, 4)
-        randomness = tuple(rng.randrange(1 << shape.random_bits) for _ in range(max_new)) if shape.sampling else ()
+        randomness = (
+            tuple(rng.randrange(1 << shape.random_bits) for _ in range(max_new))
+            if shape.sampling
+            else ()
+        )
         plain.append(Request(prompt, max_new, randomness))
     unconstrained = reference_generate(shape, model.parameters, tuple(plain))
     requests = []
@@ -49,7 +55,9 @@ def constrained(model: Model, seed: int) -> tuple[Request, ...]:
         if index % 2:
             others = [token for token in range(shape.vocab) if token != tokens[0]]
             banned = tuple(sorted({tokens[0], *rng.sample(others, rng.randint(0, 2))}))
-            request = Request(request.prompt, request.max_new, request.randomness, banned)
+            request = Request(
+                request.prompt, request.max_new, request.randomness, banned
+            )
         requests.append(request)
     return tuple(requests)
 
@@ -58,7 +66,9 @@ def constrained(model: Model, seed: int) -> tuple[Request, ...]:
 
 
 @pytest.mark.parametrize("head, letter", (("argmax", "a"), ("sample", "b")))
-def test_c4_constrained_decoding(scenario: Recorder, model: Model, sampled: Model, head: str, letter: str) -> None:
+def test_c4_constrained_decoding(
+    scenario: Recorder, model: Model, sampled: Model, head: str, letter: str
+) -> None:
     served_model = model if head == "argmax" else sampled
     shape = served_model.shape
     requests = constrained(served_model, seed=11)
@@ -76,20 +86,32 @@ def test_c4_constrained_decoding(scenario: Recorder, model: Model, sampled: Mode
     assert run.tokens != unmasked.tokens  # the mask bit on at least one position
     # the mask is in-circuit: the banned ids are inputs, the flags are VUs, the head kinds are the masked ones
     lm = RequestsG(shape).lm
-    assert run.measurement.compiled.index.input_count == unmasked.measurement.compiled.index.input_count + sum(
-        len(r.banned) for r in requests
+    assert (
+        run.measurement.compiled.index.input_count
+        == unmasked.measurement.compiled.index.input_count
+        + sum(len(r.banned) for r in requests)
     )
     kinds = {row.kind: row for row in run.measurement.compiled.index.kinds()}
     plain_head = (lm.argmax() if head == "argmax" else lm.sample()).digest
-    masked_head = (lm.masked_argmax() if head == "argmax" else lm.masked_sample()).digest
+    masked_head = (
+        lm.masked_argmax() if head == "argmax" else lm.masked_sample()
+    ).digest
     banned_positions = sum(r.max_new for r in requests if r.banned)
-    assert kinds[masked_head].copies == banned_positions and kinds[masked_head].role == VERIFICATION
+    assert (
+        kinds[masked_head].copies == banned_positions
+        and kinds[masked_head].role == VERIFICATION
+    )
     assert kinds[plain_head].copies == sum(r.max_new for r in requests if not r.banned)
     per_token = kinds[masked_head].size - kinds[plain_head].size
     expected = 2 * shape.vocab + 7 if head == "argmax" else shape.vocab
     assert per_token == expected
-    rows = {b: kinds[lm.allowed_row(b).digest] for b in {len(r.banned) for r in requests if r.banned}}
-    assert all(row.size == 3 * b - 1 and row.role == VERIFICATION for b, row in rows.items())
+    rows = {
+        b: kinds[lm.allowed_row(b).digest]
+        for b in {len(r.banned) for r in requests if r.banned}
+    }
+    assert all(
+        row.size == 3 * b - 1 and row.role == VERIFICATION for b, row in rows.items()
+    )
     assert run.advice_bits == 0
 
     scenario.record(
@@ -114,11 +136,17 @@ def test_c4_constrained_decoding(scenario: Recorder, model: Model, sampled: Mode
 # -- C6: prefix caching ---------------------------------------------------------------
 
 
-def shared(model: Model, count: int, prefix: int, suffix: int, max_new: int) -> tuple[Request, ...]:
+def shared(
+    model: Model, count: int, prefix: int, suffix: int, max_new: int
+) -> tuple[Request, ...]:
     rng = random.Random(prefix * 31 + count)
     system = tuple(rng.randrange(model.shape.vocab) for _ in range(prefix))
     return tuple(
-        Request((*system, *(rng.randrange(model.shape.vocab) for _ in range(suffix))), max_new) for _ in range(count)
+        Request(
+            (*system, *(rng.randrange(model.shape.vocab) for _ in range(suffix))),
+            max_new,
+        )
+        for _ in range(count)
     )
 
 
@@ -129,15 +157,29 @@ def test_c6_prefix_caching_two_routes(scenario: Recorder, model: Model) -> None:
     requests = shared(model, count, prefix_length, suffix=2, max_new=3)
     reference = reference_generate(model.shape, model.parameters, requests)
     prefix = PrefixG(model.shape)
-    route_a = serve(prefix, requests, b"", model.gate_set, model.weights, prefix.output_layout(requests), count)
+    route_a = serve(
+        prefix,
+        requests,
+        b"",
+        model.gate_set,
+        model.weights,
+        prefix.output_layout(requests),
+        count,
+    )
     route_b = per_request(model, requests)
 
     assert route_a.tokens == reference == route_b.tokens
     kv_words = model.shape.state_size(prefix_length)
     prefix_row = next(
-        row for row in route_a.measurement.compiled.index.kinds() if row.kind == prefix.prefix_unit(prefix_length).digest
+        row
+        for row in route_a.measurement.compiled.index.kinds()
+        if row.kind == prefix.prefix_unit(prefix_length).digest
     )
-    assert prefix_row.role == REPLAY and prefix_row.copies == 1 and prefix_row.out_count == kv_words
+    assert (
+        prefix_row.role == REPLAY
+        and prefix_row.copies == 1
+        and prefix_row.out_count == kv_words
+    )
     # route A replays the prefix once; route B ``count`` times
     assert route_b.price.honest > route_a.price.honest
     saved = route_b.price.honest - route_a.price.honest
