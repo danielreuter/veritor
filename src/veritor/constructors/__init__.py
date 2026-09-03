@@ -37,6 +37,7 @@ from .matmul import (
     expected_matmul_outputs,
     matmul_expected_matrices,
 )
+from .prefix import PrefixG
 from .requests import RequestsG
 from .schedule import (
     Join,
@@ -75,6 +76,7 @@ __all__ = [
     "MatmulWorkload",
     "Occupant",
     "Parameters",
+    "PrefixG",
     "Request",
     "RequestsG",
     "Schedule",

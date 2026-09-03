@@ -339,16 +339,29 @@ def _common_offset(first: Run, second: Run) -> int | None:
 
 
 def _repeated_output(runs: tuple[Run, ...]) -> int | None:
-    """A gate offset declared twice among ``runs``, or ``None`` if they are disjoint."""
+    """A gate offset declared twice among ``runs``, or ``None`` if they are disjoint.
 
+    A sweep over the runs in start order: a run is compared only with the
+    earlier runs whose span still reaches its start, so runs laid out one
+    after another (a token per step, a request per repeat copy) cost
+    ``O(R log R)`` in all, and only runs that interleave over one span pay
+    for the pairwise congruence.
+    """
+
+    ordered = []
     for run in runs:
         if run.count > 1 and run.stride == 0:
             return run.start  # the same gate ``count`` times
-    for index, run in enumerate(runs):
-        for other in runs[index + 1 :]:
-            common = _common_offset(run, other)
+        ordered.append(run if run.count > 1 else Run(run.start, 1, 0, run.width))
+    ordered.sort(key=lambda run: run.start)
+    reaching: list[Run] = []  # earlier runs whose last element is not before the current start
+    for run in ordered:
+        reaching = [other for other in reaching if other.last >= run.start]
+        for other in reaching:
+            common = _common_offset(other, run)
             if common is not None:
                 return common
+        reaching.append(run)
     return None
 
 

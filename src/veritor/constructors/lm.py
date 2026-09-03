@@ -62,6 +62,19 @@ it:
   which the sampled checks catch like any other incorrect gate.
 
 The default ``experts = 0`` is the dense decoder, byte for byte.
+
+Constrained decoding.  A request may ban tokens (:attr:`Request.banned`,
+public: part of ``x``).  The circuit computes ``allowed[k] = prod_j (1 -
+eq(k, banned_j))`` once per request (``allowed_row`` VUs over ``in`` gates)
+and the head takes the flags as extra ports: ``masked_argmax`` is the first
+maximum among the allowed tokens, ``masked_sample`` gives a banned token the
+weight ``0``.  Nothing about the constraint is advice.
+
+Tensor parallelism and fleets.  ``ToyLM(shape, tensor_parallel=t)`` splits
+every marked ``dot_k`` into ``t`` partial dots and a fixed-order reduction:
+other kinds, the same values.  ``ToyLM(shape, tracer=..., namespace=...)``
+builds the model on one member of a :func:`~veritor.core.gates.union_gate_set`
+so that pods of different architectures share one description.
 """
 
 from __future__ import annotations
@@ -73,9 +86,10 @@ from itertools import pairwise
 
 from veritor.core import JSONValue, make_isa_gate_set
 from veritor.core.description import VERIFICATION
+from veritor.core.gates import namespaced
 
 from .schedule import Request
-from .tracer import TracedDefinition, Tracer, TracerError, Wire, Wires
+from .tracer import TracedDefinition, Tracer, TracerError, TracerGate, Wire, Wires
 
 Matrix = tuple[tuple[int, ...], ...]
 """A row-major matrix in the ``x @ W`` orientation: rows are inputs, columns outputs."""
@@ -226,6 +240,16 @@ class LMShape:
             raise ValueError("a sampled request needs one random word per generated position")
         if any(word >= 1 << self.random_bits for word in request.randomness):
             raise ValueError(f"random words must have at most {self.random_bits} bits")
+
+    def check_banned(self, request: Request) -> None:
+        """A banned-token list names distinct tokens of the vocabulary and leaves one allowed."""
+
+        if any(token >= self.vocab for token in request.banned):
+            raise ValueError("banned tokens must be below vocab")
+        if len(set(request.banned)) != len(request.banned):
+            raise ValueError("banned tokens must be distinct")
+        if len(request.banned) >= self.vocab:
+            raise ValueError("constrained decoding needs at least one allowed token")
 
     @property
     def manifest(self) -> dict[str, JSONValue]:
@@ -423,12 +447,33 @@ def _matvec(x: Sequence[int], matrix: Matrix, mask: int) -> list[int]:
     return [sum(x[i] * matrix[i][o] for i in range(len(x))) & mask for o in range(len(matrix[0]))]
 
 
-def argmax_token(logits: Sequence[int]) -> int:
-    """The first maximum of the logits, as the ``argmax`` unit computes it."""
+def allowed_mask(vocab: int, banned: Sequence[int]) -> tuple[bool, ...] | None:
+    """``allowed[k] = k not in banned``, or ``None`` when nothing is banned."""
 
-    best, index = logits[0], 0
-    for candidate in range(1, len(logits)):
-        if best < logits[candidate]:  # ties keep the first maximum
+    if not banned:
+        return None
+    return tuple(k not in banned for k in range(vocab))
+
+
+def argmax_token(logits: Sequence[int], allowed: Sequence[bool] | None = None) -> int:
+    """The first maximum of the logits, as the ``argmax`` unit computes it.
+
+    With ``allowed`` (constrained decoding) the first maximum among the
+    allowed tokens, as the ``masked_argmax`` unit computes it; at least one
+    token must be allowed.
+    """
+
+    if allowed is None:
+        best, index = logits[0], 0
+        for candidate in range(1, len(logits)):
+            if best < logits[candidate]:  # ties keep the first maximum
+                best, index = logits[candidate], candidate
+        return index
+    if not any(allowed):
+        raise ValueError("constrained decoding needs at least one allowed token")
+    best, index = 0, 0
+    for candidate in reversed(range(len(logits))):
+        if allowed[candidate] and best <= logits[candidate]:  # scanning down: ties keep the first
             best, index = logits[candidate], candidate
     return index
 
@@ -455,19 +500,25 @@ def top_k_route(logits: Sequence[int], k: int) -> Route:
     return tuple(e for e, rank in enumerate(expert_ranks(logits)) if rank < k)
 
 
-def sample_token(shape: LMShape, logits: Sequence[int], r: int) -> int:
+def sample_token(shape: LMShape, logits: Sequence[int], r: int, allowed: Sequence[bool] | None = None) -> int:
     """The token the ``sample`` unit draws from ``logits`` with the public word ``r``.
 
     Scores are the logits' top ``score_bits``, weights their squares plus
     one, the threshold ``(r * total) >> random_bits`` lies in
     ``[0, total)``, and the token is the number of CDF entries at most the
     threshold, i.e. the first ``j`` with ``cdf_j > t``.  No value exceeds
-    ``2**width``, so the modular circuit computes exactly this.
+    ``2**width``, so the modular circuit computes exactly this.  With
+    ``allowed`` a banned token's weight is zero, so it is never drawn (the
+    ``masked_sample`` unit).
     """
 
     if not 0 <= r < 1 << shape.random_bits:
         raise ValueError(f"r must be a {shape.random_bits}-bit word")
     weights = [(logit >> shape.score_shift) ** 2 + 1 for logit in logits]
+    if allowed is not None:
+        if not any(allowed):
+            raise ValueError("constrained decoding needs at least one allowed token")
+        weights = [weight * flag for weight, flag in zip(weights, allowed, strict=True)]
     total = sum(weights)
     threshold = (r * total) >> shape.random_bits
     assert total < 1 << shape.width and threshold < total
@@ -512,17 +563,18 @@ class Decoder:
             del self.values[layer][keep:]
             del self.routes[layer][keep:]
 
-    def forward(self, token: int, r: int | None = None) -> int:
-        """Feed ``token`` at the next position; return the next token (argmax, or sampled with ``r``)."""
+    def forward(self, token: int, r: int | None = None, allowed: Sequence[bool] | None = None) -> int:
+        """Feed ``token`` at the next position; return the next token (argmax, or sampled
+        with ``r``), among the ``allowed`` tokens when a mask is given."""
 
         logits = self.logits(token)
         if not self.shape.sampling:
             if r is not None:
                 raise ValueError("an argmax model takes no randomness")
-            return argmax_token(logits)
+            return argmax_token(logits, allowed)
         if r is None:
             raise ValueError("a sampling model needs a random word")
-        return sample_token(self.shape, logits, r)
+        return sample_token(self.shape, logits, r, allowed)
 
     def logits(self, token: int) -> list[int]:
         """Feed ``token`` at the next position; return the logits of the position after it."""
@@ -582,15 +634,17 @@ def reference_generate(
         if any(token >= shape.vocab for token in request.prompt):
             raise ValueError("prompt tokens must be below vocab")
         shape.check_randomness(request)
+        shape.check_banned(request)
+        allowed = allowed_mask(shape.vocab, request.banned)
         decoder = Decoder(parameters)
         randomness = request.randomness if shape.sampling else (None,) * request.max_new
         token = 0
         for prompt_token in request.prompt[:-1]:
             decoder.logits(prompt_token)
-        token = decoder.forward(request.prompt[-1], randomness[0])
+        token = decoder.forward(request.prompt[-1], randomness[0], allowed)
         tokens = [token]
         for position in range(1, request.max_new):
-            token = decoder.forward(token, randomness[position])
+            token = decoder.forward(token, randomness[position], allowed)
             tokens.append(token)
         generated.append(tuple(tokens))
     return tuple(generated)
@@ -708,23 +762,62 @@ class ToyLM:
     the one-gate ``mul_cell``; see the module docstring for the padded and
     the advice route.
 
-    Two models in one description (a draft and a target for speculative
-    decoding) share a ``tracer``; each instance then qualifies its cache
-    keys with a ``prefix`` so that shape-dependent kinds of the two models
-    stay apart while identical bodies still hash-cons to one definition.
+    Constrained decoding (``masked`` steps): ``allowed_row_b`` computes
+    ``allowed[k] = prod_j (1 - eq(k, banned_j))`` for one token from ``b``
+    banned ids (``in`` gates: the list is public), and ``masked_argmax`` /
+    ``masked_sample`` take the ``vocab`` flags as extra ports.
+
+    Tensor parallelism: with ``tensor_parallel = t > 1`` every marked
+    ``dot_k`` is ``t`` partial dots over ``k / t`` (unmarked) and a
+    fixed-order chain of ``t - 1`` sums, so the kinds differ while every
+    value is the same.
+
+    Two models in one description share a ``tracer``.  A draft and a target
+    for speculative decoding each qualify their cache keys with a ``prefix``
+    so that shape-dependent kinds of the two models stay apart while
+    identical bodies still hash-cons to one definition; the pods of a fleet
+    each name a member of a :func:`~veritor.core.gates.union_gate_set` as
+    their ``namespace`` and use its gates (``add@namespace`` ...), sharing
+    the source gates and the ``weights`` unit.
     """
 
-    def __init__(self, shape: LMShape, *, tracer: Tracer | None = None, prefix: str | None = None) -> None:
+    def __init__(
+        self,
+        shape: LMShape,
+        *,
+        tracer: Tracer | None = None,
+        prefix: str | None = None,
+        namespace: str | None = None,
+        tensor_parallel: int = 1,
+    ) -> None:
         if not isinstance(shape, LMShape):
             raise TypeError("shape must be an LMShape")
+        if type(tensor_parallel) is not int or tensor_parallel < 1:
+            raise ValueError("tensor_parallel must be a positive integer")
+        for name in ("vocab", "d_model", "hidden"):
+            if getattr(shape, name) % tensor_parallel:
+                raise ValueError(f"tensor_parallel must divide {name}")
+        if namespace is not None and (type(namespace) is not str or not namespace):
+            raise ValueError("namespace must be None or a nonempty string")
         self.shape = shape
+        self.prefix = prefix
+        self.namespace = namespace
+        self.tensor_parallel = tensor_parallel
+        qualifiers = (prefix, namespace, tensor_parallel)
+        self._tag: tuple[Hashable, ...] | None = None if qualifiers == (None, None, 1) else qualifiers
+
+        def gate_name(name: str) -> str:
+            return name if namespace is None else namespaced(name, namespace)
+
         if tracer is None:
             tracer = Tracer(make_isa_gate_set(shape.width))
-        elif tracer.gate_set["add"].width != shape.width:
+        elif tracer.gate_set[gate_name("add")].width != shape.width:
             raise TracerError("the shared tracer's gate set has another word width")
         self.tracer = tracer
-        self.prefix = prefix
-        gate = self.tracer.gate
+
+        def gate(name: str) -> TracerGate:
+            return self.tracer.gate(gate_name(name))
+
         add, mul, sub, lt, eq, shr = (gate(name) for name in ("add", "mul", "sub", "lt", "eq", "shr"))
         self.add, self.mul, self.sub, self.lt, self.eq, self.shr = (
             add,
@@ -747,10 +840,11 @@ class ToyLM:
         self.mul_cell = define(input_count=2, key="mul_cell", role=VERIFICATION)(lambda v: mul(v[0], v[1]))
 
     def key(self, *parts: Hashable) -> Hashable:
-        """A tracer cache key: as given for a lone model, qualified by the prefix for a shared tracer."""
+        """A tracer cache key: as given for a lone model; qualified by the prefix, the namespace and
+        the TP degree when any is set, so models sharing a tracer keep their kinds apart."""
 
-        if self.prefix is not None:
-            return (self.prefix, *parts)
+        if self._tag is not None:
+            return (*self._tag, *parts)
         return parts[0] if len(parts) == 1 else parts
 
     def define(
@@ -760,6 +854,17 @@ class ToyLM:
 
         parts = key if isinstance(key, tuple) else (key,)
         return self.tracer.definition(input_count=input_count, key=self.key(*parts), role=role)
+
+    @property
+    def manifest(self) -> dict[str, JSONValue]:
+        """What a constructor built on this model adds to its manifest (empty for the defaults)."""
+
+        manifest: dict[str, JSONValue] = {}
+        if self.namespace is not None:
+            manifest["namespace"] = self.namespace
+        if self.tensor_parallel != 1:
+            manifest["tensor_parallel"] = self.tensor_parallel
+        return manifest
 
     # -- ports --------------------------------------------------------------------
 
@@ -809,10 +914,21 @@ class ToyLM:
         if type(k) is not int or k <= 0:
             raise TracerError("dot length must be positive")
         role = VERIFICATION if marked else None
+        shards = self.tensor_parallel if marked else 1
+        if k % shards:
+            raise TracerError("tensor_parallel must divide the length of every marked dot")
 
         @self.define(input_count=2 * k, key=("dot", k, role), role=role)
         def dot(v: Wires) -> object:
             x, w = v[:k], v[k:]
+            if shards > 1:  # tensor parallel: a partial dot per shard, then a fixed-order reduction
+                part = k // shards
+                partial = self.dot(part, marked=False)
+                partials = [partial(x[i * part : (i + 1) * part], w[i * part : (i + 1) * part]) for i in range(shards)]
+                total = partials[0]
+                for term in partials[1:]:
+                    total = self.add(total, term)
+                return total
             level = self.tracer.repeat(k, self.mul_pair, x[0].by(1), w[0].by(1))
             carried = []
             while len(level) > 1:
@@ -836,6 +952,38 @@ class ToyLM:
             return self.tracer.repeat(vocab, self.eq_pair, v[0], v[1].by(1))
 
         return onehot
+
+    def allowed_row(self, b: int) -> TracedDefinition:
+        """``prod_j (1 - eq(k, banned_j))`` for one token ``k``: ports ``k``, the ``b`` banned ids, ``1``."""
+
+        if type(b) is not int or b <= 0:
+            raise TracerError("a banned list must be nonempty")
+
+        @self.define(input_count=b + 2, key=("allowed_row", b), role=VERIFICATION)
+        def allowed_row(v: Wires) -> object:
+            token, banned, one = v[0], v[1 : 1 + b], v[b + 1]
+            flag = self.sub(one, self.eq(token, banned[0]))
+            for j in range(1, b):
+                flag = self.mul(flag, self.sub(one, self.eq(token, banned[j])))
+            return flag
+
+        return allowed_row
+
+    def allowed(self, b: int) -> TracedDefinition:
+        """The ``vocab`` allowed flags of a request with ``b`` banned tokens.
+
+        Ports: the constant table, then the ``b`` banned ids, then the
+        constant ``1``; one ``allowed_row`` unit per token.
+        """
+
+        vocab = self.shape.vocab
+
+        @self.define(input_count=vocab + b + 1, key=("allowed", b))
+        def allowed(v: Wires) -> object:
+            constants, banned, one = v[:vocab], v[vocab : vocab + b], v[vocab + b]
+            return self.tracer.repeat(vocab, self.allowed_row(b), constants[0].by(1), banned, one)
+
+        return allowed
 
     def attend_head(self, c: int) -> TracedDefinition:
         """One head over ``c`` positions: ports ``q, k_0..k_{c-1}, v_0..v_{c-1}, shift``.
@@ -880,6 +1028,52 @@ class ToyLM:
 
         return argmax
 
+    def masked_argmax(self) -> TracedDefinition:
+        """The first maximum among the allowed tokens: ports the logits, the ``vocab`` allowed
+        flags and the constant table.
+
+        The chain scans the tokens downwards from a virtual candidate of
+        value ``0`` and takes token ``k`` when it is allowed and ``best <=
+        l_k``, so the result is the smallest index attaining the maximum
+        over the allowed tokens (:func:`argmax_token` with a mask).  Nine
+        gates per token against the plain argmax's seven.
+        """
+
+        vocab = self.shape.vocab
+
+        @self.define(input_count=3 * vocab, key="masked_argmax", role=VERIFICATION)
+        def masked_argmax(v: Wires) -> object:
+            logits, allowed, constants = v[:vocab], v[vocab : 2 * vocab], v[2 * vocab :]
+            one = constants[1]
+            best, index = constants[0], constants[0]
+            for k in reversed(range(vocab)):
+                better = self.mul(allowed[k], self.sub(one, self.lt(logits[k], best)))
+                best = self.add(best, self.mul(better, self.sub(logits[k], best)))
+                index = self.add(index, self.mul(better, self.sub(constants[k], index)))
+            return index
+
+        return masked_argmax
+
+    def _sampler(self, logits: Wires, allowed: Wires | None, ports: Wires) -> Wire:
+        """The sampler's body over ``logits`` with ports ``r, 1, score_shift, random_bits``."""
+
+        add, mul, lt, shr = self.add, self.mul, self.lt, self.shr
+        r, one, score_shift, random_bits = ports[0], ports[1], ports[2], ports[3]
+        weights = []
+        for k, logit in enumerate(logits):
+            score = shr(logit, score_shift)
+            weight = add(mul(score, score), one)
+            weights.append(weight if allowed is None else mul(allowed[k], weight))
+        cdf = [weights[0]]
+        for weight in weights[1:]:
+            cdf.append(add(cdf[-1], weight))
+        bound = add(shr(mul(r, cdf[-1]), random_bits), one)  # t + 1 with t = (r * total) >> random_bits
+        below = [lt(entry, bound) for entry in cdf]  # cdf_j <= t
+        index = below[0]
+        for flag in below[1:]:
+            index = add(index, flag)
+        return index
+
     def sample(self) -> TracedDefinition:
         """A token drawn from ``vocab`` logits with the public word ``r``: see the module docstring.
 
@@ -889,32 +1083,24 @@ class ToyLM:
         """
 
         vocab = self.shape.vocab
-        add, mul, lt, shr = self.add, self.mul, self.lt, self.shr
 
         @self.define(input_count=vocab + 4, key="sample", role=VERIFICATION)
         def sample(v: Wires) -> object:
-            logits = wires(v[:vocab])
-            r, one, score_shift, random_bits = (
-                v[vocab],
-                v[vocab + 1],
-                v[vocab + 2],
-                v[vocab + 3],
-            )
-            weights = []
-            for logit in logits:
-                score = shr(logit, score_shift)
-                weights.append(add(mul(score, score), one))
-            cdf = [weights[0]]
-            for weight in weights[1:]:
-                cdf.append(add(cdf[-1], weight))
-            bound = add(shr(mul(r, cdf[-1]), random_bits), one)  # t + 1 with t = (r * total) >> random_bits
-            below = [lt(entry, bound) for entry in cdf]  # cdf_j <= t
-            index = below[0]
-            for flag in below[1:]:
-                index = add(index, flag)
-            return index
+            return self._sampler(wires(v[:vocab]), None, v[vocab:])
 
         return sample
+
+    def masked_sample(self) -> TracedDefinition:
+        """:meth:`sample` with the ``vocab`` allowed flags after the logits: a banned token's
+        weight is ``0``, so it is never drawn.  One gate more per token."""
+
+        vocab = self.shape.vocab
+
+        @self.define(input_count=2 * vocab + 4, key="masked_sample", role=VERIFICATION)
+        def masked_sample(v: Wires) -> object:
+            return self._sampler(wires(v[:vocab]), v[vocab : 2 * vocab], v[2 * vocab :])
+
+        return masked_sample
 
     # -- mixture of experts ----------------------------------------------------------
 
@@ -1128,14 +1314,21 @@ class ToyLM:
         )
         return result[: positions * shape.d_model], result[positions * shape.d_model]
 
-    def head(self, logits: Wire | Wires, ports: _WeightPorts, r: Wire | None) -> Wire | Wires:
-        """The LM head's decision: the argmax, or a sample with the position's random word."""
+    def head(
+        self, logits: Wire | Wires, ports: _WeightPorts, r: Wire | None, allowed: Wires | None = None
+    ) -> Wire | Wires:
+        """The LM head's decision: the argmax, or a sample with the position's random word;
+        among the ``allowed`` tokens when a request is constrained."""
 
         if not self.shape.sampling:
             assert r is None
-            return self.argmax()(logits, ports.constants)
+            if allowed is None:
+                return self.argmax()(logits, ports.constants)
+            return self.masked_argmax()(logits, allowed, ports.constants)
         assert r is not None and ports.sampler is not None
-        return self.sample()(logits, r, ports.constants[1], ports.sampler)
+        if allowed is None:
+            return self.sample()(logits, r, ports.constants[1], ports.sampler)
+        return self.masked_sample()(logits, allowed, r, ports.constants[1], ports.sampler)
 
     def randomness(self) -> Wire | None:
         """The ``in`` gate of a position's public random word, for a sampling shape."""
@@ -1253,24 +1446,29 @@ class ToyLM:
         heads: int,
         routes: Routes | None,
         key: tuple[Hashable, ...],
+        masked: bool = False,
     ) -> TracedDefinition:
-        """The body shared by :meth:`prefill`, :meth:`decode` and :meth:`extend`.
+        """The body shared by :meth:`prefill`, :meth:`chunk`, :meth:`decode` and :meth:`extend`.
 
         ``new`` positions after ``cached`` cached ones; the tokens are ``in``
         gates inside the definition (``inside``) or ports after the weights;
-        the head decides the last ``heads`` positions.  Ports: the weights,
-        the tokens (unless inside), per layer the cached ``K`` then ``V``,
-        and for advised routes the incoming ``ok``.  Outputs: per layer the
-        new ``K`` then ``V`` (position-major), the decided tokens, and for
-        advised routes the outgoing ``ok``.
+        the head decides the last ``heads`` positions (``0``: none, a chunk
+        of a prompt that only extends the cache).  Ports: the weights, the
+        tokens (unless inside), per layer the cached ``K`` then ``V``, for a
+        ``masked`` head the request's ``vocab`` allowed flags, and for advised
+        routes the incoming ``ok``.  Outputs: per layer the new ``K`` then
+        ``V`` (position-major), the decided tokens, and for advised routes
+        the outgoing ``ok``.
         """
 
         shape = self.shape
         d, vocab, weights = shape.d_model, shape.vocab, shape.weight_count
-        if heads not in (1, new):
-            raise TracerError("the head decides the last position or every position")
-        if heads != 1 and shape.sampling:
+        if heads not in (0, 1, new):
+            raise TracerError("the head decides no position, the last position or every position")
+        if heads > 1 and shape.sampling:
             raise TracerError("a sampling shape decides one position per step")
+        if masked and heads != 1:
+            raise TracerError("a masked step decides exactly one position")
         advised = routes is not None
         if routes is not None:
             if not shape.experts:
@@ -1283,7 +1481,8 @@ class ToyLM:
             key = (*key, routes)
         token_ports = 0 if inside else new
         cache = cached * d
-        input_count = weights + token_ports + shape.layers * 2 * cache + (1 if advised else 0)
+        mask_start = weights + token_ports + shape.layers * 2 * cache
+        input_count = mask_start + (vocab if masked else 0) + (1 if advised else 0)
 
         @self.define(input_count=input_count, key=key)
         def step(v: Wires) -> object:
@@ -1296,6 +1495,7 @@ class ToyLM:
                     continue
                 start = weights + token_ports + layer * 2 * cache
                 caches.append((v[start : start + cache], v[start + cache : start + 2 * cache]))
+            allowed = v[mask_start : mask_start + vocab] if masked else None
             ok = v[input_count - 1] if advised else None
             r = self.randomness() if heads == 1 else None
             embed = self.embed_row()
@@ -1305,16 +1505,19 @@ class ToyLM:
                 x = self.tracer.repeat(new, embed, tokens[0].by(1), ports.constants, ports.embedding)
             state, x, ok = self.forward(ports, x, new, caches, routes, ok)
             unembed = self.matvec(d, vocab)
+            decided: list[Wire | Wires] = []
             if heads == 1:
-                decided = self.head(unembed(x[(new - 1) * d : new * d], ports.unembedding), ports, r)
-            else:
+                decided.append(self.head(unembed(x[(new - 1) * d : new * d], ports.unembedding), ports, r, allowed))
+            elif heads:
                 logits = self.tracer.repeat(new, unembed, x[0:d].by(d), ports.unembedding)
-                decided = self.tracer.repeat(new, self.argmax(), logits[0:vocab].by(vocab), ports.constants)
-            return [*state, decided, *([ok] if advised else [])]
+                decided.append(self.tracer.repeat(new, self.argmax(), logits[0:vocab].by(vocab), ports.constants))
+            return [*state, *decided, *([ok] if advised else [])]
 
         return step
 
-    def prefill(self, n: int, routes: Routes | None = None) -> TracedDefinition:
+    def prefill(
+        self, n: int, routes: Routes | None = None, *, cached: int = 0, masked: bool = False
+    ) -> TracedDefinition:
         """An ``n``-token prompt: ports are the weights; the tokens are ``in`` gates inside.
 
         Outputs: per layer ``K`` then ``V`` for the ``n`` positions
@@ -1327,11 +1530,33 @@ class ToyLM:
         position ``p``) takes the advice route: one more port, the incoming
         ``ok``, and one more output, the outgoing ``ok``.  Without ``routes``
         the mixture is padded.
+
+        With ``cached > 0`` the ``n`` tokens end a prompt whose first
+        ``cached`` positions earlier :meth:`chunk` steps processed: per layer
+        their ``K`` and ``V`` are ports after the weights.  A ``masked`` step
+        takes the request's ``vocab`` allowed flags as further ports and
+        decides among them.
         """
 
         if type(n) is not int or n <= 0:
             raise TracerError("prompt length must be positive")
-        return self._step(cached=0, new=n, inside=True, heads=1, routes=routes, key=("prefill", n))
+        if type(cached) is not int or cached < 0:
+            raise TracerError("cached positions must be nonnegative")
+        key: tuple[Hashable, ...] = ("prefill", n, *((cached,) if cached else ()), *(("masked",) if masked else ()))
+        return self._step(cached=cached, new=n, inside=True, heads=1, routes=routes, key=key, masked=masked)
+
+    def chunk(self, n: int, cached: int) -> TracedDefinition:
+        """``n`` prompt tokens that do not end the prompt (chunked prefill): :meth:`prefill`
+        without the head, so no token and no random word.
+
+        Outputs: per layer ``K`` then ``V`` for the ``n`` positions.
+        """
+
+        if type(n) is not int or n <= 0:
+            raise TracerError("chunk length must be positive")
+        if type(cached) is not int or cached < 0:
+            raise TracerError("cached positions must be nonnegative")
+        return self._step(cached=cached, new=n, inside=True, heads=0, routes=None, key=("chunk", n, cached))
 
     def prefill_ports(self, n: int) -> TracedDefinition:
         """:meth:`prefill` with the ``n`` prompt tokens as ports after the weights instead of ``in`` gates.
@@ -1344,9 +1569,10 @@ class ToyLM:
             raise TracerError("prompt length must be positive")
         return self._step(cached=0, new=n, inside=False, heads=1, routes=None, key=("prefill_ports", n))
 
-    def decode(self, c: int, routes: Routes | None = None) -> TracedDefinition:
+    def decode(self, c: int, routes: Routes | None = None, *, masked: bool = False) -> TracedDefinition:
         """One token at context ``c``: ports are the weights, the token, then per layer
-        the cached ``K`` and ``V`` of the ``c - 1`` earlier positions.
+        the cached ``K`` and ``V`` of the ``c - 1`` earlier positions (then, when
+        ``masked``, the request's ``vocab`` allowed flags).
 
         Outputs: per layer the new ``k`` then ``v`` (``state_size(1)`` values), then
         the next token.  For a sampling shape the position's random word is
@@ -1356,7 +1582,8 @@ class ToyLM:
 
         if type(c) is not int or c < 2:
             raise TracerError("a decode step needs at least one cached position")
-        return self._step(cached=c - 1, new=1, inside=False, heads=1, routes=routes, key=("decode", c))
+        key: tuple[Hashable, ...] = ("decode", c, *(("masked",) if masked else ()))
+        return self._step(cached=c - 1, new=1, inside=False, heads=1, routes=routes, key=key, masked=masked)
 
     def extend(self, cached: int, new: int, routes: Routes | None = None) -> TracedDefinition:
         """``new`` tokens after ``cached`` cached positions, the head deciding every one of them.
@@ -1381,9 +1608,15 @@ class ToyLM:
         )
 
     def weights_unit(self) -> TracedDefinition:
-        """The replay unit holding every ``weight`` gate, all declared."""
+        """The replay unit holding every ``weight`` gate, all declared.
 
-        return self.define(input_count=0, key="weights", role="replay")(
+        Models of one shape on a shared tracer (a fleet's architectures, any
+        TP degree) share it: the weights are one environment.  A ``prefix``
+        (another model, another shape) keeps its own.
+        """
+
+        key: Hashable = "weights" if self.prefix is None else (self.prefix, "weights")
+        return self.tracer.definition(input_count=0, key=key, role="replay")(
             lambda _v: self.tracer.weights(self.shape.weight_count)
         )
 
@@ -1395,6 +1628,7 @@ __all__ = [
     "Matrix",
     "Parameters",
     "ToyLM",
+    "allowed_mask",
     "argmax_token",
     "concat",
     "random_parameters",

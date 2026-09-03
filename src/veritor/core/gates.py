@@ -13,7 +13,7 @@ the only place widths are defined.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
 from .errors import InvalidArtifact
 from .identity import Digest, JSONValue, identity_digest
@@ -22,6 +22,7 @@ GATE_SET_IDENTITY_TAG = "veritor/gate-set/v1"
 INPUT_SOURCE = "input"
 WEIGHT_SOURCE = "weight"
 SOURCES = (INPUT_SOURCE, WEIGHT_SOURCE)
+NAMESPACE_SEPARATOR = "@"
 
 
 def value_byte_length(width: int) -> int:
@@ -227,6 +228,54 @@ class GateSet:
 
     def __len__(self) -> int:
         return len(self._gates)
+
+
+def namespaced(name: str, namespace: str) -> str:
+    """The name of gate ``name`` inside the member ``namespace`` of a union."""
+
+    return f"{name}{NAMESPACE_SEPARATOR}{namespace}"
+
+
+def union_gate_set(members: Mapping[str, GateSet], *, name: str, version: str) -> GateSet:
+    """Σ for a heterogeneous fleet: every member's gates under its namespace.
+
+    A member's operator gate ``g`` becomes ``g@namespace`` with the same
+    arity, width, costs and semantics, so kinds traced against one member
+    name that member's gates and never match another's.  The source gates
+    stay shared and unnamespaced: every member must declare the same ``in``
+    and ``weight`` gates (same names and widths), because ``x`` and ``W`` are
+    one environment for the whole fleet.  Namespaces are nonempty, contain no
+    ``@`` and are distinct.
+    """
+
+    if not members:
+        raise ValueError("a gate-set union needs at least one member")
+    sources: dict[str, Gate] = {}
+    gates: list[Gate] = []
+    for namespace, member in members.items():
+        if type(namespace) is not str or not namespace or NAMESPACE_SEPARATOR in namespace:
+            raise ValueError(f"gate namespace {namespace!r} must be nonempty and contain no '@'")
+        if not isinstance(member, GateSet):
+            raise TypeError("gate-set union members are GateSets")
+        for gate in member:
+            if gate.source is None:
+                gates.append(
+                    Gate(
+                        namespaced(gate.name, namespace),
+                        gate.arity,
+                        gate.width,
+                        replay_cost=gate.replay_cost,
+                        proof_cost=gate.proof_cost,
+                        evaluate=gate._evaluate,
+                        check=gate._check,
+                    )
+                )
+            elif gate.name in sources:
+                if sources[gate.name].manifest != gate.manifest:
+                    raise ValueError(f"members disagree on the source gate {gate.name!r}")
+            else:
+                sources[gate.name] = gate
+    return GateSet((*sources.values(), *gates), name=name, version=version)
 
 
 def make_word_gate_set(width: int = 8) -> GateSet:

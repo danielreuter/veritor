@@ -116,6 +116,69 @@ def test_requests_of_one_shape_are_one_kind() -> None:
     assert len(units) == 1 and units[0].copies == 3
 
 
+def test_requests_are_grouped_by_kind_so_the_root_has_one_output_run_per_shape() -> None:
+    """Kinds in order of first appearance, each group one ``repeat``; the layouts follow the circuit order."""
+
+    constructor = RequestsG(SHAPE)
+    mixed = (Request((1, 2), 3), Request((5,), 2), Request((4, 4), 3), Request((0,), 2), Request((7, 7, 7), 1))
+    parameters = random_parameters(SHAPE, seed=5)
+
+    assert constructor.groups(mixed) == (((2, 3, 0), (0, 2)), ((1, 2, 0), (1, 3)), ((3, 1, 0), (4,)))
+    assert constructor.order(mixed) == (0, 2, 1, 3, 4)
+    assert constructor.output_layout(mixed) == (
+        (0, 0), (0, 1), (0, 2), (2, 0), (2, 1), (2, 2), (1, 0), (1, 1), (3, 0), (3, 1), (4, 0),
+    )
+    assert constructor.flatten_inputs(mixed) == (1, 2, 4, 4, 5, 0, 7, 7, 7)
+    compiled = compile_requests(constructor, mixed)
+    assert generated(constructor, compiled, mixed, parameters) == reference_generate(SHAPE, parameters, mixed)
+    # one run per generated position of each kind (3 + 2 + 1), not per request (3 + 2 + 3 + 2 + 1)
+    runs = compiled.index.root.frame.definition.out_runs
+    assert len(runs) == 6 and sorted(run.count for run in runs) == [1, 2, 2, 2, 2, 2]
+    units = {row.copies for row in compiled.index.kinds() if row.role == REPLAY and row.out_count > 0}
+    assert units == {2, 1}
+
+
+def test_banned_tokens_are_masked_in_circuit_and_never_generated() -> None:
+    """Constrained requests are their own kinds; the mask is ``allowed_row`` units over public ``in`` gates."""
+
+    constructor = RequestsG(SHAPE)
+    parameters = random_parameters(SHAPE, seed=9)
+    requests = (Request((1, 2, 3), 3, banned=(0, 4, 5)), Request((5,), 2), Request((2, 6), 3, banned=(7,)))
+
+    compiled = compile_requests(constructor, requests)
+    tokens = generated(constructor, compiled, requests, parameters)
+    assert tokens == reference_generate(SHAPE, parameters, requests)
+    assert not set(tokens[0]) & {0, 4, 5} and 7 not in tokens[2]
+    assert constructor.flatten_inputs(requests) == (0, 4, 5, 1, 2, 3, 5, 7, 2, 6)  # banned ids precede the prompt
+    kinds = {row.kind: row for row in compiled.index.kinds()}
+    lm = constructor.lm
+    assert kinds[lm.allowed_row(3).digest].copies == SHAPE.vocab and kinds[lm.allowed_row(1).digest].copies == SHAPE.vocab
+    assert kinds[lm.masked_argmax().digest].copies == 6 and kinds[lm.argmax().digest].copies == 2
+    assert lm.allowed_row(3).role == "verification"
+    assert {(row.out_count, row.input_count) for row in kinds.values() if row.role == REPLAY and row.out_count} == {
+        (3, SHAPE.weight_count), (2, SHAPE.weight_count),
+    }
+    with pytest.raises(TracerError, match="below vocab"):
+        constructor((Request((1,), 1, banned=(8,)),), b"")
+    with pytest.raises(TracerError, match="at least one allowed"):
+        constructor((Request((1,), 1, banned=tuple(range(8))),), b"")
+
+
+@pytest.mark.parametrize("tensor_parallel", (2, 4))
+def test_tensor_parallel_changes_the_dot_kinds_and_nothing_the_verifier_sees_in_the_tokens(tensor_parallel: int) -> None:
+    parameters = random_parameters(SHAPE, seed=11)
+    plain, sharded = RequestsG(SHAPE), RequestsG(SHAPE, tensor_parallel=tensor_parallel)
+
+    compiled_plain, compiled_sharded = compile_requests(plain, REQUESTS), compile_requests(sharded, REQUESTS)
+    assert generated(sharded, compiled_sharded, REQUESTS, parameters) == generated(plain, compiled_plain, REQUESTS, parameters)
+    assert compiled_sharded.digest != compiled_plain.digest and sharded.digest != plain.digest
+    assert sharded.manifest == {"shape": SHAPE.manifest, "tensor_parallel": tensor_parallel}
+    verification = lambda compiled: {row.kind for row in compiled.index.kinds() if row.role == "verification"}
+    assert verification(compiled_sharded).isdisjoint({plain.lm.dot(k).digest for k in (SHAPE.d_model, SHAPE.hidden, SHAPE.vocab)})
+    # the units that do not contain a marked dot are unchanged
+    assert {plain.lm.argmax().digest, plain.lm.onehot().digest} <= verification(compiled_sharded)
+
+
 def test_it_takes_no_advice_and_checks_its_requests() -> None:
     constructor = RequestsG(SHAPE)
 
