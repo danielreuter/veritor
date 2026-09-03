@@ -192,7 +192,10 @@ class HonestRunSummary:
 @dataclass(frozen=True, slots=True)
 class AttackRow:
     bits: int
+    carriers: int
+    """Tokens that spell the secret."""
     vus_corrupted: int
+    """Carriers whose token had to change: the error set ``E``."""
     replay_units_touched: int
     errors_per_replay_unit: tuple[int, ...]
     predicted_survival: float

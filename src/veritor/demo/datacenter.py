@@ -53,7 +53,13 @@ from veritor.constructors import (
     random_parameters,
     reference_generate,
 )
-from veritor.core import VerificationPolicy, canonical_json_bytes, make_isa_gate_set
+from veritor.core import (
+    CompilationLimits,
+    VerificationLimits,
+    VerificationPolicy,
+    canonical_json_bytes,
+    make_isa_gate_set,
+)
 from veritor.core.description import REPLAY, VERIFICATION
 from veritor.protocol import (
     MerkleTree,
@@ -121,6 +127,10 @@ class DemoConfig:
     """The grid ``Optimize`` searches, for the report; ``None`` skips it."""
     work_budget: int = DEFAULT_MAX_WORK
     """The verifier's ``W_max`` in operations."""
+    compilation_limits: CompilationLimits = field(default_factory=CompilationLimits)
+    """The verifier's parsing limits; a run with many streamed tokens has many output runs."""
+    verification_limits: VerificationLimits = field(default_factory=VerificationLimits)
+    """The verifier's protocol limits; a big run has more positions per kind than the defaults."""
     attack_sizes: tuple[int, ...] | None = None
     """Carriers per attack row; ``None`` for ``1, 4, 16, ...`` up to every streamed token."""
     survival_trials: int = 1000
@@ -157,28 +167,41 @@ def small_config(
 def medium_config(
     *,
     seed: int = 0,
-    pods: int = 4,
-    slots: int = 4,
-    steps: int = 48,
-    requests: int = 96,
+    pods: int = 3,
+    slots: int = 3,
+    steps: int = 32,
+    requests: int = 48,
     failure_rate: float = 0.02,
     sampling: bool = True,
 ) -> DemoConfig:
-    """A few minutes: four pods of four slots, a hundred requests, a bigger model."""
+    """A few minutes: three pods of three slots, fifty requests, a wider model (about 500k gates)."""
 
-    shape = LMShape(vocab=16, d_model=8, heads=2, layers=2, context=32, width=16, sampling=sampling)
+    shape = LMShape(vocab=16, d_model=8, heads=2, layers=1, context=24, width=16, sampling=sampling)
     workload = WorkloadConfig(
         pods=pods,
         slots=slots,
         steps=steps,
         arrivals=requests,
         seed=seed,
-        prompt_lengths=(2, 8),
-        max_new_lengths=(4, 16),
+        prompt_lengths=(2, 6),
+        max_new_lengths=(4, 12),
         failure_rate=failure_rate,
         forced_failures=((0, steps // 3),),
     )
-    return DemoConfig("medium", shape, workload, parameters_seed=seed, survival_trials=2000)
+    return DemoConfig(
+        "medium",
+        shape,
+        workload,
+        parameters_seed=seed,
+        compilation_limits=CompilationLimits(
+            max_output_runs=1 << 12, max_output_runs_total=1 << 16
+        ),
+        verification_limits=VerificationLimits(
+            max_positions_per_unit=1 << 24, max_positions=1 << 26
+        ),
+        survival_trials=2000,
+        protocol_trials=1,
+    )
 
 
 # -- the run --------------------------------------------------------------------------
@@ -231,6 +254,7 @@ def run(config: DemoConfig) -> Summary:
             simulation.requests,
             advice,
             gate_set,
+            limits=config.compilation_limits,
             max_advice_bits=8 * len(advice),
         )
     compiled = compilation.compiled
@@ -548,8 +572,14 @@ def _honest_run(
     transcript_bytes = 0
     try:
         with verifier_time:
-            verifier = VerifierSession(expectation, compiled)
-        prover = ProverSession(compiled, verifier.header, values, weight_tree=weight_tree)
+            verifier = VerifierSession(expectation, compiled, limits=config.verification_limits)
+        prover = ProverSession(
+            compiled,
+            verifier.header,
+            values,
+            limits=config.verification_limits,
+            weight_tree=weight_tree,
+        )
         with prover_time:
             boundary = prover.boundary()
         boundary_root = boundary.commitment.root.hex()
@@ -626,7 +656,7 @@ def _attack_rows(
     sizes = attack_sizes(len(layout)) if config.attack_sizes is None else config.attack_sizes
     rows: list[AttackRow] = []
     for size in sizes:
-        secret = adversary.random_secret(size * vocab_bits, config.workload.seed + size)
+        secret = adversary.random_secret(size * vocab_bits, f"{config.workload.seed}/{size}")
         attack = adversary.plan_attack(
             compiled, compilation.inputs, weights, layout, secret, vocab_bits
         )
@@ -640,7 +670,12 @@ def _attack_rows(
         predicted = adversary.predicted_survival(policy, attack)
         label = f"{config.scale}/{config.workload.seed}/{size}"
         escaped = adversary.survival_trials(
-            compiled, policy, attack, config.survival_trials, label=label
+            compiled,
+            policy,
+            attack,
+            config.survival_trials,
+            label=label,
+            limits=config.verification_limits,
         )
         reports = adversary.protocol_trials(
             compilation,
@@ -651,6 +686,7 @@ def _attack_rows(
             attack,
             config.protocol_trials,
             label=label,
+            limits=config.verification_limits,
         )
         p = float(predicted)
         observed = escaped / config.survival_trials
@@ -658,6 +694,7 @@ def _attack_rows(
         rows.append(
             AttackRow(
                 bits=attack.bits,
+                carriers=len(attack.carriers),
                 vus_corrupted=len(attack.verification_units),
                 replay_units_touched=len(set(attack.replay_units)),
                 errors_per_replay_unit=attack.errors_per_replay_unit,

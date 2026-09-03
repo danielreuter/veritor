@@ -631,7 +631,8 @@ class ToyLM:
 
         @self.tracer.definition(input_count=vocab + 4, key="sample", role=VERIFICATION)
         def sample(v: Wires) -> object:
-            logits, r, one, score_shift, random_bits = v[:vocab], v[vocab], v[vocab + 1], v[vocab + 2], v[vocab + 3]
+            logits = wires(v[:vocab])
+            r, one, score_shift, random_bits = v[vocab], v[vocab + 1], v[vocab + 2], v[vocab + 3]
             weights = []
             for logit in logits:
                 score = shr(logit, score_shift)

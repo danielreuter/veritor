@@ -16,7 +16,9 @@ a head VU ``kappa = min(out_bits, reach_bits)`` bits -- the width of the
 word it decides -- and an adversary who corrupts ``k`` of them realizes
 ``k * vocab_bits`` bits of that budget while escaping with probability
 ``sigma(E) = prod_r (1 - q + q (1 - s)^(l_r))`` over the replay units (RUs)
-``r`` holding ``l_r`` corrupted VUs.  :func:`survival_trials` measures that
+``r`` holding ``l_r`` corrupted VUs.  A carrier whose honest token already
+equals its chunk costs nothing (its gate is not incorrect), so the error
+set ``E`` is the carriers that had to change.  :func:`survival_trials` measures that
 escape rate by deriving the verifier's challenges under fresh seeds, and
 :func:`protocol_trials` runs the full protocol to confirm that every
 rejection is the relation check of a sampled corrupted VU.
@@ -63,11 +65,14 @@ class Attack:
     carriers: tuple[int, ...]
     """Indices into the circuit outputs (the streamed tokens) that spell the secret."""
     addresses: tuple[int, ...]
-    """The corrupted gates: the token gate of each carrier's head VU."""
+    """The forced gates: the token gate of each carrier's head VU."""
+    corrupted: tuple[int, ...]
+    """The forced gates whose relation fails: a carrier whose honest token already spelled its
+    chunk needs no corruption (one in ``vocab`` of them, on average)."""
     verification_units: tuple[int, ...]
-    """The corrupted VUs (global indices), one per carrier."""
+    """The corrupted VUs (global indices), one per corrupted gate."""
     replay_units: tuple[int, ...]
-    """The RUs touched, one entry per carrier (with repeats)."""
+    """The RUs touched, one entry per corrupted gate (with repeats)."""
     values: Mapping[int, int]
     """The dishonest assignment: the carriers forced, everything else computed from what it reads."""
     outputs: tuple[int, ...]
@@ -101,8 +106,8 @@ def carriers(layout: Sequence[tuple[int, int]], count: int) -> tuple[int, ...]:
     return tuple(sorted(chosen))
 
 
-def random_secret(bits: int, seed: int) -> str:
-    rng = random.Random(f"secret/{seed}")
+def random_secret(bits: int, seed: object) -> str:
+    rng = random.Random(f"veritor/demo/secret/{seed}")
     return "".join(rng.choice("01") for _ in range(bits))
 
 
@@ -144,27 +149,34 @@ def plan_attack(
     if len(secret) % vocab_bits or set(secret) - {"0", "1"}:
         raise ValueError(f"the secret must be a bit string of a multiple of {vocab_bits} bits")
     chosen = carriers(layout, len(secret) // vocab_bits)
-    index = compiled.index
-    addresses = tuple(compiled.circuit.outputs[c] for c in chosen)
-    overrides: dict[int, int] = {}
+    circuit, index = compiled.circuit, compiled.index
+    addresses = tuple(circuit.outputs[c] for c in chosen)
+    overrides = {
+        address: int(secret[rank * vocab_bits : (rank + 1) * vocab_bits], 2)
+        for rank, address in enumerate(addresses)
+    }
+    values = evaluate_with_overrides(compiled, inputs, weights, overrides)
+    corrupted: list[int] = []
     units: list[int] = []
     replay_units: list[int] = []
-    for rank, address in enumerate(addresses):
-        chunk = secret[rank * vocab_bits : (rank + 1) * vocab_bits]
-        overrides[address] = int(chunk, 2)
+    for address in addresses:
+        honest = circuit.evaluate_gate(address, tuple(values[a] for a in circuit[address].args))
+        if values[address] == honest:
+            continue
+        corrupted.append(address)
         replay_unit = index.replay_units.owner(address)
         block = index.verification_units(replay_unit)
         units.append(block.first + block.owner(address))
         replay_units.append(replay_unit)
-    values = evaluate_with_overrides(compiled, inputs, weights, overrides)
     return Attack(
         secret=secret,
         carriers=chosen,
         addresses=addresses,
+        corrupted=tuple(corrupted),
         verification_units=tuple(units),
         replay_units=tuple(replay_units),
         values=values,
-        outputs=tuple(values[address] for address in compiled.circuit.outputs),
+        outputs=tuple(values[address] for address in circuit.outputs),
     )
 
 
@@ -191,6 +203,7 @@ def survival_trials(
     trials: int,
     *,
     label: str = "",
+    limits: VerificationLimits | None = None,
 ) -> int:
     """How many of ``trials`` fresh challenge pairs miss every corrupted VU.
 
@@ -201,7 +214,7 @@ def survival_trials(
     exactly when the sample misses it, which :func:`protocol_trials` confirms.
     """
 
-    limits = VerificationLimits()
+    limits = VerificationLimits() if limits is None else limits
     errors = set(attack.verification_units)
     phase = hashlib.sha256(b"veritor/demo/phase").digest()
     escaped = 0
@@ -227,6 +240,7 @@ def protocol_trials(
     trials: int,
     *,
     label: str = "",
+    limits: VerificationLimits | None = None,
 ) -> tuple[VerificationReport, ...]:
     """Run the full protocol against the dishonest server ``trials`` times with fresh seeds.
 
@@ -253,6 +267,7 @@ def protocol_trials(
             expectation,
             attack.values,
             replay=assignment_replay(attack.values),
+            limits=limits,
             weight_tree=weight_tree,
         )
         report = run.report

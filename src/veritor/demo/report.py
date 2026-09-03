@@ -78,8 +78,9 @@ def render(summary: Summary) -> str:
     out("3. Hardware failures")
     if w.failures:
         for f in w.failures:
-            aborted = ", ".join(map(str, f.aborted)) or "no occupants"
-            out(f"  pod {f.pod} failed at step {f.step}: aborted request(s) {aborted}")
+            aborted = ", ".join(map(str, f.aborted))
+            what = f"aborted request(s) {aborted}" if aborted else "the pod was idle"
+            out(f"  pod {f.pod} failed at step {f.step}: {what}")
         out(
             f"  {w.restarts} restart(s): each aborted request rejoined from the prefill; its earlier "
             "tokens stand as outputs of the aborted join and are recomputed, not re-emitted"
@@ -157,22 +158,23 @@ def render(summary: Summary) -> str:
     out("7. Adversary and tightness")
     out(f"  channel: {a.channel}")
     out(
-        f"  {a.bits_per_vu} bits realized per corrupted VU; Bound charges kappa = {a.kappa_per_vu} "
-        "bits (the width of the word the VU decides)"
+        f"  {a.bits_per_vu} bits per carrier token; Bound charges kappa = {a.kappa_per_vu} bits per "
+        "corrupted VU (the width of the word it decides); a carrier whose honest token already "
+        "spells its chunk corrupts nothing"
     )
     out(
         f"  survival sigma(E) = prod_r (1 - q + q (1 - s)^l_r); observed over {a.rows[0].trials} "
         "fresh challenge derivations per row; full protocol runs in the last column"
     )
-    out("    bits  VUs  RUs  l_r        predicted  observed  |dev|/sigma  full protocol")
+    out("    bits  tokens  VUs  RUs  l_r        predicted  observed  |dev|/sigma  full protocol")
     for r in a.rows:
         l_r = ",".join(map(str, r.errors_per_replay_unit))
         if len(l_r) > 9:
             l_r = l_r[:7] + ".."
         out(
-            f"    {r.bits:4d}  {r.vus_corrupted:3d}  {r.replay_units_touched:3d}  {l_r:<9}  "
-            f"{r.predicted_survival:9.4f}  {r.observed_survival:8.4f}  {r.deviation_sigmas:11.1f}  "
-            f"{r.protocol_accepted}/{r.protocol_trials} accepted"
+            f"    {r.bits:4d}  {r.carriers:6d}  {r.vus_corrupted:3d}  {r.replay_units_touched:3d}  "
+            f"{l_r:<9}  {r.predicted_survival:9.4f}  {r.observed_survival:8.4f}  "
+            f"{r.deviation_sigmas:11.1f}  {r.protocol_accepted}/{r.protocol_trials} accepted"
         )
     last = a.rows[-1]
     out(
