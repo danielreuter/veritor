@@ -2,7 +2,7 @@
 
 The protocol's reveal step used to be *transparent*: for every sampled verification unit (VU) the prover opened the values it reads and writes (Merkle openings) and the verifier recomputed the VU's relation in Python. The paper replaces that reveal with zero-knowledge proofs. This document describes the pluggable, batchable proof layer that now sits behind the reveal step (`src/veritor/protocol/proofs/`), the SP1 zkVM backend that implements it (`zk/sp1/`), the measured costs (`proofs/costs.py`) and what a production OpenVM backend would change.
 
-Terminology as in the README: a *replay unit* (RU) is a coarse unit whose interior the prover commits when it is sampled at rate `q`; a *verification unit* (VU) refines an RU and is checked gate by gate when sampled at rate `s`; a VU is a copy of a definition, its *kind*.
+Terminology as in the README: a *replay unit* (RU) is a coarse unit whose interior the prover commits when it is sampled at rate `q`; a *verification unit* (VU) refines an RU and is checked when sampled at rate `s`; a VU is a copy of a definition, its *kind*. The interior of an RU is committed at *VU-output granularity*: the declared outputs of the VUs inside it that are not the RU's own outputs (those are boundary positions). A sampled VU's check opens its inputs and its outputs and recomputes the gates between; an internal gate of a VU is never committed.
 
 ## 1. Architecture
 
@@ -14,10 +14,10 @@ Terminology as in the README: a *replay unit* (RU) is a coarse unit whose interi
 - `unit`, `replay_unit`: the VU index and the RU it lies in.
 - `kind`: the digest of the definition the VU is a copy of; its relation must hold.
 - `commitments`: every commitment the relation opens against, as `(owner, domain_id, root, count)`; owners are `-2` (weights, `kappa_W`), `-1` (boundary) and RU indices (interiors).
-- `positions`: every coordinate the relation touches, `(commitment, rank, position, schema[, expected])`, in address order; `expected` pins the public input an `in` gate must hold.
-- `inputs[k]`, `gates[j]`: which position slot is the kind's `k`-th read port and the copy's `j`-th gate.
+- `positions`: every coordinate the relation touches -- the copy's inputs and its opened outputs, nothing else -- as `(commitment, rank, position, schema[, expected])`, in address order; `expected` pins the public input an `in` gate must hold.
+- `inputs[k]`, `outputs[m]`: which position slot is the kind's `k`-th read port and the copy's gate at the kind's `m`-th opened offset.
 
-No value appears in an obligation: the values are the *witness*. A `KindProgram` gives the kind's relation once in copy-relative coordinates (gate `j` is `op(arg, arg)` where an argument is `("port", k)` or `("local", i < j)`), so one program serves every copy of the kind.
+No value appears in an obligation: the values are the *witness*. A `KindProgram` gives the kind's relation once in copy-relative coordinates (gate `j` is `op(arg, arg)` where an argument is `("port", k)` or `("local", i < j)`) together with `outputs`, the ascending gate offsets a copy opens (its declared outputs and its source gates), so one program serves every copy of the kind. Every other gate is recomputed by the checker from the opened inputs; the recomputation is what stands for it.
 
 ### 1.2 Statement: a batch
 
@@ -26,14 +26,14 @@ A `Statement` is the public statement of one proof: the gate set (`id`, digest, 
 ~~~text
 Statement   = MAGIC str gate_set_id digest gate_set_digest u32 width
               list<KindProgram> kinds  list<Obligation> obligations
-KindProgram = digest kind u32 size list<u32> ports list<GateOp> gates
+KindProgram = digest kind u32 size list<u32> ports list<GateOp> gates list<u32> outputs
 GateOp      = str op list<Arg> args ;  Arg = u8 space (0 port, 1 local) u32 value
 Obligation  = digest session digest compiled u64 unit u64 replay_unit digest kind
-              list<CommitmentRef> list<PositionRef> list<u32> inputs list<u32> gates
+              list<CommitmentRef> list<PositionRef> list<u32> inputs list<u32> outputs
 Witness     = MAGIC list< list< bytes value list<digest> path > >
 ~~~
 
-(big-endian integers, `u32` length prefixes, raw 32-byte digests; `decode_statement` accepts exactly the outputs of `encode_statement`). `statement_digest = sha256(encode_statement(s))` is the public value a proof commits to. The Rust mirror is `zk/sp1/common/src/codec.rs`; `zk/sp1/common/tests/vectors.json`, generated from Python by `tests/veritor/protocol/proofs/test_vectors.py`, pins both to each other.
+(big-endian integers, `u32` length prefixes, raw 32-byte digests; `decode_statement` accepts exactly the outputs of `encode_statement`; the magic is `veritor/proofs/statement/v2` -- v1 opened every gate of a copy). `statement_digest = sha256(encode_statement(s))` is the public value a proof commits to. The Rust mirror is `zk/sp1/common/src/codec.rs`; `zk/sp1/common/tests/vectors.json`, generated from Python by `tests/veritor/protocol/proofs/test_vectors.py`, pins both to each other.
 
 ### 1.3 Backends and coverage
 
@@ -52,13 +52,13 @@ The verifier never trusts the prover's list. `VerifierSession.receive_evidence` 
 
 ### 1.4 The backends
 
-- `TransparentBackend` (`proofs/transparent.py`): the reference. The "proof" is the encoded witness; `verify` re-derives every leaf and node hash with the exact framing of `merkle.py`, folds each path to its root, checks public inputs and decodes values, then interprets each kind's program with the gate set's pinned semantics (`GateSet.evaluate`). Under the transparent id the session still sends `EvidenceMessage.units` (one opening batch per sampled VU), and the verifier checks each as a one-obligation statement through this backend, so the wire format is unchanged.
+- `TransparentBackend` (`proofs/transparent.py`): the reference. The "proof" is the encoded witness; `verify` re-derives every leaf and node hash with the exact framing of `merkle.py`, folds each path to its root, checks public inputs and decodes values, then interprets each kind's program with the gate set's pinned semantics (`GateSet.evaluate`): every gate is recomputed from the opened inputs and the earlier gates of the copy, and an opened gate (a declared output) must equal what was recomputed (`RELATION_REJECTED` otherwise); a source gate must be opened. Under the transparent id the session still sends `EvidenceMessage.units` (one opening batch per sampled VU), and the verifier checks each as a one-obligation statement through this backend, so the wire format is unchanged.
 - `SP1Backend` (`proofs/sp1.py`): drives `zk/sp1/target/release/veritor-zk-host` over a subprocess protocol (one JSON object on stdout per command): `info`, `execute --statement S --witness W` (the SP1 executor, no proof, exact cycle counts per phase), `prove ... --out P --mode core|compressed`, `verify --proof P --statement S`. Builds the host on demand; skips cleanly when `cargo prove` is absent.
 - `OpenVMBackend` (`proofs/openvm.py`): the same subprocess protocol against a remote-built OpenVM host (section 5).
 
 ### 1.5 The SP1 guest
 
-`zk/sp1/guest` is a *generic checker* for the protocol, not a program per workload. It reads the statement and witness bytes (`read_vec` twice), hashes the statement with the SP1 `sha2` precompile (workspace-wide `[patch.crates-io]` on `sp1-patches/RustCrypto-hashes`, as in `sp1-op-bench`), parses both strictly (`codec.rs`), resolves the gate set from `(id, width)` and checks its digest against the pinned manifest (`gateset.rs`, a mirror of `veritor/core/gates.py` including the canonical JSON manifest and `tagged_sha256`), authenticates every opening with our exact framing (`frame.rs`: `_FRAME`, 4-byte tag length, 8-byte part lengths, `domain_id`, `leaf(rank, position, schema, value)`, `node(level, index, left, right)`), checks public inputs, decodes values, interprets every kind program with the modular semantics (`check.rs`), and commits `sha256(statement) || verdict` (33 bytes) as public values. Phases are bracketed with `cycle-tracker-report-start/end` (`io`, `digest`, `parse`, `merkle`, `gates`). A rejected batch still produces a valid execution (verdict `0`), so a proof of a false statement is impossible to pass off: `verify` requires `ok && statement_match && verdict`.
+`zk/sp1/guest` is a *generic checker* for the protocol, not a program per workload. It reads the statement and witness bytes (`read_vec` twice), hashes the statement with the SP1 `sha2` precompile (workspace-wide `[patch.crates-io]` on `sp1-patches/RustCrypto-hashes`, as in `sp1-op-bench`), parses both strictly (`codec.rs`), resolves the gate set from `(id, width)` and checks its digest against the pinned manifest (`gateset.rs`, a mirror of `veritor/core/gates.py` including the canonical JSON manifest and `tagged_sha256`), authenticates every opening (a copy's inputs and outputs, nothing else) with our exact framing (`frame.rs`: `_FRAME`, 4-byte tag length, 8-byte part lengths, `domain_id`, `leaf(rank, position, schema, value)`, `node(level, index, left, right)`), checks public inputs, decodes values, recomputes every kind program with the modular semantics from the opened inputs and compares with the opened outputs (`check.rs`), and commits `sha256(statement) || verdict` (33 bytes) as public values. Phases are bracketed with `cycle-tracker-report-start/end` (`io`, `digest`, `parse`, `merkle`, `gates`). A rejected batch still produces a valid execution (verdict `0`), so a proof of a false statement is impossible to pass off: `verify` requires `ok && statement_match && verdict`.
 
 ## 2. How batching amortizes
 
@@ -76,40 +76,42 @@ Cross-session batching (`ForeignBatch`) exists for the same reason: an operator 
 
 ## 3. Measured cycles for our obligations
 
-All numbers are exact cycle counts from `veritor-zk-host execute` (SP1 6.4.0; `zk/sp1/bench/measure.py`, synthetic but valid batches: real Merkle trees with our framing, real gate semantics; two-point slopes).
+All numbers are exact cycle counts from `veritor-zk-host execute` (SP1 6.4.0; `zk/sp1/bench/measure.py`, synthetic but valid batches: real Merkle trees with our framing, real gate semantics; two-point slopes). They were re-measured after the interior moved to VU-output granularity: a chain kind now opens its two inputs and its last gate and the guest recomputes the gates between, so the per-gate and per-position costs are measured on separate axes (gate count at fixed openings; openings at fixed gate count).
 
 | constant | cycles | how |
 |---|---:|---|
-| `add` gate (relation check) | 116 | `gates` slope, 8 vs 136 gates of the op in one kind |
-| `eq` | 116 | same |
-| `lt` | 159 | same |
-| `mul` | 162 | same |
-| `shr` | 184 | same |
-| `sub` | 212 | same |
+| `add` gate (recomputation) | 125 | `gates` slope, 8 vs 136 gates of the op in one kind, 3 openings |
+| `eq` | 126 | same |
+| `lt` | 177 | same |
+| `mul` | 180 | same |
+| `shr` | 206 | same |
+| `sub` | 238 | same |
 | `in`, `weight` | 0 | no relation; `in` adds one 2-byte compare to `merkle` |
-| Merkle level (`node` frame) | 2,694 | `merkle` slope, depth 5 vs 13 at 18 positions; 3 `SHA_COMPRESS` per level |
-| opened position (leaf frame + checks + decode) | 3,419 | `merkle` slope per position at depth 8 (24,971) minus 8 levels |
-| parse, per input byte | 11.7 | `parse` slope vs statement + witness bytes |
+| Merkle level (`node` frame) | 2,668 | `merkle` slope, depth 5 vs 13 at 18 positions; 3 `SHA_COMPRESS` per level |
+| opened position (leaf frame + checks + decode) | 3,296 | `merkle` slope per position at depth 8 (24,640; a 16-gate chain opening all 18 vs 3) minus 8 levels |
+| parse, per input byte | 12.26 | `parse` slope vs statement + witness bytes |
 | statement digest, per byte | 3.53 | `digest` slope (~226 cycles per 64-byte block) |
-| per obligation, fixed | ~5,800 | residual of the 1-vs-65 obligation fit |
-| per batch, fixed | ~50,000 | floor of a 1-obligation batch (94,647 total, 48,583 untracked) |
+| per obligation, fixed | ~5,800 | residual of the 1-vs-65 obligation fit (~4,000 synthetic; 5,700–6,600 on the real batches below) |
+| per batch, fixed | ~50,000 | floor of a 1-obligation batch (96,219 total, 48,634 untracked) |
+
+Before the change the same fits gave 116–212 per gate, 2,694 per level and 3,419 per leaf; the gate costs grew by ~10–25 cycles because the recomputing checker pushes every result onto the copy's local values and walks an output cursor, the hashing costs moved within run-to-run noise.
 
 Two real batches, both verdict `true`:
 
 | batch | obligations | positions | Merkle levels | gates | total cycles | `merkle` | `parse` | `gates` | `digest` |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| matmul fixture, every VU | 16 | 52 | 152 | 28 | 879,613 | 558,796 | 196,676 | 10,819 | 23,593 |
-| small cluster run, `q = 1/2, s = 1/3` | 162 | 1,506 | 14,771 | 789 | 52,867,791 | 45,111,487 | 5,934,508 | 203,675 | 327,335 |
+| matmul fixture, every VU | 16 | 40 | 128 | 28 | 761,710 | 456,937 | 181,393 | 19,859 | 21,150 |
+| small cluster run, `q = 1/2, s = 1/3` | 186 | 1,040 | 8,018 | 854 | 30,841,391 | 24,988,507 | 4,198,051 | 339,335 | 296,810 |
 
-`estimate_cycles` predicts 892k and 53.2M for these (+1.4%, +0.5%). The picture is unambiguous: with the toy ISA every scalar is its own committed leaf, so **Merkle authentication is 64–85% of the cycles and the relation itself is ~1%**. A position in a depth-`d` domain costs `3,419 + 2,694 d` cycles; the gate whose output it is costs 116–212. Three notes on what moves these numbers:
+`estimate_cycles` predicts 761,283 and 30.67M for these (−0.1%, −0.5%). Before the change the same matmul batch opened 52 positions over 152 levels for 879,613 cycles (558,796 `merkle`; 85% of a proof was Merkle authentication once the witness paths' parse is counted in); the earlier small-cluster batch (a different sample: 162 obligations, 1,506 positions, 14,771 levels, 789 gates) took 52.9M. The split moved but the picture did not: **Merkle authentication of the opened positions is 60–81% of the cycles, the recomputation of the gates 2.6% (matmul) to 1.1% (cluster)**. A position in a depth-`d` domain costs `3,296 + 2,668 d` cycles; a gate between costs 125–238 and nothing else. What changed is *which* positions are opened: a dot product of `k` products and `k` sums opens its `2k` inputs and one output instead of `4k + 1` positions, so the toy-ISA matmul batch shrank from 52 to 40 positions (the inputs still dominate: every scalar read is its own leaf). Three notes on what moves these numbers:
 
 - Our `leaf`/`node` frames are 3 SHA-256 blocks (the framing adds ~115 bytes to a 64-byte `left || right`). sp1-op-bench measured 1,620 cycles for the 2-block bare hash; we are on the same ~800-cycles-per-block line, of which ~240 is the precompile and the rest is the `sha2` crate's per-call init/finalize. A hand-rolled SHA-256 over the `syscall_sha256_extend/compress` pair would bring a level to ~1,000 cycles.
 - The parser allocates a `Vec` per list; ~11.7 cycles/byte is mostly that. Zero-copy parsing would remove most of `parse` (11% of the cluster batch).
-- The relation is cheap because the guest interprets small programs; a kind with thousands of gates per opened value (a dot product over a committed *tile*, as in sp1-op-bench's leaf check: 16 cycles per fixed-point MAC, 32 KiB leaf) amortizes one leaf over many operations, which is exactly why the paper's ML workloads are feasible and the toy ISA's per-scalar commitment is not the shape to scale.
+- The relation is cheap because the guest interprets small programs, and since only a copy's inputs and outputs are leaves, a kind with thousands of gates per opened value (a dot product over a committed *tile*, as in sp1-op-bench's leaf check: 16 cycles per fixed-point MAC, 32 KiB leaf) amortizes one leaf over many operations at ~125–240 cycles per interpreted gate; that is exactly why the paper's ML workloads are feasible and the toy ISA's per-scalar *inputs* are not the shape to scale.
 
 ### The one real proof
 
-`tests/veritor/protocol/proofs/test_sp1.py::test_one_real_core_proof_of_a_small_batch_round_trips` runs the whole protocol on the matmul fixture with `SP1Backend(mode="core")`: 16 obligations in one batch, 879,613 cycles, **2 shards, 2,806,928-byte core proof, prove 16.5–18.1 s, verify 0.07–0.13 s, setup 0.7–0.85 s** on this Apple Silicon laptop (31.8 s wall for the host process, 4.2 GiB peak RSS). The proof verifies against the verifier's recomputed statement, fails `statement_match` against any other statement, and the Python `verify` returns `False` for both a swapped statement and non-proof bytes. The laptop profile in `costs.py` (10 s floor + 112 kHz) predicts 18.0 s for this batch.
+`tests/veritor/protocol/proofs/test_sp1.py::test_one_real_core_proof_of_a_small_batch_round_trips` runs the whole protocol on the matmul fixture with `SP1Backend(mode="core")`: 16 obligations in one batch, 761,710 cycles, **2 shards, 2,804,880-byte core proof, prove 16.9 s, verify 0.07 s, setup 0.75 s** on this Apple Silicon laptop (28.9 s wall for the host process; 879,613 cycles and 16.5–18.1 s before the change -- the batch still spans two shards, so the proof time barely moved). The proof verifies against the verifier's recomputed statement, fails `statement_match` against any other statement, and the Python `verify` returns `False` for both a swapped statement and non-proof bytes. The laptop profile in `costs.py` (10 s floor + 112 kHz) predicts 16.8 s for this batch.
 
 ## 4. `alpha`: proving cost over native cost
 

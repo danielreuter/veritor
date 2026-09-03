@@ -81,8 +81,9 @@ class TestCosts:
                 estimate.relations,
             )
         )
-        # the measured value for this very batch (SP1 6.4.0 execute): 879,613 cycles
-        assert 0.95 < estimate.total / 879_613 < 1.05
+        # the measured value for this very batch (SP1 6.4.0 execute, the guest that
+        # opens inputs and outputs and recomputes the gates between): 761,710 cycles
+        assert 0.95 < estimate.total / 761_710 < 1.05
 
     def test_seconds_follow_the_machine_profile(self, batch) -> None:
         statement, _ = batch

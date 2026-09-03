@@ -9,11 +9,13 @@ from ``veritor-zk-host execute`` (no proving).  Run from the repo root::
 Fits (all by two-point slopes, which is exact for these linear costs):
 
 * per gate, by op: the ``gates`` tracker of one obligation whose kind is a
-  chain of ``N`` gates of that op, ``N = 8`` vs ``N = 136``;
+  chain of ``N`` gates of that op opening only its last gate, ``N = 8`` vs
+  ``N = 136`` (the gates between are recomputed, never opened);
 * per Merkle level: the ``merkle`` tracker of one obligation with a fixed
-  number of positions in a domain of depth 4 vs depth 12;
-* per opened position (leaf hash + decode, no levels): the ``merkle`` slope
-  per position at fixed depth minus depth * per-level;
+  number of positions in a domain of depth 5 vs depth 13;
+* per opened position (leaf hash + decode + its levels): the ``merkle`` slope
+  between a 16-gate chain opening every gate and the same opening only its
+  last, at depth 8; leaf-only is that minus depth * per-level;
 * per obligation: the slopes of every tracker in the number of obligations
   (1 vs 65 one-gate obligations);
 * per batch fixed: the floor of a one-obligation, one-gate, depth-1 batch and
@@ -64,8 +66,12 @@ def word(value: int) -> bytes:
     return value.to_bytes(WIDTH // 8, "big")
 
 
-def chain_program(op: str, gates: int, kind_seed: int) -> KindProgram:
-    """A kind with two ports and ``gates`` gates: g0 = op(p0, p1), gj = op(p0, g(j-1))."""
+def chain_program(op: str, gates: int, kind_seed: int, *, open_all: bool = False) -> KindProgram:
+    """A kind with two ports and ``gates`` gates: g0 = op(p0, p1), gj = op(p0, g(j-1)).
+
+    It opens its last gate (its one declared output), or every gate with
+    ``open_all`` (as if each were a declared output).
+    """
 
     ops = tuple(
         GateOp(
@@ -74,7 +80,8 @@ def chain_program(op: str, gates: int, kind_seed: int) -> KindProgram:
         )
         for j in range(gates)
     )
-    return KindProgram(kind_seed.to_bytes(32, "big"), gates, (0, 1), ops)
+    outputs = tuple(range(gates)) if open_all else (gates - 1,)
+    return KindProgram(kind_seed.to_bytes(32, "big"), gates, (0, 1), ops, outputs)
 
 
 def evaluate_chain(op: str, gates: int, a: int, b: int) -> list[int]:
@@ -88,9 +95,21 @@ def evaluate_chain(op: str, gates: int, a: int, b: int) -> list[int]:
 
 
 def build_batch(
-    op: str, gates: int, obligations: int, depth: int, *, a: int = 3, b: int = 5
+    op: str,
+    gates: int,
+    obligations: int,
+    depth: int,
+    *,
+    a: int = 3,
+    b: int = 5,
+    open_all: bool = False,
 ) -> tuple[Statement, Witness]:
-    """``obligations`` copies of one chain kind in one commitment of ``2**depth`` positions."""
+    """``obligations`` copies of one chain kind in one commitment of ``2**depth`` positions.
+
+    The commitment holds every gate of every copy (so the layout is the same
+    either way); an obligation opens its two inputs and its last gate, or
+    every gate with ``open_all``.
+    """
 
     per_copy = gates + 2
     needed = obligations * per_copy
@@ -111,14 +130,13 @@ def build_batch(
         values[position] = word(0)
     tree = MerkleTree(domain, values, lambda _p: SCHEMA)
     ref = CommitmentRef(0, domain.domain_id, tree.commitment.root, count)
-    program = chain_program(op, gates, kind_seed=1)
+    program = chain_program(op, gates, kind_seed=1, open_all=open_all)
+    opened = list(range(per_copy)) if open_all else [0, 1, per_copy - 1]
     items: list[Obligation] = []
     witness: list[tuple[tuple[bytes, tuple[bytes, ...]], ...]] = []
     for copy in range(obligations):
         base = copy * per_copy
-        positions = tuple(
-            PositionRef(0, base + k, base + k, SCHEMA) for k in range(per_copy)
-        )
+        positions = tuple(PositionRef(0, base + k, base + k, SCHEMA) for k in opened)
         items.append(
             Obligation(
                 SESSION,
@@ -129,13 +147,13 @@ def build_batch(
                 (ref,),
                 positions,
                 (0, 1),
-                tuple(range(2, per_copy)),
+                tuple(range(2, len(opened))),
             )
         )
         witness.append(
             tuple(
                 (opening.value, opening.path)
-                for opening in (tree.open(base + k) for k in range(per_copy))
+                for opening in (tree.open(base + k) for k in opened)
             )
         )
     statement = make_statement(
@@ -160,7 +178,9 @@ class Meter:
             "label": label,
             "obligations": len(statement.obligations),
             "positions": sum(len(item.positions) for item in statement.obligations),
-            "gate_count": sum(len(item.gates) for item in statement.obligations),
+            "gate_count": sum(
+                statement.program(item.kind).size for item in statement.obligations
+            ),
             "statement_bytes": len(encode_statement(statement)),
             "witness_bytes": len(encode_witness(witness)),
             "total": report.total_cycles,
@@ -184,7 +204,7 @@ def measure(meter: Meter) -> dict[str, object]:
     build: Callable[..., tuple[Statement, Witness]] = build_batch
     results: dict[str, object] = {}
 
-    # -- per gate, by op (depth 8: 256 positions hold 138) ----------------------
+    # -- per gate, by op (depth 8: 256 positions hold 138; 3 opened) -----------
     per_gate: dict[str, dict[str, float]] = {}
     for op in ("add", "mul", "sub", "lt", "eq", "shr"):
         a, b = (3, 5) if op != "shr" else (40000, 1)
@@ -199,8 +219,8 @@ def measure(meter: Meter) -> dict[str, object]:
     results["per_gate"] = per_gate
 
     # -- per Merkle level (one obligation, 18 positions, depth 5 vs 13) ---------
-    shallow = meter.run("add16@d5", *build("add", 16, 1, 5))
-    deep = meter.run("add16@d13", *build("add", 16, 1, 13))
+    shallow = meter.run("add16all@d5", *build("add", 16, 1, 5, open_all=True))
+    deep = meter.run("add16all@d13", *build("add", 16, 1, 13, open_all=True))
     positions = 18
     per_level = slope(shallow, deep, "merkle", 8 * positions)
     results["per_merkle_level"] = {
@@ -209,12 +229,15 @@ def measure(meter: Meter) -> dict[str, object]:
         "sha_compress_per_level": slope(shallow, deep, "sha_compress", 8 * positions),
     }
 
-    # -- per opened position: leaf hash + decode, at depth 8 --------------------
-    per_position_at_8 = per_gate["add"]["merkle_phase"]
+    # -- per opened position at depth 8: 16 gates opening all (18) vs last (3) --
+    last = meter.run("add16last@d8", *build("add", 16, 1, 8))
+    every = meter.run("add16all@d8", *build("add", 16, 1, 8, open_all=True))
+    per_position_at_8 = slope(last, every, "merkle", 15)
     results["per_position"] = {
         "merkle_phase_at_depth_8": per_position_at_8,
         "leaf_only": per_position_at_8 - 8 * per_level,
-        "parse_phase": per_gate["add"]["parse_phase"],
+        "parse_phase": slope(last, every, "parse", 15),
+        "total": slope(last, every, "total", 15),
     }
 
     # -- per obligation (1-gate kind, depth 8: 256 positions hold 65 x 3) -------

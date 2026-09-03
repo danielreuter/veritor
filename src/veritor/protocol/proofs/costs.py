@@ -6,10 +6,13 @@ Every constant here was measured, and its docstring says how.  Three sources:
   ``zk/sp1/bench/measure.py``, SP1 6.4.0, guest built from the ``zk/sp1``
   workspace at the commit that introduced these numbers, ``sha2`` precompile
   patch on).  Synthetic but valid batches isolate one cost at a time; the
-  fit is a two-point slope, exact for these linear costs.  Cross-checked on
-  real batches: a 162-obligation cluster batch (1,506 positions, 14,771
-  Merkle levels, 789 gates) predicted 53.2M cycles against 52.9M measured
-  (+0.5%); the 16-obligation matmul batch 892k against 880k (+1.4%).
+  fit is a two-point slope, exact for these linear costs.  Re-measured after
+  the interior moved to VU-output granularity (a sampled VU opens its inputs
+  and outputs and the guest recomputes the gates between) and cross-checked
+  on real batches: a 186-obligation small-cluster batch (1,040 positions,
+  8,018 Merkle levels, 854 gates) predicted 30.67M cycles against 30.84M
+  measured (-0.5%); the 16-obligation matmul batch (40 positions, 128 levels,
+  28 gates) 761,283 against 761,710 (-0.1%).
 * **sp1-op-bench** (``results/report.md``): core proving throughput and the
   batching curve of SP1 6.4.0 on an Apple Silicon laptop and on a cloud CPU
   pod, and the per-MAC cycle costs of dot products in the RISC-V ISA.
@@ -42,35 +45,39 @@ from .wire import encode_statement
 # -- SP1 guest, execute mode (this repo) -------------------------------------
 
 SP1_CYCLES_PER_GATE: Mapping[str, int] = {
-    "add": 116,
-    "eq": 116,
-    "lt": 159,
-    "mul": 162,
-    "shr": 184,
-    "sub": 212,
+    "add": 125,
+    "eq": 126,
+    "lt": 177,
+    "mul": 180,
+    "shr": 206,
+    "sub": 238,
     "in": 0,
     "weight": 0,
 }
-"""Relation-check cycles per toy-ISA gate, by op (the ``gates`` tracker).
+"""Recomputation cycles per toy-ISA gate, by op (the ``gates`` tracker).
 
 Measured as the slope of the ``gates`` phase between one obligation whose kind
-is a chain of 8 gates and one of 136 gates of the same op (``add``: 116.0,
-``eq``: 116.0, ``lt``: 159.0, ``mul``: 162.0, ``shr``: 184.0, ``sub``: 212.0
-cycles/gate).  These are the pinned modular semantics of
-``veritor/core/gates.py`` interpreted by ``zk/sp1/common/src/check.rs``:
-reading two decoded operands, the ``wrapping_*`` op and mask, the compare.
-Source gates (``in``, ``weight``) have no relation; ``in`` costs one 2-byte
-compare in the ``merkle`` phase.  Note that every gate also has an opened
-output *position*, whose Merkle cost (:data:`SP1_CYCLES_PER_LEAF` plus depth
-times :data:`SP1_CYCLES_PER_MERKLE_LEVEL`) dwarfs the relation itself.
+is a chain of 8 gates and one of 136 gates of the same op, each opening only
+its last gate (``add``: 125.0, ``eq``: 126.0, ``lt``: 177.0, ``mul``: 180.0,
+``shr``: 206.0, ``sub``: 238.0 cycles/gate; 116-212 before the guest
+recomputed, when it read every gate's opened value instead of pushing the
+result onto the copy's local values).  These are the pinned modular semantics
+of ``veritor/core/gates.py`` interpreted by ``zk/sp1/common/src/check.rs``:
+reading two operands, the ``wrapping_*`` op and mask, the output cursor and
+the compare when the gate is opened.  Source gates (``in``, ``weight``) have
+no relation; ``in`` costs one 2-byte compare in the ``merkle`` phase.  Only a
+copy's inputs and declared outputs are opened *positions*; a gate between
+costs its recomputation and nothing else, where before it also cost a leaf
+plus depth levels of Merkle authentication (~25k cycles at depth 8).
 """
 
-SP1_CYCLES_PER_MERKLE_LEVEL = 2_694
+SP1_CYCLES_PER_MERKLE_LEVEL = 2_668
 """Cycles per authentication-path level (one ``node`` frame hash).
 
-Slope of the ``merkle`` phase between a 16-gate obligation (18 positions) in
-a depth-5 domain and the same in a depth-13 domain: 2,694.0 cycles/level
-(2,872 in total cycles).  Each level is exactly 3 ``SHA_COMPRESS`` syscalls
+Slope of the ``merkle`` phase between a 16-gate obligation opening all 18 of
+its positions in a depth-5 domain and the same in a depth-13 domain: 2,668.0
+cycles/level (2,846 in total cycles; 2,694 before the re-measurement, the
+difference being run-to-run allocator noise).  Each level is exactly 3 ``SHA_COMPRESS`` syscalls
 (measured 3.0/level): our ``node`` frame is ``FRAME || u32 len || "node" ||
 (u64 len || part)*5`` = 179 bytes, i.e. three 64-byte blocks after padding,
 against 2 blocks for a bare ``left || right`` hash.  sp1-op-bench measured
@@ -80,21 +87,23 @@ same line.  A hand-rolled SHA-256 over the syscalls (no ``block-buffer``)
 would cut this to ~3 x 240 + ~200 cycles; not done here.
 """
 
-SP1_CYCLES_PER_LEAF = 3_419
+SP1_CYCLES_PER_LEAF = 3_296
 """Cycles per opened position besides its path: leaf frame hash and decode.
 
-The ``merkle`` slope per position at depth 8 is 24,971 cycles; minus
-8 x 2,694 for the path leaves 3,419 for the ``leaf`` frame hash (3 blocks),
-the rank/depth checks, the optional public-input compare and the value decode.
+The ``merkle`` slope per position at depth 8, between a 16-gate chain opening
+every gate (18 positions) and the same opening only its last (3 positions),
+is 24,640 cycles; minus 8 x 2,668 for the path leaves 3,296 for the ``leaf``
+frame hash (3 blocks), the rank/depth checks, the optional public-input
+compare and the value decode (3,419 before the re-measurement).
 """
 
-SP1_CYCLES_PER_PARSE_BYTE = 11.7
+SP1_CYCLES_PER_PARSE_BYTE = 12.26
 """Cycles per byte of statement + witness in the ``parse`` phase.
 
 Slope of ``parse`` against total input bytes between a 1-obligation and a
-65-obligation batch of one-gate kinds at depth 8: 11.70 cycles/byte.  The
-witness dominates (each opening carries ``32 x depth`` path bytes); the parser
-allocates a ``Vec`` per list, which is most of this.
+65-obligation batch of one-gate kinds at depth 8: 12.26 cycles/byte (11.70
+before).  The witness dominates (each opening carries ``32 x depth`` path
+bytes); the parser allocates a ``Vec`` per list, which is most of this.
 """
 
 SP1_CYCLES_PER_DIGEST_BYTE = 3.53
@@ -107,11 +116,13 @@ with sp1-op-bench's 231 cycles/block.
 SP1_CYCLES_PER_OBLIGATION = 5_800
 """Fixed cycles per obligation beyond its positions, gates and bytes.
 
-From the 1-vs-65 obligation fit (1-gate kinds at depth 8): 93,000 cycles per
-obligation in total, of which 3 positions x 24,971 = 74,913 are Merkle,
-1,106 bytes x 11.7 = 12,940 are parse, 304 statement bytes x 3.53 = 1,073
-are digest and 383 are the ``gates`` pass; the remaining ~3,700 plus the
-untracked runtime share (~2,100) is the per-obligation constant.
+From the 1-vs-65 obligation fit (1-gate kinds at depth 8): 93,465 cycles per
+obligation in total, of which 3 positions x 24,640 = 73,919 are Merkle,
+1,106 bytes x 12.26 = 13,563 are parse, 304 statement bytes x 3.53 = 1,073
+are digest and 929 are the ``gates`` pass; the remaining ~4,000 is the
+per-obligation constant of that synthetic batch.  Real batches carry more
+kinds and positions per obligation and fit ~5,700-6,600 (the matmul and
+small-cluster cross-checks), so 5,800 is kept.
 """
 
 SP1_CYCLES_PER_BATCH = 50_000
@@ -299,9 +310,11 @@ def alpha_toy_isa(
 ) -> float:
     """``alpha`` = proving seconds / native seconds for a toy-ISA batch.
 
-    Native cost is one ALU cycle per non-source gate.  Because every scalar of
-    the toy ISA is its own committed leaf, this alpha is dominated by Merkle
-    authentication (~25k cycles per position at depth 8), not by the relation.
+    Native cost is one ALU cycle per non-source gate.  A copy's inputs and
+    declared outputs are committed leaves (~25k cycles each at depth 8) while
+    the gates between cost only their recomputation (~125-240 cycles), so
+    this alpha is dominated by Merkle authentication of the opened positions
+    unless the kinds are deep.
     """
 
     estimate = estimate_cycles(statement)
