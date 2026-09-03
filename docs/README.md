@@ -12,6 +12,7 @@ What each file is, what it is generated from, and where to start.
 ## Measurements
 
 - `benchmarks.md` — how each component scales, from `data/benchmarks.json`. Measure with `python -m benchmarks.run`, render with `python -m benchmarks.report`.
+- `cost-model.md` — the paper's §6.5: what the protocol commits, replays, proves and retains, priced at GPT-2 Small and the 70B serving shape (`alpha`, `beta`, `gamma`, the corrected leaf count at VU-output granularity); hash costs measured into `data/hash-cost.json` by `uv run --with blake3 python -m benchmarks.hash_cost`; a Provenance table maps every number to its source.
 - `stress-tests.md` — the catalogue of datacenter realities (mechanisms M1–M8, scenarios S/C/N/W/E) and the table of recorded rows. Rows are recorded by the tests in `tests/veritor/stress/` into `data/stress*.json`; render §4 with `python -m veritor.stress.report` (`--check` verifies the rendering is current).
 - `honest-prover.md` — the honest prover under faults: fault classes, secure late advice, what the declarations cost and how much the prover must re-execute to know what to declare; `H` rows from `tests/veritor/stress/` into `data/stress-honest.json`, rendered by the same report. The theory is `notes/late-advice.md`.
 - `frontier-report.md` — the honest-server frontier for the 70B serving shape, from `data/frontier-70b.json` (produced by `python -m veritor.evaluation.sweep docs/data/frontier-70b.json --workers 10`).
@@ -29,4 +30,4 @@ What each file is, what it is generated from, and where to start.
 
 ## Data
 
-`data/` holds the recorded measurements the documents above are rendered from: `benchmarks.json`, `frontier-70b.json`, `global-estimate.json`, `stress.json`, `stress-control-flow.json`, `stress-protocol.json`, `stress-honest.json`. They are inputs to the renderers, not hand-edited.
+`data/` holds the recorded measurements the documents above are rendered from: `benchmarks.json`, `frontier-70b.json`, `global-estimate.json`, `hash-cost.json`, `stress.json`, `stress-control-flow.json`, `stress-protocol.json`, `stress-honest.json`. They are inputs to the renderers, not hand-edited.
