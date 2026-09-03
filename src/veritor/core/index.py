@@ -10,8 +10,10 @@ definitions (bisect within a step list, divide within a ``repeat``).
 
 The circuit's inputs and weights are source gates inside the units.  The
 input gates ``In``, the weight gates ``W``, the boundary
-``In ∪ ⋃_r Out(R_r)`` and each interior ``R_r \\ (boundary ∪ W)`` are lazy
-address sets built the same way; nothing about them is stored.
+``In ∪ ⋃_r Out(R_r)`` and each interior ``⋃_{V ⊆ R_r} Out(V) \\ Out(R_r)``
+(the outputs of the verification units inside ``R_r`` that are not boundary
+positions) are lazy address sets built the same way; nothing about them is
+stored.
 
 The per-kind table (:meth:`Index.kinds`) also records which kinds are
 *closed*: fed nothing but source gates at every call site, hence
@@ -47,7 +49,7 @@ is a later phase: today a unit is always a whole copy of a definition.
 
 from __future__ import annotations
 
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from math import gcd
@@ -72,7 +74,7 @@ from .description import (
 from .errors import InvalidArtifact
 from .gates import INPUT_SOURCE, WEIGHT_SOURCE
 from .identity import Digest, identity_digest
-from .indexed import IndexedDomain, IntervalDifferenceDomain
+from .indexed import IndexedDomain
 from .limits import CompilationLimits
 
 
@@ -244,7 +246,12 @@ class KindSummary:
     interfaces of one copy: its ports as declared (a superset of what its
     gates read, so pricing by it is conservative) and ``Out``, its declared
     outputs resolved to the unpinned gates it owns; ``out_bits`` is the width
-    of ``Out`` in bits.  ``source_inputs`` and ``source_weights`` count the
+    of ``Out`` in bits.  ``interior_count`` is the number of interior
+    positions inside one copy: for a replay unit the outputs of its
+    verification units that are not its own outputs (what the prover
+    commits when the unit is opened), for a kind above the cut the sum over
+    the replay units inside, ``0`` for a verification unit.
+    ``source_inputs`` and ``source_weights`` count the
     input and weight gates inside one copy.  ``children`` counts, per child
     kind, the copies one copy of this kind calls directly;
     ``verification_units`` and ``verification_kinds`` describe the
@@ -287,6 +294,7 @@ class KindSummary:
     input_count: int
     out_count: int
     out_bits: int
+    interior_count: int
     reach_bits: int
     ancestor_bits: int
     source_inputs: int
@@ -441,20 +449,18 @@ class Index:
 
         return _Boundary(self)
 
-    def interior(self, replay_unit: int) -> IntervalDifferenceDomain:
-        """``R_r`` minus the boundary and the weights: its interval minus ``Out`` and its pinned runs."""
+    def interior(self, replay_unit: int) -> IndexedDomain[int]:
+        """The interior of ``R_r``: the outputs of its verification units that are not boundary positions.
 
-        frame = self.replay_units.unit(replay_unit).frame
-        definition = frame.definition
-        return IntervalDifferenceDomain(
-            frame.base,
-            frame.base + definition.size,
-            (
-                (frame.base + run.start, run.count, run.stride)
-                for runs in (definition.out_runs, definition.input_runs, definition.weight_runs)
-                for run in runs
-            ),
-        )
+        ``⋃_{V ⊆ R_r} Out(V) \\ Out(R_r)``, in address order.  A verification
+        unit's internal gates are never committed (a sampled unit is checked
+        by recomputing them from its opened inputs), a source gate is a
+        boundary or weight position and is in no ``Out``, and a unit output
+        that is also an output of the replay unit is committed once, at the
+        boundary.
+        """
+
+        return _Interior(self, replay_unit)
 
     def kinds(self) -> tuple[KindSummary, ...]:
         """One row per kind reachable from the root, in first-visit order.
@@ -504,6 +510,7 @@ class Index:
                 input_count=definition.input_count,
                 out_count=definition.out_count,
                 out_bits=definition.out_bits,
+                interior_count=definition.interior_total,
                 reach_bits=reach[definition.digest],
                 ancestor_bits=ancestor[definition.digest],
                 source_inputs=definition.input_total,
@@ -665,6 +672,157 @@ class _Boundary:
 
     def __len__(self) -> int:
         return self.count
+
+
+class _Interior:
+    """Lazy ``⋃_{V ⊆ R_r} Out(V) \\ Out(R_r)`` in address order, with ``O(depth)`` rank and unrank.
+
+    The rank of an address is the number of verification-unit outputs below
+    it inside the replay unit (``step_vout`` prefix sums along the descent to
+    the unit ``V`` holding it, then a bisection in ``V``'s sorted ``Out``)
+    minus the number of the replay unit's own outputs below it (run
+    arithmetic over the unit definition's ``out_runs``); the subtraction is
+    exact because ``Out(R_r) ⊆ ⋃_V Out(V)`` (see
+    :attr:`Definition.interior_total`).  Unrank descends the same prefix
+    sums, bisecting over the steps of a definition and the copies of a
+    ``repeat`` with the same subtraction applied to each candidate, and ends
+    with a bisection in ``V``'s sorted ``Out``.  Every level costs a
+    logarithm times the number of runs of the replay unit's interface; the
+    address order makes the domain independent of how a unit's runs happen
+    to be ordered.  Iteration walks the verification units once.
+    """
+
+    __slots__ = ("_frame", "_index", "count", "identity_digest", "replay_unit")
+
+    def __init__(self, index: Index, replay_unit: int) -> None:
+        self._index = index
+        self._frame = index.replay_units.unit(replay_unit).frame
+        self.replay_unit = replay_unit
+        self.count = self._frame.definition.interior_total
+        self.identity_digest = identity_digest(
+            "veritor/indexed-domain/interior/v2",
+            {"index": index.digest, "replay_unit": replay_unit},
+        )
+
+    @property
+    def digest(self) -> Digest:
+        return self.identity_digest
+
+    @property
+    def interval(self) -> range:
+        return self._frame.interval
+
+    def _out_between(self, low: int, high: int) -> int:
+        """``Out(R_r)`` members with a relative offset in ``[low, high)``."""
+
+        definition = self._frame.definition
+        return definition.out_below(high) - definition.out_below(low)
+
+    def _rank(self, item: int) -> int | None:
+        if type(item) is not int or item not in self._frame.interval:
+            return None
+        offset = item - self._frame.base
+        replay = self._frame.definition
+        if replay.out_rank(offset) is not None:
+            return None  # a boundary position
+        frame, relative, before = self._frame, offset, 0
+        while frame.definition.role != VERIFICATION:
+            definition = frame.definition
+            index = definition.step_at_address(relative)
+            step = definition.steps[index]
+            if not isinstance(step, CallStep):
+                raise InvalidArtifact(f"{_short(definition)} holds a gate outside every verification unit")
+            copy, relative = divmod(relative - definition.step_address[index], step.child.size)
+            before += definition.step_vout[index] + copy * step.child.vout_total
+            frame = frame.child(index, copy)
+        offsets = frame.definition.sorted_out_offsets
+        position = bisect_left(offsets, relative)
+        if position == len(offsets) or offsets[position] != relative:
+            return None  # an internal gate or a source gate of the unit
+        return before + position - replay.out_below(offset)
+
+    def contains(self, item: int) -> bool:
+        return self._rank(item) is not None
+
+    def __contains__(self, item: object) -> bool:
+        return self.contains(item)  # type: ignore[arg-type]
+
+    def rank(self, item: int) -> int:
+        rank = self._rank(item)
+        if rank is None:
+            raise KeyError(item)
+        return rank
+
+    def unrank(self, rank: int) -> int:
+        if type(rank) is not int:
+            raise TypeError("rank must be an integer")
+        if not 0 <= rank < self.count:
+            raise IndexError(f"rank {rank} is outside domain of size {self.count}")
+        frame, base = self._frame, 0  # ``base``: the copy's offset within the replay unit
+        while frame.definition.role != VERIFICATION:
+            definition = frame.definition
+            steps, addresses, vout = definition.steps, definition.step_address, definition.step_vout
+
+            def before_step(i: int) -> int:  # interior members ahead of step ``i``
+                return vout[i] - self._out_between(base, base + addresses[i])
+
+            index = _last_at_most(before_step, len(steps) - 1, rank)
+            step = steps[index]
+            if not isinstance(step, CallStep):
+                raise InvalidArtifact(f"{_short(definition)} holds a gate outside every verification unit")
+            rank -= before_step(index)
+            child, start = step.child, base + addresses[index]
+
+            def before_copy(c: int) -> int:  # interior members ahead of copy ``c`` of the step
+                return c * child.vout_total - self._out_between(start, start + c * child.size)
+
+            copy = _last_at_most(before_copy, step.count - 1, rank)
+            rank -= before_copy(copy)
+            base = start + copy * child.size
+            frame = frame.child(index, copy)
+        offsets = frame.definition.sorted_out_offsets
+
+        def through(j: int) -> int:  # interior members among the unit's first ``j + 1`` outputs
+            return j + 1 - self._out_between(base, base + offsets[j] + 1)
+
+        low, high = 0, len(offsets) - 1
+        while low < high:  # the first output with ``rank`` interior members ahead of it and itself one
+            middle = (low + high) // 2
+            if through(middle) > rank:
+                high = middle
+            else:
+                low = middle + 1
+        return self._frame.base + base + offsets[low]
+
+    def __iter__(self) -> Iterator[int]:
+        replay = self._frame.definition
+        base = self._frame.base
+        for unit in Units(self._frame, VERIFICATION, self._frame.verification_before):
+            unit_base = unit.frame.base
+            for offset in unit.frame.definition.sorted_out_offsets:
+                address = unit_base + offset
+                if replay.out_rank(address - base) is None:
+                    yield address
+
+    def __len__(self) -> int:
+        return self.count
+
+
+def _last_at_most(value: Callable[[int], int], last: int, target: int) -> int:
+    """The largest ``i`` in ``[0, last]`` with ``value(i) <= target``, for nondecreasing ``value``.
+
+    ``value(0)`` is ``0`` for the prefix counts this serves, so there is
+    always one.
+    """
+
+    low, high = 0, last
+    while low < high:
+        middle = (low + high + 1) // 2
+        if value(middle) <= target:
+            low = middle
+        else:
+            high = middle - 1
+    return low
 
 
 # -- validity of the role marks ------------------------------------------------
@@ -1395,6 +1553,14 @@ def validate_marks(root: Definition, limits: CompilationLimits) -> None:
     2. Verification marks tile every replay unit the same way.
     3. No mark is nested inside a mark of the same role.
     4. Every verification unit's proof cost is within the completeness cap.
+    5. Every replay unit's declared outputs are declared outputs of the
+       verification units inside it (``Out(R) ⊆ ⋃_V Out(V)``, the refinement
+       the interior commitment relies on).  This follows from 2: a replay
+       unit and the unmarked definitions between it and its verification
+       units have no gate steps, so every output they declare resolves,
+       through the declared outputs of the calls it passes, to a gate of a
+       verification unit that the unit declares.  :attr:`Definition.
+       interior_total` checks the count for each replay unit as well.
     """
 
     replay_tiled: dict[str, bool] = {}
@@ -1450,3 +1616,4 @@ def validate_marks(root: Definition, limits: CompilationLimits) -> None:
         raise InvalidArtifact("the root is marked verification but is not inside a replay unit")
     if not replay_tiled[root.digest]:
         raise _offending_step(root, replay_tiled, "replay")
+    root.interior_total  # noqa: B018 - every replay unit's Out(R) ⊆ ⋃ Out(V), by count

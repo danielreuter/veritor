@@ -116,13 +116,18 @@ def test_boundary_and_interiors_match_the_reference_derivation(helpers):
             boundary.unrank(boundary.count)
         for r, unit in enumerate(units):
             interior = index.interior(r)
-            members = [a for a in unit if a not in expected and not flat[a].is_source]
+            # the interior: the declared outputs of the verification units inside, less the boundary
+            unit_outputs = {a for node in index.verification_units(r) for a in lazy.Out(node)}
+            members = [a for a in unit if a in unit_outputs and a not in expected]
             assert list(iter_domain(interior)) == members
             assert [interior.rank(a) for a in members] == list(range(len(members)))
+            assert [a for a in unit if interior.contains(a)] == members
             assert lazy.Out(index.replay_units.unit(r)) == tuple(a for a in unit if a in expected and not flat[a].is_input)
-        # the activations and the weights units are all source gates: nothing to replay
+            assert set(lazy.Out(index.replay_units.unit(r))) <= unit_outputs  # Out(R) ⊆ ⋃ Out(V)
+        # the activations and the weights units are all source gates: nothing to replay; a dot
+        # declares only its sum, which is the row's output: the row commits no interior position
         assert index.interior(0).count == 0 and index.interior(1).count == 0
-        assert index.interior(2).count == cols * (2 * k - 2)
+        assert index.interior(2).count == 0
         assert boundary.identity_digest != index.interior(0).identity_digest
     assert len(boundary) == boundary.count
 
@@ -190,6 +195,7 @@ def test_kinds_table_summarizes_each_definition_once(helpers):
         input_count=k + k * cols,
         out_count=cols,
         out_bits=cols * 8,
+        interior_count=0,  # every dot's output is a row output: committed at the boundary
         reach_bits=cols * 8,  # a row's dots are circuit outputs and nothing reads them
         ancestor_bits=rows * cols * 8,  # enclosed by the root alone
         source_inputs=0,
@@ -211,6 +217,7 @@ def test_kinds_table_summarizes_each_definition_once(helpers):
         input_count=0,
         out_count=0,  # every declared output is an input gate: pinned, not in Out
         out_bits=0,
+        interior_count=0,
         reach_bits=rows * cols * 8,  # every row reads the activations: structurally they reach everything
         ancestor_bits=rows * cols * 8,
         source_inputs=rows * k,
@@ -232,6 +239,7 @@ def test_kinds_table_summarizes_each_definition_once(helpers):
         input_count=0,
         out_count=0,  # every declared output is a weight gate: pinned, not in Out
         out_bits=0,
+        interior_count=0,
         reach_bits=rows * cols * 8,
         ancestor_bits=rows * cols * 8,
         source_inputs=0,

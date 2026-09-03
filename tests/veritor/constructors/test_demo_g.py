@@ -48,8 +48,9 @@ def test_demo_g_marks_dots_as_replay_and_macs_as_verification() -> None:
         assert index.verification_units(unit).count == cells + length
         sizes = [v.size for v in index.verification_units(unit)]
         assert sizes == [1] * cells + [2] * length
-        # the interior is the macs' gates but the declared final add; the cells are pinned
-        assert index.interior(unit).count == 2 * length - 1
+        # the interior is the macs' declared sums but the final one (the dot's output, a boundary
+        # position); the muls are internal to their macs and the cells are pinned
+        assert index.interior(unit).count == length - 1
     cells_in_order = [
         a
         for unit in index.replay_units
