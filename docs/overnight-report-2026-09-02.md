@@ -6,11 +6,13 @@ use output reach) was resolved on the morning of 09-02 (`fb3d074`) and is the st
 
 ## 1. Where the implementation stands
 
-Fifty-six first-parent commits on `main` since the last report (`8c9d501..`), 171 files,
-+61 000 lines of which roughly half are recorded data (`docs/data/*.json`, golden vectors).
-`src/veritor` is 21 400 lines; the suite is 1 584 tests in about three minutes, `mypy` clean on
-all 70 modules, `ruff` clean on `src/veritor`, `tests` and `benchmarks` (the 89 remaining findings
-are all in the legacy `src/circuit_cut_analysis`, see §5).
+One hundred and twenty commits on `main` since the last report (`8c9d501..`), 49 on the first
+parent, 401 files, +88 000 / −47 000 lines: 31 000 of the additions are recorded data
+(`docs/data/*.json`, golden vectors, GPU captures) and 45 000 of the deletions are the retired
+legacy package. `src/veritor` is 29 300 lines in 85 modules; the suite is 1 604 tests, 1 591 in
+the default run of about three minutes and 13 marked `slow` (SP1 proofs, GPU-simulator
+comparisons, the million-request scale test). `mypy`, `ruff check` and `ruff format --check`
+are clean over `src`, `tests`, `benchmarks` and `zk`, and CI blocks on all three.
 
 | Landed | Commit | What |
 |---|---|---|
@@ -32,6 +34,7 @@ are all in the legacy `src/circuit_cut_analysis`, see §5).
 | GPT-2 Small on pinned gates, RTX 4090 capture | `e063ea6`, `cdf85b0` | `Gate.arg_widths`; the pinned gate set replaces `ml_gates` (1-, 16-, 32-bit gates: `tc_dot16` chains, fp32 elementwise with own `exp`/`tanh`/`rsqrt`); numpy reference; 4090 capture through our own kernels matched bit-exactly on CPU; 37 225 sampled VUs re-executed, 0 disagreements; `run_protocol` on 1- and 12-layer one-token slices (§3.6); proof statements take a mixed-width gate set |
 | Epoch layer | `0c87c60` | `protocol/epoch.py`: commitment stream (hash chain), sealed rounds, verifier-private round seed with HMAC-derived per-run seeds, `EpochVerifier`/`EpochProver`/`run_epoch`, `EpochReport` = Σ_rounds `Bound(union, θ, η/rounds, f_max)`; `analysis.union(tables)`; `VerifierSession` takes a seedless `Claim` (§2.7, `docs/epoch.md`); 52 tests |
 | VU-granularity interior | `6eca696`, `6aa78c0` | `Index.interior(r)` = ⋃ `Out(V)` over the VUs in `R_r` minus `Out(R_r)` (lazy, O(depth) `rank`/`unrank`, one linear walk to iterate); `KindSummary.interior_count` drives `Cost` and `parameters`; evidence for a sampled VU opens its inputs and outputs and the verifier recomputes the VU; proof layer, SP1 guest and wire v7 rebuilt; interior commitment on the ClusterG ladder 11.1 s → 0.4 s (§2.8, §3.3) |
+| Compiler gaps closed | `91f5595` | check outputs (a root's `checks` field; `FORMAT_VERSION` 3; worth 0 bits in every cut; `CHECK_MISMATCH` at admission and on the opened boundary); exact advice bits (`G.advice_bits(x, a)` with the canonical zero-padded encoding checked; Schedule v4 bit-packed); route-independent MoE step bodies (the route enters at the call site); conditionally-absent outputs as blank check outputs (`TruncatedRequestsG` v2); the `Tracer` normalises a count-one range to a wire (§2.9) |
 | Legacy code retired | `cf09060` | `src/circuit_cut_analysis` (2.2 MB, 89 lint findings) and `archive/` deleted, −45 560 lines; the exact min-cut reference is a 30-line networkx max-flow; the GPT-2 cross-check keeps the legacy DAG's recorded counts; dependencies are now `networkx` and `numpy` (`jax`, `scipy` were the legacy package's) |
 
 Packages now: `core/` (+ `silicon.py`), `compile/`, `protocol/` (+ `proofs/`), `analysis/`
@@ -177,6 +180,34 @@ since the padded server's budget at θ = (1/2, 1/8) fell from 333,957 to 228,933
 server at E = 8 can no longer afford the policy that made it win. Stress rows were re-recorded
 (overheads fall, capacities unchanged).
 
+### 2.9 Check outputs, exact advice, one body per route-dependent step (`91f5595`)
+
+The five gaps the control-flow scenarios surfaced are closed. A root definition may now mark
+declared outputs as *check outputs*, fixed to a constant of the description: the verifier
+requires the claim to hold the constant at admission and the opened boundary value to equal it
+(`CHECK_MISMATCH`, checked before the public-I/O comparison so a lying route or acceptance is
+named as such), and `Bound`, the reach, the ancestor cut and the exact reference all price them
+at zero (an output fixed to a constant contributes a factor 1 to `|Y|`; the sentence is in
+`bound.py`). The MoE and speculative `ok` words and S7's absent slots are check outputs: C2b's
+`U` fell 168 → 132 and C3b's 232 → 194, the `ok` words' 16 bits and their reach inflation.
+Advice is charged at the bit length the constructor declares, after the compiler checks that
+`a` is the canonical `ceil(bits/8)`-byte zero-padded encoding of that many bits (undeclared
+advice still costs `8|a|`): C2b 24 → 20 bits, C3b and S7 24 → 18, and the schedule, which was a
+20-byte magic plus 28 bytes per join, is bit-packed (Schedule v4: Elias-gamma header, fixed-width
+fields, one bit for `resume`), so C1b's advice fell 1 632 → 118 bits and its capacity
+2 208 → 694, N4/N5's 3 648 → 271 (capacity 4 128 → 751). The advised MoE step is one definition
+whatever the route: the router's columns, the chosen experts' weights and the expert *ids*
+(constant-table words) enter as the parent ranges at the call site, and `route_check` ranks the
+advised experts against the rest, so the advised descriptions in the crossover sweep fell from
+55–169 kB to 39–52 kB at the cost of `5k(E − 1)` gates per token (+2 %). Two things did not
+change: the request RU's own digest still carries the route, because its body holds the call
+sites whose ranges *are* the route (the design, not a gap), and nothing is charged zero for an
+output-determined choice (flag 5 stands; S7's stream length is 18 bits of advice, and
+`docs/stress-tests.md` §1 says why a presence mask is not free). Landing it on the VU-output
+interior took the wire to v8 (both branches had claimed v7), a re-pinned baseline transcript and
+regenerated SP1 vectors; the C2 crossover ladder runs at vocabulary 16 because advised routing
+names experts by the constant table.
+
 ## 3. Measurements
 
 ### 3.1 The headline estimate (`42b9e2b`, `docs/global-estimate.md`)
@@ -318,10 +349,11 @@ Decisions the implementation surfaced that belong in the paper.
    outputs determine the shape. Until it is proved, M3 is not implemented and S7 charges the
    stream length as advice.
 
-6. **Outputs the verifier requires to equal a constant carry no capacity.** The in-circuit check
-   words of §2.4 are accepted only when they equal 1, so they contribute a factor 1 to `|Y|`, not
-   `2^{width}`. `Bound` currently charges them as interface (U 112 → 144 in C2). One sentence in
-   the capacity theorem and a `check` output role in the compiler fix this.
+6. **Outputs the verifier requires to equal a constant carry no capacity — built (§2.9).** The
+   in-circuit check words of §2.4 are accepted only when they equal 1, so they contribute a
+   factor 1 to `|Y|`, not `2^{width}`; the compiler's check outputs and `Bound` now price them
+   at zero. The capacity theorem needs the one sentence, and the compilation section the
+   `checks` field of a root definition.
 
 7. **Gate semantics are pinned per silicon by reference implementation and golden vectors**
    (§2.3). The gate-set section should say so, and say that the "tensor-core dot" contract in the
@@ -337,18 +369,14 @@ Decisions the implementation surfaced that belong in the paper.
    round's total verifier work; the epoch's capacity is `Σ_rounds Bound + Σ_runs |a|`, not
    `Bound + A`). `cost(union)` counts the model's weight commitment once per run.
 
-10. **Advice charging.** `Compilation.advice_bits = 8·len(a)`; the constructor should be able to
-    declare the exact bit length (20 bits are charged as 24 today), and the schedule's per-join
-    encoding carries the output-determined length (flag 5).
+10. **Advice charging — built (§2.9).** A constructor declares the exact bit length of its
+    advice and the compiler checks the canonical encoding before charging it; the paper's `|a|`
+    should be read as that bit length, with the canonical-encoding condition stated (otherwise
+    the padding bits are a free channel). The schedule's per-join encoding still carries the
+    output-determined length (flag 5).
 
 ## 5. Outstanding
 
-- **Compiler gaps from the control-flow scenarios**: a `check` output role (flag 6); exact
-  advice bit length (flag 10); call-site immediates (a base-and-stride input range outside the
-  definition digest) so a route-dependent step shares one definition body (advised MoE at E = 8,
-  k = 2, 128 tokens is 3.2× the padded description today); an output presence mask for
-  conditionally-absent outputs (padded speculative decoding emits γ + 1 slots per step with
-  blanks, 464 vs 176 interface bits); the `Tracer` should serialise a count-one range as a wire.
 - **Epoch layer, not built**: boundary storage and deterministic replay from a KV state, a wire
   format for `RoundChallenge`/`EpochReport`, a beacon binding for the `q` side, and rewiring the
   datacenter simulation onto the layer (the adversary test is dedicated).
@@ -358,3 +386,10 @@ Decisions the implementation surfaced that belong in the paper.
   42 minutes of uptime; left alone.
 - **Unfinished in the scenarios**: bounded expert capacity for MoE, multi-layer routing, workload
   size in the crossover sweep (the ladder stops at E = 16, where advice first wins).
+- **Repository**: after the last merge the whole tree was `ruff format`ted at the default width
+  (120 files, no semantic change) and CI now blocks on `ruff check`, `ruff format --check` and
+  `mypy`; `docs/README.md` indexes the documents and how each is regenerated; the README
+  describes the objects as they are (VU-output interior, recomputed units, check outputs, exact
+  advice bits, `f_max`, the epoch layer). The tests over three seconds (the rate-versus-fold
+  comparison at 13 s, the datacenter fixture at 12 s, the epoch adversary at 10 s) were left in
+  the default run: they are the correctness checks of the bound, not perf tests.
