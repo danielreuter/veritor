@@ -30,7 +30,14 @@ from veritor.protocol.proofs import (
 
 from .conftest import RECORDING_BACKEND, RecordingBackend
 
-VECTORS = Path(__file__).resolve().parents[4] / "zk" / "sp1" / "common" / "tests" / "vectors.json"
+VECTORS = (
+    Path(__file__).resolve().parents[4]
+    / "zk"
+    / "sp1"
+    / "common"
+    / "tests"
+    / "vectors.json"
+)
 
 type Openings = tuple[tuple[bytes, tuple[bytes, ...]], ...]
 
@@ -131,13 +138,17 @@ def gate_set_vector(gate_set: GateSet) -> dict[str, object]:
     return {
         "id": gate_set.id,
         "width": width,
-        "manifest": json.dumps(gate_set.manifest, sort_keys=True, separators=(",", ":")),
+        "manifest": json.dumps(
+            gate_set.manifest, sort_keys=True, separators=(",", ":")
+        ),
         "digest": gate_set.digest,
         "evaluations": evaluations,
     }
 
 
-def with_opening(witness: Witness, target: tuple[int, int], opening: tuple[bytes, tuple[bytes, ...]]) -> Witness:
+def with_opening(
+    witness: Witness, target: tuple[int, int], opening: tuple[bytes, tuple[bytes, ...]]
+) -> Witness:
     return Witness(
         tuple(
             tuple(opening if (i, j) == target else item for j, item in enumerate(items))
@@ -177,12 +188,20 @@ def batch_vector(statement: Statement, witness: Witness) -> dict[str, object]:
 
 
 def generate(compiled, expect, honest_values, model_weights) -> dict[str, object]:
-    recording = RecordingBackend(TransparentBackend(compiled.circuit.gate_set, compiled))
+    recording = RecordingBackend(
+        TransparentBackend(compiled.circuit.gate_set, compiled)
+    )
     verifier = VerifierSession(
-        expect(backend=RECORDING_BACKEND, session_id=b"vectors"), compiled, backend=recording
+        expect(backend=RECORDING_BACKEND, session_id=b"vectors"),
+        compiled,
+        backend=recording,
     )
     prover = ProverSession(
-        compiled, verifier.header, honest_values, weight_tree=model_weights[1], backend=recording
+        compiled,
+        verifier.header,
+        honest_values,
+        weight_tree=model_weights[1],
+        backend=recording,
     )
     replay = verifier.receive_boundary(prover.boundary())
     sample = verifier.receive_interiors(prover.interiors(replay))
@@ -196,7 +215,11 @@ def generate(compiled, expect, honest_values, model_weights) -> dict[str, object
         "domains": domain_vectors(verifier),
         "gate_sets": [
             gate_set_vector(gate_set)
-            for gate_set in (make_word_gate_set(16), make_isa_gate_set(16), make_word_gate_set(8))
+            for gate_set in (
+                make_word_gate_set(16),
+                make_isa_gate_set(16),
+                make_word_gate_set(8),
+            )
         ],
         "batch": batch_vector(statement, witness),
     }
