@@ -14,7 +14,7 @@ import os
 import re
 import tempfile
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 try:
@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover - Windows has no advisory file locks
     fcntl = None  # type: ignore[assignment]
 
-__all__ = ["Row", "dump", "load", "record", "row_key"]
+__all__ = ["Recorder", "Row", "dump", "load", "record", "row_key"]
 
 # Catalogue order of the ID prefixes (docs/stress-tests.md, section 2).
 _SECTIONS = "SCNWE"
@@ -69,6 +69,42 @@ class Row:
         if unknown:
             raise ValueError(f"row {identifier!r} has unknown fields {sorted(unknown)}")
         return cls(id=identifier, **body)  # type: ignore[arg-type]
+
+
+@dataclass
+class Recorder:
+    """Rows recorded by one scenario, each ID once; a test fixture writes them when the test passes."""
+
+    rows: list[Row] = field(default_factory=list)
+
+    def record(
+        self,
+        *,
+        id: str,
+        what: str,
+        mechanism: str,
+        advice_bits: int,
+        capacity_bits: int,
+        overhead: float,
+        description_bytes: int,
+        verdict: str,
+        notes: str = "",
+    ) -> Row:
+        if any(row.id == id for row in self.rows):
+            raise ValueError(f"row {id!r} recorded twice by one test")
+        row = Row(
+            id=id,
+            what=what,
+            mechanism=mechanism,
+            advice_bits=advice_bits,
+            capacity_bits=capacity_bits,
+            overhead=overhead,
+            description_bytes=description_bytes,
+            verdict=verdict,
+            notes=notes,
+        )
+        self.rows.append(row)
+        return row
 
 
 def row_key(identifier: str) -> tuple[int, int, str]:

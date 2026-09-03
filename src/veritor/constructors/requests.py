@@ -13,13 +13,16 @@ Structure.  The root has no ports.  It calls the ``weights`` unit once, then
 the requests grouped by kind: requests with the same prompt length,
 ``max_new`` and banned-list length are the same kind, and every group is one
 ``repeat`` of that kind (a single call for a group of one), in the order the
-kinds first appear in ``x``.  So the root's output runs are one per group
-however many requests there are -- the verifier's
-``max_output_runs`` bounds the number of *shapes*, not the number of
-requests -- and :meth:`output_layout` says which request each output
-belongs to.  A request's ports are the weights; its prompt tokens (and its
-banned tokens, and for a sampling shape its random words) are ``in`` gates
-inside it; its outputs are the tokens it generates.
+kinds first appear in ``x``.  A request's tokens are the last gates of its
+steps, so each generated position is its own run of the root's ``Out``; a
+``repeat`` of ``n`` copies makes each of them one run of ``n`` elements, so
+the root has ``sum over kinds of max_new`` output runs however many
+requests there are -- the verifier's ``max_output_runs`` bounds the
+generated positions of the distinct *shapes*, not of the requests -- and
+:meth:`output_layout` says which request each output belongs to.  A
+request's ports are the weights; its prompt tokens (and its banned tokens,
+and for a sampling shape its random words) are ``in`` gates inside it; its
+outputs are the tokens it generates.
 
 Marks.  ``request`` is the replay unit (with ``weights``, the one unit of
 source gates); the verification units are the row-sized kinds of

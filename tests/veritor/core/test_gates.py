@@ -9,6 +9,7 @@ from veritor.core import (
     make_isa_gate_set,
     make_word_gate_set,
 )
+from veritor.core.gates import namespaced, union_gate_set
 
 
 def test_word_gate_set_declares_add_and_mul_with_costs():
@@ -158,6 +159,50 @@ def test_gate_set_identity_binds_declarations_not_callables():
     assert base.id == "tests.gates@1"
     with pytest.raises(ValueError, match="twice"):
         GateSet((base["add"], base["add"]), name="x", version="1")
+
+
+def test_a_union_namespaces_the_operators_and_shares_the_sources():
+    """Two members of the toy ISA: every operator twice under its namespace, one ``in``, one ``weight``."""
+
+    isa = make_isa_gate_set(16)
+    fleet = union_gate_set({"sm80": isa, "sm90": isa}, name="tests.fleet", version="1")
+
+    assert len(fleet) == 2 * (len(isa) - 2) + 2
+    assert (fleet.input_gates, fleet.weight_gates) == (("in",), ("weight",))
+    assert "add@sm80" in fleet and "add@sm90" in fleet and "add" not in fleet
+    for name in ("add", "sub", "mul", "lt", "eq", "shr"):
+        for namespace in ("sm80", "sm90"):
+            copy = fleet[namespaced(name, namespace)]
+            assert (copy.arity, copy.width, copy.replay_cost, copy.proof_cost) == (
+                isa[name].arity,
+                isa[name].width,
+                isa[name].replay_cost,
+                isa[name].proof_cost,
+            )
+            assert copy.evaluate((7, 3)) == isa[name].evaluate((7, 3))
+    assert fleet.id == "tests.fleet@1"
+    assert fleet.digest != isa.digest
+    assert fleet.digest == union_gate_set({"sm90": isa, "sm80": isa}, name="tests.fleet", version="1").digest
+    with pytest.raises(InvalidArtifact, match="unknown gate"):
+        fleet["add@sm70"]
+
+
+def test_a_union_checks_its_namespaces_and_its_members_sources():
+    isa, narrow = make_isa_gate_set(16), make_isa_gate_set(8)
+
+    with pytest.raises(ValueError, match="at least one member"):
+        union_gate_set({}, name="x", version="1")
+    with pytest.raises(ValueError, match="contain no '@'"):
+        union_gate_set({"a@b": isa}, name="x", version="1")
+    with pytest.raises(ValueError, match="contain no '@'"):
+        union_gate_set({"": isa}, name="x", version="1")
+    with pytest.raises(ValueError, match="disagree on the source gate"):
+        union_gate_set({"wide": isa, "narrow": narrow}, name="x", version="1")
+    with pytest.raises(TypeError, match="are GateSets"):
+        union_gate_set({"a": object()}, name="x", version="1")  # type: ignore[dict-item]
+    # a union of one member is that member with its operators renamed
+    solo = union_gate_set({"only": isa}, name="x", version="1")
+    assert [gate.name for gate in solo] == sorted([*(f"{g.name}@only" for g in isa if g.source is None), "in", "weight"])
 
 
 def test_value_codec_is_fixed_width_big_endian():

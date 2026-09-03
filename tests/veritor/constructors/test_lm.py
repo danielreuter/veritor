@@ -10,6 +10,7 @@ about 2,000 gates, traced and compiled in a few milliseconds.
 from __future__ import annotations
 
 import random
+from typing import cast
 
 import pytest
 
@@ -20,13 +21,20 @@ from veritor.constructors import (
     LMShape,
     Parameters,
     Request,
+    ScheduleError,
     ToyLM,
     TracerError,
     random_parameters,
     reference_generate,
     schedule_fcfs,
 )
-from veritor.constructors.lm import Decoder, argmax_token, concat, sample_token
+from veritor.constructors.lm import (
+    Decoder,
+    allowed_mask,
+    argmax_token,
+    concat,
+    sample_token,
+)
 from veritor.core import Compiled, make_isa_gate_set
 
 SHAPE = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=6, width=16)
@@ -269,6 +277,76 @@ def test_the_sample_kind_is_a_verification_unit_reading_the_random_word() -> Non
     assert kinds[sample.digest].copies == 3 and kinds[sample.digest].out_bits == 16
     with pytest.raises(TracerError, match="one random word per generated position"):
         constructor((Request((1, 2), 3),), schedule.encode())
+
+
+def test_the_masked_argmax_is_the_first_maximum_among_the_allowed_tokens() -> None:
+    """Brute force against the reference rule, including the corner the plain chain gets wrong."""
+
+    rng = random.Random(7)
+    for _ in range(200):
+        logits = [rng.choice((0, 1, 0xFFFF, rng.randrange(1 << 16))) for _ in range(8)]
+        allowed = [rng.random() < 0.5 for _ in range(8)]
+        if not any(allowed):
+            allowed[rng.randrange(8)] = True
+        best = max(logits[k] for k in range(8) if allowed[k])
+        expected = min(k for k in range(8) if allowed[k] and logits[k] == best)
+        assert argmax_token(logits, allowed) == expected
+    assert argmax_token([0] * 8, [False, True, *[False] * 6]) == 1  # token 0 banned, all logits zero
+    assert argmax_token([5, 5, 5], [True] * 3) == argmax_token([5, 5, 5]) == 0
+    with pytest.raises(ValueError, match="at least one allowed"):
+        argmax_token([1, 2], [False, False])
+    assert allowed_mask(4, ()) is None and allowed_mask(4, (1, 3)) == (True, False, True, False)
+
+
+def test_the_masked_sampler_never_draws_a_banned_token() -> None:
+    logits = [0xF000, 0x0000, 0x8000, 0x1000, 0x0000, 0x0000, 0x0000, 0x2FFF]
+    allowed = [False, True, False, True, True, True, True, True]
+    # weights 0, 1, 0, 2, 1, 1, 1, 5: total 11
+    drawn = [sample_token(SAMPLED, logits, r, allowed) for r in range(32)]
+    assert set(drawn) <= {1, 3, 4, 5, 6, 7} and 0 not in drawn and 2 not in drawn
+    cdf = [0, 1, 1, 3, 4, 5, 6, 11]
+    assert drawn == [sum(entry <= ((r * 11) >> 5) for entry in cdf) for r in range(32)]
+    with pytest.raises(ValueError, match="at least one allowed"):
+        sample_token(SAMPLED, logits, 0, [False] * 8)
+
+
+def test_banned_lists_are_checked_and_the_reference_respects_them() -> None:
+    parameters = random_parameters(SHAPE, seed=3)
+    request = Request((1, 2, 3), 3, banned=(0, 4, 5))
+
+    tokens = reference_generate(SHAPE, parameters, (request,))[0]
+    assert len(tokens) == 3 and not set(tokens) & {0, 4, 5}
+    with pytest.raises(ValueError, match="below vocab"):
+        SHAPE.check_banned(Request((1,), 1, banned=(8,)))
+    with pytest.raises(ValueError, match="at least one allowed"):
+        SHAPE.check_banned(Request((1,), 1, banned=tuple(range(8))))
+    with pytest.raises(ScheduleError, match="distinct"):
+        Request((1,), 1, banned=(2, 2))
+    with pytest.raises(ScheduleError, match="nonnegative token ids"):
+        Request((1,), 1, banned=(-1,))
+
+
+@pytest.mark.parametrize("tensor_parallel", (2, 4))
+def test_a_tensor_parallel_dot_is_partial_dots_and_a_fixed_order_reduction(tensor_parallel: int) -> None:
+    """The marked ``dot_k`` splits into ``t`` unmarked partial dots and ``t - 1`` sums; unmarked dots do not."""
+
+    plain, sharded = ToyLM(SHAPE), ToyLM(SHAPE, tensor_parallel=tensor_parallel)
+    k = SHAPE.hidden
+
+    assert sharded.dot(k).digest != plain.dot(k).digest
+    assert sharded.dot(k, marked=False).digest == plain.dot(k, marked=False).digest
+    assert sharded.dot(k).role == "verification" and sharded.dot(k).input_count == 2 * k
+    steps = cast("list[dict[str, object]]", sharded.tracer._bodies[sharded.dot(k).digest]["steps"])
+    partial = sharded.dot(k // tensor_parallel, marked=False).digest
+    calls = [step for step in steps if step["kind"] == "call" and step["digest"] == partial]
+    gates = [step for step in steps if step["kind"] == "gate"]
+    assert len(calls) == tensor_parallel and len(gates) == tensor_parallel - 1
+    assert all(step["gate"] == "add" for step in gates)
+    with pytest.raises(ValueError, match="must divide"):
+        ToyLM(SHAPE, tensor_parallel=3)
+    with pytest.raises(ValueError, match="positive integer"):
+        ToyLM(SHAPE, tensor_parallel=0)
+    assert sharded.manifest == {"tensor_parallel": tensor_parallel} and plain.manifest == {}
 
 
 def test_concat_requires_consecutive_ranges() -> None:

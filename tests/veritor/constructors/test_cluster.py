@@ -404,3 +404,44 @@ def test_the_compiler_checks_the_input_count_against_the_prompts(fcfs) -> None:
 
     with pytest.raises(CompileError, match="expects 9 inputs, got 8"):
         Compiler(GATES).compile(description, inputs[:-1])
+
+
+def test_a_heterogeneous_fleet_traces_each_pod_on_its_own_gates_in_one_circuit() -> None:
+    """Two pods, two namespaced copies of the toy ISA: the steps on each are their own kinds, the
+    weights and the caches are shared, a request prefilled on one architecture decodes on the other,
+    and a gate outside the union does not compile."""
+
+    parameters = random_parameters(SHAPE, seed=2)
+    fleet = ClusterG(SHAPE, pods=2, slots=1, steps=4, arches=("sm80", "sm90"))
+    plain = ClusterG(SHAPE, pods=2, slots=1, steps=4)
+    requests = (Request((1, 2), 3), Request((3,), 2))
+    schedule = Schedule(2, 1, 4, (Join(0, 0, 0, 0, 3), Join(1, 0, 0, 1, 2)))
+
+    assert fleet.gate_set.id == "veritor.toy-isa-fleet@1" and len(fleet.gate_set) == 14
+    assert fleet.digest != plain.digest and fleet.manifest["arches"] == ["sm80", "sm90"]
+    description, inputs = fleet(requests, schedule.encode())
+    compiled = Compiler(fleet.gate_set).compile(description, inputs)
+    assert generated(fleet, compiled, requests, schedule, parameters) == reference_generate(SHAPE, parameters, requests)
+    kinds = {row.kind: row for row in compiled.index.kinds()}
+    sm80, sm90 = fleet.models["sm80"], fleet.models["sm90"]
+    assert sm80.tracer is sm90.tracer is fleet.lm.tracer
+    assert kinds[sm80.dot(4).digest].copies > 0 and kinds[sm90.dot(4).digest].copies > 0
+    assert sm80.dot(4).digest != sm90.dot(4).digest and sm80.weights_unit() is sm90.weights_unit()
+    steps = [row for row in kinds.values() if row.role == "replay" and row.source_weights == 0]
+    assert len(steps) == 5  # prefill and two decodes on sm80 (3 kinds), prefill and one decode on sm90
+    prefill80, prefill90 = fleet.step((("prefill", 2, 0),), "sm80"), fleet.step((("prefill", 1, 0),), "sm90")
+    assert prefill80.digest != fleet.step((("prefill", 2, 0),), "sm90").digest and kinds[prefill90.digest].copies == 1
+    # the description names the namespaced gates; the plain ISA rejects it
+    body = json.loads(description)
+    with pytest.raises(CompileError, match="unknown gate"):
+        Compiler(GATES).compile(description, inputs)
+    assert "add@sm80" in description.decode() and "add@sm90" in description.decode() and body
+
+    # prefilled on sm80 at step 0, swapped out, decoded on sm90 from step 1
+    across = Schedule(2, 1, 4, (Join(0, 0, 0, 0, 1), Join(1, 1, 0, 0, 2, resume=True), Join(1, 3, 0, 1, 1)))
+    description, inputs = fleet(requests, across.encode())
+    compiled = Compiler(fleet.gate_set).compile(description, inputs)
+    tokens = generated(fleet, compiled, requests, across, parameters)
+    assert tokens[0] == reference_generate(SHAPE, parameters, requests)[0]
+    with pytest.raises(ValueError, match="one architecture per pod"):
+        ClusterG(SHAPE, pods=2, slots=1, steps=4, arches=("sm80",))

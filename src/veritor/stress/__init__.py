@@ -16,20 +16,30 @@ from veritor.stress.measure import (
     honest_cost,
     price,
 )
-from veritor.stress.rows import Row, dump, load, record, row_key
+from veritor.stress.models import SAMPLED, SHAPE, Model, make_model
+from veritor.stress.rows import Recorder, Row, dump, load, record, row_key
+from veritor.stress.serving import Served, by_request, serve
 
 __all__ = [
     "ETA",
     "POLICY",
+    "SAMPLED",
+    "SHAPE",
     "Measurement",
+    "Model",
     "Price",
+    "Recorder",
     "Row",
+    "Served",
+    "by_request",
     "compile_scenario",
     "dump",
     "evaluate",
     "honest_cost",
     "load",
+    "make_model",
     "price",
     "record",
     "row_key",
+    "serve",
 ]
