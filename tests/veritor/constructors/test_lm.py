@@ -9,6 +9,8 @@ about 2,000 gates, traced and compiled in a few milliseconds.
 
 from __future__ import annotations
 
+import random
+
 import pytest
 
 from veritor.compile import Compiler
@@ -24,7 +26,7 @@ from veritor.constructors import (
     reference_generate,
     schedule_fcfs,
 )
-from veritor.constructors.lm import concat
+from veritor.constructors.lm import Decoder, argmax_token, concat, sample_token
 from veritor.core import Compiled, make_isa_gate_set
 
 SHAPE = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=6, width=16)
@@ -179,6 +181,94 @@ def test_kinds_are_row_sized_and_shared_across_positions() -> None:
         lm.prefill(0)
     with pytest.raises(TypeError, match="LMShape"):
         ToyLM(object())  # type: ignore[arg-type]
+
+
+SAMPLED = LMShape(vocab=8, d_model=4, heads=2, layers=1, context=8, width=16, sampling=True)
+
+
+def test_a_sampling_shape_has_a_bit_budget_and_two_more_constants() -> None:
+    assert (SAMPLED.vocab_bits, SAMPLED.score_bits, SAMPLED.random_bits) == (3, 4, 5)
+    assert SAMPLED.vocab_bits + 2 * SAMPLED.score_bits + SAMPLED.random_bits == SAMPLED.width
+    assert SAMPLED.score_shift == 12 and SAMPLED.sampler_constants == (12, 5)
+    assert SAMPLED.weight_count == SHAPE.weight_count + 2 and SHAPE.sampler_constants == ()
+    assert SAMPLED.manifest == {**SHAPE.manifest, "context": 8, "sampling": True}
+    parameters = random_parameters(SAMPLED, seed=3)
+    assert parameters.flatten()[-3:] == (4, 12, 5)  # shift, score_shift, random_bits
+    wide = LMShape(vocab=32, d_model=4, heads=2, layers=1, context=8, width=16, sampling=True)
+    assert (wide.vocab_bits, wide.score_bits, wide.random_bits) == (5, 3, 5)
+    with pytest.raises(ValueError, match="sampling needs width"):
+        LMShape(vocab=8, d_model=4, heads=2, layers=1, context=8, width=5, sampling=True)
+    with pytest.raises(ValueError, match="sampling must be a bool"):
+        LMShape(vocab=8, d_model=4, heads=2, layers=1, context=8, width=16, sampling=1)  # type: ignore[arg-type]
+
+
+def test_the_reference_sampler_draws_by_the_squared_score_cdf() -> None:
+    logits = [0xF000, 0x0000, 0x8000, 0x1000, 0x0000, 0x0000, 0x0000, 0x2FFF]
+    # scores 15, 0, 8, 1, 0, 0, 0, 2 -> weights 226, 1, 65, 2, 1, 1, 1, 5; total 302
+    cdf = [226, 227, 292, 294, 295, 296, 297, 302]
+    thresholds = [(r * 302) >> 5 for r in range(32)]
+    drawn = [sample_token(SAMPLED, logits, r) for r in range(32)]
+    assert all(0 <= t < 302 for t in thresholds)
+    assert drawn == [sum(entry <= t for entry in cdf) for t in thresholds]  # the first j with cdf_j > t
+    assert drawn.count(0) == 24 and drawn[24] == 1 and set(drawn) == {0, 1, 2, 3}  # 226/302 of the mass on token 0
+    # all-zero logits: every weight is one, the token is r * vocab >> random_bits
+    assert [sample_token(SAMPLED, [0] * 8, r) for r in (0, 4, 31)] == [0, 1, 7]
+    with pytest.raises(ValueError, match="5-bit word"):
+        sample_token(SAMPLED, logits, 32)
+
+
+def test_randomness_is_checked_against_the_shape() -> None:
+    with pytest.raises(ValueError, match="one random word per generated position"):
+        SAMPLED.check_randomness(Request((1,), 2))
+    with pytest.raises(ValueError, match="at most 5 bits"):
+        SAMPLED.check_randomness(Request((1,), 1, (32,)))
+    with pytest.raises(ValueError, match="argmax model takes no randomness"):
+        SHAPE.check_randomness(Request((1,), 1, (3,)))
+    with pytest.raises(ValueError, match="argmax model takes no randomness"):
+        reference_generate(SHAPE, random_parameters(SHAPE, 0), (Request((1,), 1, (3,)),))
+    with pytest.raises(ValueError, match="sampling model needs a random word"):
+        Decoder(random_parameters(SAMPLED, 0)).forward(1)
+
+
+@pytest.mark.parametrize("seed", (0, 1, 2))
+def test_the_sample_unit_computes_the_reference_sampler(seed: int) -> None:
+    """One request through a one-slot cluster with sampling: the circuit draws what Python draws."""
+
+    rng = random.Random(seed)
+    parameters = random_parameters(SAMPLED, seed=seed)
+    request = Request(tuple(rng.randrange(8) for _ in range(rng.randint(1, 3))), 4, tuple(rng.randrange(32) for _ in range(4)))
+    reference = reference_generate(SAMPLED, parameters, (request,))[0]
+
+    assert single_request(SAMPLED, request, parameters) == reference
+    # the same logits pass through the incremental decoder and the sampler by hand
+    decoder = Decoder(parameters)
+    for token in request.prompt[:-1]:
+        decoder.logits(token)
+    logits = decoder.logits(request.prompt[-1])
+    assert sample_token(SAMPLED, logits, request.randomness[0]) == reference[0]
+    assert argmax_token(logits) == max(range(8), key=lambda k: (logits[k], -k))
+    # different randomness, different tokens (with overwhelming probability over 4 positions)
+    other = Request(request.prompt, 4, tuple((r + 16) % 32 for r in request.randomness))
+    assert reference_generate(SAMPLED, parameters, (other,))[0] != reference
+
+
+def test_the_sample_kind_is_a_verification_unit_reading_the_random_word() -> None:
+    lm = ToyLM(SAMPLED)
+    sample = lm.sample()
+
+    assert sample.role == "verification" and sample.input_count == 8 + 4 and sample.output_count == 1
+    assert lm.prefill(2).output_count == SAMPLED.state_size(2) + 1 and lm.decode(3).output_count == SAMPLED.state_size(1) + 1
+    request = Request((1, 2), 3, (0, 1, 2))
+    constructor = ClusterG(SAMPLED, pods=1, slots=1, steps=3)
+    schedule = schedule_fcfs((request,), 1, 1, 3)
+    description, inputs = constructor((request,), schedule.encode())
+    assert inputs == (1, 2, 0, 1, 2)  # the prompt, then one random word per position, step by step
+    compiled = Compiler(make_isa_gate_set(16)).compile(description, inputs)
+    assert compiled.circuit.input_count == 5
+    kinds = {row.kind: row for row in compiled.index.kinds()}
+    assert kinds[sample.digest].copies == 3 and kinds[sample.digest].out_bits == 16
+    with pytest.raises(TracerError, match="one random word per generated position"):
+        constructor((Request((1, 2), 3),), schedule.encode())
 
 
 def test_concat_requires_consecutive_ranges() -> None:

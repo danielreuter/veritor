@@ -94,7 +94,7 @@ def test_fcfs_run_generates_what_the_reference_generates(fcfs) -> None:
 def test_a_hand_written_schedule_is_semantically_transparent() -> None:
     """One slot per pod; request 1 takes request 0's slot at step 2 and cuts it to two tokens."""
 
-    schedule = Schedule(2, 1, 6, (Join(0, 0, 0, 0), Join(0, 2, 0, 1), Join(1, 0, 0, 2), Join(1, 4, 0, 3)))
+    schedule = Schedule(2, 1, 6, (Join(0, 0, 0, 0, 2), Join(0, 2, 0, 1, 2), Join(1, 0, 0, 2, 4), Join(1, 4, 0, 3, 1)))
     constructor = ClusterG(SHAPE, pods=2, slots=1, steps=6)
     compiled = compile_run(constructor, REQUESTS, schedule)
     parameters = random_parameters(SHAPE, seed=7)
@@ -132,6 +132,39 @@ def test_mixed_lifetimes_in_one_pod_compile_and_decode_like_the_reference(max_ne
         SHAPE, parameters, requests
     )
     assert len(compiled.circuit.outputs) == sum(max_news)
+
+
+def test_a_restarted_request_streams_the_reference_and_keeps_its_aborted_steps() -> None:
+    """Pod 0 fails at step 2: request 0 (two tokens streamed) restarts from its prefill on pod 1 at step 3.
+
+    The aborted attempt's two steps stay in the circuit (their tokens were
+    observed); the restart recomputes positions 0 and 1 inside pod 1's chain
+    and streams positions 2 and 3.  The outputs are exactly the reference.
+    """
+
+    requests = (Request((1, 2), 4), Request((5,), 2), Request((7, 0, 3), 2))
+    joins = (Join(0, 0, 0, 0, 2), Join(0, 0, 1, 1, 2), Join(1, 0, 0, 2, 2), Join(1, 3, 0, 0, 4))
+    schedule = Schedule(2, 2, 7, joins)
+    constructor = ClusterG(SHAPE, pods=2, slots=2, steps=7)
+    compiled = compile_run(constructor, requests, schedule)
+    parameters = random_parameters(SHAPE, seed=9)
+
+    assert schedule.streamed_before(requests) == (0, 0, 0, 2)
+    assert schedule.active_steps(requests) == {0: 4, 1: 2, 2: 2}
+    assert generated(constructor, compiled, requests, schedule, parameters) == reference_generate(
+        SHAPE, parameters, requests
+    )
+    # the prompt of request 0 is prefilled twice: once per attempt, in (pod, step) order
+    assert constructor.flatten_inputs(requests, schedule) == (1, 2, 5, 7, 0, 3, 1, 2)
+    # the weights, pod 0's steps 0-1, pod 1's steps 0-1 and 3-6
+    assert compiled.index.replay_units.count == 1 + 2 + 2 + 4
+    assert len(compiled.circuit.outputs) == 4 + 2 + 2
+    # the recomputed positions are declared by their steps but are not circuit outputs
+    tokens_declared = sum(len(occupants) for occupants in schedule.occupancy(requests).values())
+    assert tokens_declared == 2 + 2 + 2 + 4 > len(compiled.circuit.outputs)
+    # a restart while the first attempt still holds its slot is not a schedule
+    with pytest.raises(TracerError, match="restarts at step 1"):
+        constructor(requests, Schedule(2, 2, 7, (*joins[:3], Join(1, 1, 1, 0, 4))).encode())
 
 
 def test_two_layers_and_a_different_fcfs_shape() -> None:
@@ -298,7 +331,7 @@ def test_bad_requests_and_bad_advice_fail_to_trace() -> None:
     long = (Request((1, 2, 3), 4),)  # 3 + 4 positions in a context of 6
     with pytest.raises(TracerError, match="needs 7 positions; the context is 6"):
         ClusterG(SHAPE, 1, 1, 4)(long, schedule_fcfs(long, 1, 1, 4).encode())
-    cut = Schedule(1, 1, 3, (Join(0, 0, 0, 0),))  # the run ends first: 3 + 3 fits
+    cut = Schedule(1, 1, 3, (Join(0, 0, 0, 0, 3),))  # the run ends first: 3 + 3 fits
     assert ClusterG(SHAPE, 1, 1, 3)(long, cut.encode())[1] == (1, 2, 3)
     with pytest.raises(TracerError, match="outside the vocabulary"):
         ClusterG(SHAPE, 1, 1, 1)((Request((8,), 1),), schedule_fcfs((Request((8,), 1),), 1, 1, 1).encode())
