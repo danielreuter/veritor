@@ -4,8 +4,9 @@
 //! canonical witness bytes.  Output (public values): `sha256(statement) ||
 //! verdict`, where the verdict is `1` iff every opening authenticates under
 //! its commitment root with the exact `merkle.py` framing, every public input
-//! matches, and every gate of every obligation satisfies the pinned semantics
-//! of the statement's gate set.
+//! matches, and every obligation's gates, recomputed from its opened inputs
+//! under the pinned semantics of the statement's gate set, agree with its
+//! opened outputs.
 //!
 //! `cycle-tracker-report-*` prints let the host executor attribute cycles to
 //! parsing, hashing the statement, Merkle authentication and relation checks.

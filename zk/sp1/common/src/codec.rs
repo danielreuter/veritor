@@ -6,29 +6,30 @@
 //! digests are 32 raw bytes.
 //!
 //! ```text
-//! Statement   = MAGIC "veritor/proofs/statement/v1\0"
+//! Statement   = MAGIC "veritor/proofs/statement/v2\0"
 //!               str gate_set_id  digest gate_set_digest  u32 width
 //!               list<KindProgram> kinds (strictly increasing by kind digest)
 //!               list<Obligation>  obligations
 //! KindProgram = digest kind  u32 size  list<u32> ports  list<GateOp> gates (len == size)
+//!               list<u32> outputs (gate offsets the copy opens, strictly increasing)
 //! GateOp      = str op  list<Arg> args
 //! Arg         = u8 space (0 = port index, 1 = local gate offset)  u32 value
 //! Obligation  = digest session  digest compiled  u64 unit  u64 replay_unit  digest kind
 //!               list<CommitmentRef> commitments  list<PositionRef> positions
-//!               list<u32> inputs (one per port)  list<u32> gates (one per gate offset)
+//!               list<u32> inputs (one per port)  list<u32> outputs (one per opened offset)
 //! CommitmentRef = u64 owner_plus_two  digest domain_id  digest root  u64 count
 //! PositionRef   = u32 commitment  u64 rank  u64 position  str schema
 //!                 u8 has_expected  [bytes expected]
 //!
-//! Witness     = MAGIC "veritor/proofs/witness/v1\0"
+//! Witness     = MAGIC "veritor/proofs/witness/v2\0"
 //!               list< list< Opening > >    (per obligation, per position)
 //! Opening     = bytes value  list<digest> path
 //! ```
 
 use core::fmt;
 
-pub const STATEMENT_MAGIC: &[u8] = b"veritor/proofs/statement/v1\0";
-pub const WITNESS_MAGIC: &[u8] = b"veritor/proofs/witness/v1\0";
+pub const STATEMENT_MAGIC: &[u8] = b"veritor/proofs/statement/v2\0";
+pub const WITNESS_MAGIC: &[u8] = b"veritor/proofs/witness/v2\0";
 
 /// A malformed statement or witness.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,7 +54,8 @@ fn err<T>(message: impl Into<String>) -> Result<T> {
 pub enum Arg {
     /// Index into `KindProgram::ports` (and so into `Obligation::inputs`).
     Port(u32),
-    /// Offset of an earlier gate of the same copy (index into `Obligation::gates`).
+    /// Offset of an earlier gate of the same copy (recomputed, or opened if the
+    /// kind lists it in `KindProgram::outputs`).
     Local(u32),
 }
 
@@ -71,6 +73,9 @@ pub struct KindProgram {
     /// The port ordinals the copy reads, ascending.
     pub ports: Vec<u32>,
     pub gates: Vec<GateOp>,
+    /// The gate offsets a copy opens (its declared outputs and its source
+    /// gates), ascending; every other gate is recomputed by the checker.
+    pub outputs: Vec<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -100,8 +105,10 @@ pub struct Obligation {
     pub kind: [u8; 32],
     pub commitments: Vec<CommitmentRef>,
     pub positions: Vec<PositionRef>,
+    /// `inputs[k]`: the slot of the kind's `k`-th read port.
     pub inputs: Vec<u32>,
-    pub gates: Vec<u32>,
+    /// `outputs[m]`: the slot of the gate at the kind's `m`-th opened offset.
+    pub outputs: Vec<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -256,7 +263,19 @@ fn parse_program(reader: &mut Reader<'_>) -> Result<KindProgram> {
     for offset in 0..gate_count {
         gates.push(parse_gate(reader, offset as u32, port_count)?);
     }
-    Ok(KindProgram { kind, size, ports, gates })
+    let output_count = reader.count("outputs")?;
+    let mut outputs = Vec::with_capacity(output_count);
+    for index in 0..output_count {
+        let offset = reader.u32("output offset")?;
+        if offset >= size {
+            return err(format!("kind opens gate offset {offset} of {size}"));
+        }
+        if index > 0 && outputs[index - 1] >= offset {
+            return err("kind outputs must be strictly increasing");
+        }
+        outputs.push(offset);
+    }
+    Ok(KindProgram { kind, size, ports, gates, outputs })
 }
 
 fn parse_indices(reader: &mut Reader<'_>, what: &str, bound: usize) -> Result<Vec<u32>> {
@@ -318,15 +337,21 @@ fn parse_obligation(reader: &mut Reader<'_>, statement_kinds: &[KindProgram]) ->
             program.ports.len()
         ));
     }
-    let gates = parse_indices(reader, "gates", position_count)?;
-    if gates.len() != program.size as usize {
+    let outputs = parse_indices(reader, "outputs", position_count)?;
+    if outputs.len() != program.outputs.len() {
         return err(format!(
-            "obligation binds {} gates but its kind has {}",
-            gates.len(),
-            program.size
+            "obligation binds {} outputs but its kind opens {}",
+            outputs.len(),
+            program.outputs.len()
         ));
     }
-    Ok(Obligation { session, compiled, unit, replay_unit, kind, commitments, positions, inputs, gates })
+    let mut distinct = outputs.clone();
+    distinct.sort_unstable();
+    distinct.dedup();
+    if distinct.len() != outputs.len() {
+        return err("obligation outputs must be distinct positions");
+    }
+    Ok(Obligation { session, compiled, unit, replay_unit, kind, commitments, positions, inputs, outputs })
 }
 
 /// Parse a canonical statement.

@@ -4,9 +4,11 @@
 //! every opening is authenticated under its commitment with the exact leaf
 //! and node framing, decoded canonically at the gate set's width, compared
 //! with the public input where the statement pins one, and then every
-//! non-source gate of every obligation is checked against the pinned
-//! semantics of the statement's gate set.  The two passes are separate so the
-//! guest can attribute cycles to each.
+//! obligation's gates are recomputed from its opened inputs under the pinned
+//! semantics of the statement's gate set and compared with its opened
+//! outputs.  Only a copy's inputs and outputs are opened; the gates between
+//! are never committed, so the recomputation is what stands for them.  The two
+//! passes are separate so the guest can attribute cycles to each.
 
 use core::fmt;
 
@@ -24,6 +26,7 @@ pub enum CheckError {
     Value { obligation: usize, position: usize },
     UnknownOp { kind: [u8; 32], op: String },
     Arity { kind: [u8; 32], offset: usize },
+    SourceNotOpened { kind: [u8; 32], offset: usize },
     Relation { obligation: usize, offset: usize, op: String },
 }
 
@@ -48,6 +51,9 @@ impl fmt::Display for CheckError {
             }
             CheckError::UnknownOp { op, .. } => write!(f, "unknown gate {op}"),
             CheckError::Arity { offset, .. } => write!(f, "gate {offset} has the wrong arity"),
+            CheckError::SourceNotOpened { offset, .. } => {
+                write!(f, "source gate {offset} is not opened")
+            }
             CheckError::Relation { obligation, offset, op } => {
                 write!(f, "obligation {obligation} gate {offset} violates {op}")
             }
@@ -129,7 +135,15 @@ pub fn check_openings(
     Ok(decoded)
 }
 
-/// Pass 2: every non-source gate of every obligation satisfies its relation.
+/// Pass 2: recompute every obligation's gates from its opened inputs; every
+/// opened gate must agree with what was recomputed.
+///
+/// A source gate has no relation: its opened value *is* its value (the
+/// boundary pins an `in` gate to the public input, `kappa_W` a weight), so
+/// the kind must open it.  Every other gate is evaluated from what it reads
+/// -- an opened input or an earlier gate of the copy -- and, when the kind
+/// opens it, compared with the opened value.  Byte-identical in outcome to
+/// `TransparentBackend._check_relations`.
 pub fn check_relations(
     statement: &Statement,
     decoded: &[Vec<u64>],
@@ -139,6 +153,8 @@ pub fn check_relations(
         let program = statement
             .program(&obligation.kind)
             .expect("the parser checked every obligation's kind");
+        let mut local: Vec<u64> = Vec::with_capacity(program.gates.len());
+        let mut next_output = 0usize;
         for (offset, gate) in program.gates.iter().enumerate() {
             let op = set
                 .op(&gate.op)
@@ -146,19 +162,41 @@ pub fn check_relations(
             if gate.args.len() != op.arity() {
                 return Err(CheckError::Arity { kind: program.kind, offset });
             }
+            // `program.outputs` is strictly increasing, so one cursor finds the opened slot.
+            let slot = if next_output < program.outputs.len()
+                && program.outputs[next_output] as usize == offset
+            {
+                let slot = obligation.outputs[next_output] as usize;
+                next_output += 1;
+                Some(slot)
+            } else {
+                None
+            };
             if op.is_source() {
+                let slot = slot.ok_or(CheckError::SourceNotOpened { kind: program.kind, offset })?;
+                local.push(values[slot]);
                 continue;
             }
             let read = |arg: Arg| -> u64 {
                 match arg {
                     Arg::Port(k) => values[obligation.inputs[k as usize] as usize],
-                    Arg::Local(j) => values[obligation.gates[j as usize] as usize],
+                    Arg::Local(j) => local[j as usize],
                 }
             };
-            let out = values[obligation.gates[offset] as usize];
             let (a, b) = (read(gate.args[0]), read(gate.args[1]));
-            if set.evaluate(op, a, b) != out {
-                return Err(CheckError::Relation { obligation: index, offset, op: gate.op.clone() });
+            let computed = set.evaluate(op, a, b);
+            match slot {
+                None => local.push(computed),
+                Some(slot) => {
+                    if values[slot] != computed {
+                        return Err(CheckError::Relation {
+                            obligation: index,
+                            offset,
+                            op: gate.op.clone(),
+                        });
+                    }
+                    local.push(values[slot]);
+                }
             }
         }
     }
