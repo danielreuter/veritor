@@ -66,6 +66,12 @@ class WorkloadConfig:
     Independent of the random failure process, so a run can be made to
     contain a restart for certain.
     """
+    abandon_rate: float = 0.0
+    """Probability that the client of a request a pod failure cut off gives up.
+
+    An abandoned request is not re-queued: what it streamed before the
+    failure is all it gets (a truncated request, as a client disconnect).
+    """
 
     def __post_init__(self) -> None:
         for name in ("pods", "slots", "steps", "arrivals"):
@@ -79,6 +85,8 @@ class WorkloadConfig:
                 )
         if not 0 <= self.failure_rate < 1:
             raise ValueError("failure_rate must lie in [0, 1)")
+        if not 0 <= self.abandon_rate <= 1:
+            raise ValueError("abandon_rate must lie in [0, 1]")
         if type(self.downtime) is not int or self.downtime < 1:
             raise ValueError("downtime must be a positive number of steps")
         if self.step_seconds <= 0 or self.load <= 0:
@@ -113,6 +121,8 @@ class Failure:
     step: int
     aborted: tuple[int, ...]
     """The request ids whose attempts the failure cut off."""
+    abandoned: tuple[int, ...] = ()
+    """Those of ``aborted`` whose clients gave up: truncated, never restarted."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +153,12 @@ class Simulation:
     @property
     def unserved(self) -> int:
         return sum(arrival.request_id is None for arrival in self.arrivals)
+
+    @property
+    def abandoned(self) -> int:
+        """Requests truncated by a failure their client did not wait out."""
+
+        return sum(len(failure.abandoned) for failure in self.failures)
 
     @property
     def tokens(self) -> int:
@@ -210,7 +226,8 @@ def simulate(
 
     Each step: pods fail (the random process, plus the injected failures);
     the failed pods' attempts end where they are and their requests go back
-    to the head of the queue; live pods admit the earliest waiting arrivals
+    to the head of the queue (unless the client gives up, ``abandon_rate``:
+    then the request stays truncated); live pods admit the earliest waiting arrivals
     into their free slots; every occupant generates one token, streamed if
     its position is new for the request; attempts that emitted the EOS token
     or reached ``max_new`` free their slot.  Restarts recompute the positions
@@ -259,16 +276,22 @@ def simulate(
                 fails = True
                 del forced[pod]
             if fails:
-                aborted = []
+                aborted: list[int] = []
+                abandoned: list[int] = []
                 for slot in range(config.slots):
                     item = running.pop((pod, slot), None)
                     if item is not None:
                         finish(item, pod, step, FAILED)
                         aborted.append(item.arrival)
-                failures.append(Failure(pod, step, tuple(aborted)))
-                pending = sorted(
-                    pending + aborted
-                )  # re-queued at their original arrival time
+                        if (
+                            config.abandon_rate > 0
+                            and rng.random() < config.abandon_rate
+                        ):
+                            abandoned.append(item.arrival)
+                failures.append(Failure(pod, step, tuple(aborted), tuple(abandoned)))
+                pending = sorted(  # re-queued at their original arrival time
+                    pending + [index for index in aborted if index not in abandoned]
+                )
                 down_until[pod] = step + config.downtime
                 occupied[pod][step] = -1
                 continue
@@ -334,7 +357,12 @@ def simulate(
             for join, r in zip(joins, records, strict=True)
         ),
         failures=tuple(
-            Failure(f.pod, f.step, tuple(request_id[a] for a in f.aborted))
+            Failure(
+                f.pod,
+                f.step,
+                tuple(request_id[a] for a in f.aborted),
+                tuple(request_id[a] for a in f.abandoned),
+            )
             for f in failures
         ),
         streamed=tuple(tuple(streamed[index]) for index in admitted),

@@ -218,5 +218,10 @@ storage; `Run.values` stands in for it.
   ...)` (tested); a reader of a single transcript sees a per-round `eta`.
 - **Not built.** Storage of boundary data, deterministic replay from a KV
   state, a wire format for `RoundChallenge`/`EpochReport`, and a beacon
-  binding. The datacenter simulation was not rewired onto the epoch layer; the
-  adversary test is dedicated and uses the simulation's tolerance.
+  binding. The datacenter simulation runs through the epoch layer in
+  `veritor.simulation.epochs` (a simulation cut into rounds of `ClusterG`
+  runs, one per fleet or per pod, through `run_epoch`; the `H6` rows of
+  `docs/honest-prover.md`, section 8), but a request that spans two rounds
+  still cannot read the KV its earlier steps declared in the previous round's
+  run (the cross-run read, listed there); the adversary test is dedicated and
+  uses the simulation's tolerance.
