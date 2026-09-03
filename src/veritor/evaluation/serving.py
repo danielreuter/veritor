@@ -400,14 +400,14 @@ class _Builder:
             )
             return {unit: count}
         if ctx == _FREE:
-            cell = self.cells(gate, count, _IN_REPLAY)
+            cells = self.cells(gate, count, _IN_REPLAY)
             block = self.define(
                 (gate + "_block", count),
                 REPLAY,
                 a=_ARITY[gate] * count,
                 outputs=count,
-                calls=cell,
-                feeds={kind: _feed(a=A) for kind in cell},
+                calls=cells,
+                feeds={kind: _feed(a=A) for kind in cells},
             )
             return {block: 1}
         role = None if ctx == _IN_VERIFICATION else VERIFICATION

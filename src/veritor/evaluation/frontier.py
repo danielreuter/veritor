@@ -34,6 +34,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from fractions import Fraction
 from pathlib import Path
+from typing import cast
 
 from veritor.analysis import BoundOptions, CostParameters, PolicyGrid, bound, cost
 from veritor.core import KindTable, VerificationPolicy, exact_fraction
@@ -131,8 +132,8 @@ class Point:
             q=Fraction(str(record["q"])),
             s=Fraction(str(record["s"])),
             eta=Fraction(str(record["eta"])),
-            bits=float(record["bits"]),  # type: ignore[arg-type]
-            out_bits=int(record["out_bits"]),  # type: ignore[arg-type]
+            bits=float(cast(float, record["bits"])),
+            out_bits=int(cast(int, record["out_bits"])),
             overhead=Fraction(str(record["overhead"])),
             work=Fraction(str(record["work"])),
             seconds=float(record["seconds"]),  # type: ignore[arg-type]

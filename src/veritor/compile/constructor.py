@@ -54,7 +54,7 @@ class Compilation:
     """
 
     compiled: Compiled
-    constructor: str
+    constructor: Digest
     inputs: tuple[int, ...]
     advice: bytes
 

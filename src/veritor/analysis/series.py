@@ -25,7 +25,7 @@ NEG_INF = -math.inf
 _CHUNK = 256
 
 
-def _up(values: np.ndarray, terms: int = 1) -> np.ndarray:
+def _up(values: np.ndarray | float, terms: int = 1) -> np.ndarray:
     """Round ``values`` up by more than ``terms`` float64 operations can err."""
 
     values = np.asarray(values, dtype=float)

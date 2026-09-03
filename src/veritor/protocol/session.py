@@ -18,6 +18,7 @@ from veritor.analysis import bound
 from veritor.compile import Compilation
 from veritor.core import (
     Compiled,
+    Digest,
     ResourceLimit,
     VerificationLimits,
     VerificationPolicy,
@@ -91,8 +92,8 @@ class Expectation:
     """
 
     session_id: bytes
-    compiled_digest: str
-    constructor: str
+    compiled_digest: Digest
+    constructor: Digest
     advice: bytes
     policy: VerificationPolicy
     parameters: VerifierParameters
