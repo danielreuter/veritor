@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
+from typing import Any
 
 from veritor.compile import constructor_digest
 from veritor.core import Digest, JSONValue
@@ -205,7 +206,8 @@ class AdaptedRequestsG:
         """``base`` with the adapted matrix replaced by ``adapter``: the reference for one tenant."""
 
         layers = list(base.layers)
-        layers[self.layer] = replace(layers[self.layer], **{self.matrix: adapter})
+        changed: dict[str, Any] = {self.matrix: adapter}
+        layers[self.layer] = replace(layers[self.layer], **changed)
         return replace(base, layers=tuple(layers))
 
     def requests(self, x: object) -> tuple[tuple[tuple[int, ...], Request], ...]:
