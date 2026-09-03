@@ -197,12 +197,14 @@ HEADERS = {
     "verifier_recompute_s": "V recompute",
     "prover_total_s": "P total",
     "verifier_total_s": "V total",
+    "replayed_gates": "replayed gates",
     "interior_positions": "interior positions",
     "openings": "openings",
     "boundary_bytes": "∂ msg",
     "interiors_bytes": "interiors msg",
     "evidence_bytes": "evidence msg",
     "transcript_bytes": "transcript",
+    "replay_us_per_gate": "replay / gate",
     "replay_us_per_position": "replay / position",
     "commit_us_per_position": "commit / position",
     "prove_us_per_opening": "open / opening",
@@ -252,6 +254,7 @@ GROUPS: dict[tuple[str, str], Sequence[Sequence[str]]] = {
         (
             "boundary_count",
             "selected_replay_units",
+            "replayed_gates",
             "interior_positions",
             "sampled_verification_units",
             "openings",
@@ -260,7 +263,7 @@ GROUPS: dict[tuple[str, str], Sequence[Sequence[str]]] = {
             "evidence_bytes",
         ),
         (
-            "replay_us_per_position",
+            "replay_us_per_gate",
             "commit_us_per_position",
             "prove_us_per_opening",
             "verify_merkle_us_per_opening",
@@ -638,9 +641,11 @@ def bottlenecks(document: dict[str, Any]) -> list[str]:
                 f"∝ runs^{_exp(d.exponent('kinds', 'vs_output_runs', 'boundary_unrank_s'))}) while the interior grows with them: "
                 f"`interior(u)` {fmt_time(last.get('interior_build_s'))} (∝ runs^{_exp(d.exponent('kinds', 'vs_output_runs', 'interior_build_s'))}), "
                 f"its `unrank` {fmt_time(last.get('interior_unrank_s'))} (∝ runs^{_exp(d.exponent('kinds', 'vs_output_runs', 'interior_unrank_s'))}), "
-                f"its `contains` {fmt_time(last.get('interior_contains_s'))}.  `IntervalDifferenceDomain` subtracts the output runs one by one "
-                "and `unrank` walks the pieces; `max_output_runs = 256` caps this at a few hundred microseconds per call, so it is bounded, "
-                "not asymptotic, but a hot loop over interior positions should iterate the domain rather than `unrank` each position."
+                f"its `contains` {fmt_time(last.get('interior_contains_s'))}.  The interior (`_Interior`: the VU outputs of the RU minus "
+                "its own `Out`) descends to the VU in `O(depth)` and then subtracts the RU outputs below the address run by run, and "
+                "`unrank` repeats that subtraction at each bisection probe; `max_output_runs = 256` caps this at a few hundred "
+                "microseconds per call, so it is bounded, not asymptotic, but a hot loop over interior positions should iterate the "
+                "domain rather than `unrank` each position."
             )
         if rep and unrolled:
             r_last, u_last = rep["points"][-1], unrolled["points"][-1]
@@ -673,7 +678,7 @@ def bottlenecks(document: dict[str, Any]) -> list[str]:
             out.append(
                 f"- **`{series['name']}`**: the largest shape (`{last.get('shape')}`, {fmt_count(last.get('rows'))} rows, "
                 f"{fmt_count(last.get('replay_kinds'))} replay kinds, n = {fmt_count(last.get('n'))}, "
-                f"{fmt_count(last.get('ru_positions'))} positions per RU) folds in "
+                f"{fmt_count(last.get('ru_gates'))} gates and {fmt_count(last.get('ru_positions'))} interior positions per RU) folds in "
                 f"{fmt_time(last['time_s'])} (Laplace only; ∝ kinds^{_exp(_fit(series, 'time_s'))}), "
                 + (
                     f"knapsack {fmt_time(knap)} (∝ kinds^{_exp(_fit(series, 'knapsack_s'))}), "
@@ -793,7 +798,8 @@ def bottlenecks(document: dict[str, Any]) -> list[str]:
             )
             out.append(
                 f"- **Deployment.**  Committing the interior of a sampled RU costs one leaf hash per position plus the tree "
-                f"(2 hashes per position).  In this gate model every multiply-add is a position: a `step` RU of the largest "
+                f"(2 hashes per position).  The positions are the declared outputs of the RU's verification units (not its own "
+                f"outputs), so the VU marks set the count: a `step` RU of the largest "
                 f"serving shape measured ({shape_note}) has "
                 f"{fmt_count(step)} positions, a `cell` RU {fmt_count(cell)}.  At the measured {fmt_rate(hashes_per_s)} one `step` "
                 f"interior is {fmt_time(2 * step / hashes_per_s) if step else '?'} in this prototype; at {fmt_rate(GPU_HASHES_PER_S)} "
@@ -812,8 +818,11 @@ def bottlenecks(document: dict[str, Any]) -> list[str]:
     if cluster:
         last = cluster["points"][-1]
         out += ["### Protocol end to end", ""]
-        replay_us = d.mean("protocol", "cluster_vs_n", "replay_us_per_position")
+        replay_us = d.mean("protocol", "cluster_vs_n", "replay_us_per_gate")
         commit_us = d.mean("protocol", "cluster_vs_n", "commit_us_per_position")
+        positions_per_gate = _ratio_of_sums(
+            d, "protocol", "cluster_vs_n", "interior_positions", "replayed_gates"
+        )
         prove_us = d.mean("protocol", "cluster_vs_n", "prove_us_per_opening")
         vmerkle_us = d.mean("protocol", "cluster_vs_n", "verify_merkle_us_per_opening")
         vrecompute_us = d.mean(
@@ -834,20 +843,23 @@ def bottlenecks(document: dict[str, Any]) -> list[str]:
         )
         first = cluster["points"][0]
         drift = (
-            f"  The constants drift up along the ladder ({fmt_micro(first.get('replay_us_per_position'))} → "
-            f"{fmt_micro(last.get('replay_us_per_position'))} replay, {fmt_micro(first.get('commit_us_per_position'))} → "
-            f"{fmt_micro(last.get('commit_us_per_position'))} commit) as the per-RU value dictionaries and the transcript strings reach "
-            "hundreds of megabytes: allocator and cache pressure, not an asymptotic term."
-            if first.get("replay_us_per_position")
-            and last.get("replay_us_per_position")
+            f"  The constants drift along the ladder ({fmt_micro(first.get('replay_us_per_gate'))} → "
+            f"{fmt_micro(last.get('replay_us_per_gate'))} replay, {fmt_micro(first.get('commit_us_per_position'))} → "
+            f"{fmt_micro(last.get('commit_us_per_position'))} commit) as the per-RU value dictionaries and the transcript strings grow: "
+            "allocator and cache pressure, not an asymptotic term."
+            if first.get("replay_us_per_gate") and last.get("replay_us_per_gate")
             else ""
         )
+        per_gate = (replay_us or 0) + (commit_us or 0) * (positions_per_gate or 0)
         out.append(
-            f"- **Prover constants** (mean over the ladder): replay {fmt_micro(replay_us)} per interior position "
-            f"(`replay_unit`: one lazy frame walk and one gate evaluation per position), interior commitment "
-            f"{fmt_micro(commit_us)} per position (value encoding plus the Merkle build), openings {fmt_micro(prove_us)} per opening.  "
-            f"Replay + commit together are ~{fmt_micro((replay_us or 0) + (commit_us or 0))} per selected interior position, so the prover's "
-            f"marginal cost is q × (interior size) × that, independent of s.{drift}"
+            f"- **Prover constants** (mean over the ladder): replay {fmt_micro(replay_us)} per replayed gate "
+            f"(`replay_unit`: one lazy frame walk and one gate evaluation for every non-source gate of a selected RU), interior "
+            f"commitment {fmt_micro(commit_us)} per committed position (value encoding plus the Merkle build), openings "
+            f"{fmt_micro(prove_us)} per opening.  The interior is committed at VU-output granularity -- the declared outputs of the "
+            f"RU's verification units that are not its own outputs -- so it holds {_pct(positions_per_gate)} of the replayed gates "
+            f"on this ladder ({fmt_count(last.get('interior_positions'))} positions for {fmt_count(last.get('replayed_gates'))} gates at "
+            f"the top) and replay + commit together are ~{fmt_micro(per_gate)} per replayed gate; the prover's marginal cost is "
+            f"q × Σ_selected (|R| × replay + |interior| × commit), independent of s.{drift}"
         )
         out.append(
             f"- **Verifier constants**: {fmt_micro(vmerkle_us)} per opening for the Merkle path ({fmt_count(last.get('openings'))} openings "
@@ -868,7 +880,7 @@ def bottlenecks(document: dict[str, Any]) -> list[str]:
                 f"- **`RequestsG` vs `ClusterG`**: per-request RUs make the boundary the prompts and tokens only "
                 f"(|∂| = {fmt_count(r_last.get('boundary_count'))} vs {fmt_count(last.get('boundary_count'))} at the same n), so the "
                 f"boundary commitment is {fmt_time(r_last.get('prover_commit_boundary_s'))} vs {fmt_time(last.get('prover_commit_boundary_s'))}; "
-                f"the per-position constants are the same ({fmt_micro(d.mean('protocol', 'requests_vs_n', 'replay_us_per_position'))} replay)."
+                f"the per-gate constants are the same ({fmt_micro(d.mean('protocol', 'requests_vs_n', 'replay_us_per_gate'))} replay)."
             )
         if vs_q and vs_s:
             q_last = vs_q["points"][-1]
@@ -886,18 +898,19 @@ def bottlenecks(document: dict[str, Any]) -> list[str]:
                 f"(∝ s^{_exp(d.exponent('protocol', 'cluster_vs_s', 'prover_replay_s'))})."
             )
         if replay_us and commit_us and gates_per_s and vmerkle_us and vrecompute_us:
-            per_position = (replay_us + commit_us) * 1e-6
+            per_gate = (replay_us + commit_us * (positions_per_gate or 0)) * 1e-6
             per_opening = (vmerkle_us + vrecompute_us) * 1e-6
             label, step = _frontier_ru(d, "serving_step_row")
             out.append(
-                f"- **Deployment.**  The prover's marginal cost is q × Σ_selected |interior| × ({fmt_micro(replay_us + commit_us)} here), "
-                f"{per_position * gates_per_s:.1f}× the honest per-gate evaluation in the same interpreter — the ratio is the meaningful "
-                "number: the prover re-runs the selected RUs and hashes every intermediate value, so it pays the honest computation "
-                "once more (at the model's own rate on real hardware) plus one hash per value.  The hash is the part that does not shrink: "
-                f"at {fmt_rate(GPU_HASHES_PER_S)} a `step` RU of the `{label}` serving shape ({fmt_count(step)} positions) commits in "
-                f"{fmt_time(2 * step / GPU_HASHES_PER_S) if step else '?'}, so a deployment either marks RUs at a granularity whose interiors "
-                "it can afford to hash (the `cell`/`request` trade-off the frontier report prices) or commits to a compressed digest of the "
-                f"interior.  The verifier's work is q·s·|VU| × (positions per VU) × ({fmt_micro(vmerkle_us + vrecompute_us)} per opening here, "
+                f"- **Deployment.**  The prover's marginal cost is q × Σ_selected (|R| × {fmt_micro(replay_us)} + |interior| × "
+                f"{fmt_micro(commit_us)} here), {per_gate * gates_per_s:.1f}× the honest per-gate evaluation in the same interpreter at this "
+                "ladder's interior density — the ratio is the meaningful number: the prover re-runs the selected RUs, so it pays the honest "
+                "computation once more (at the model's own rate on real hardware), and hashes one value per VU output rather than per gate.  "
+                "The hash is the part that does not shrink with a faster evaluator, and the VU marks decide how many there are: "
+                f"at {fmt_rate(GPU_HASHES_PER_S)} a `step` RU of the `{label}` serving shape ({fmt_count(step)} VU-output positions) commits in "
+                f"{fmt_time(2 * step / GPU_HASHES_PER_S) if step else '?'}, so a deployment either marks VUs coarse enough that the interiors "
+                "it must hash are affordable (the `cell`/`request` trade-off the frontier report prices) or commits to a compressed digest of the "
+                f"interior.  The verifier's work is q·s·|VU| × (inputs + outputs per VU) × ({fmt_micro(vmerkle_us + vrecompute_us)} per opening here, "
                 f"{1 / per_opening:,.0f} openings/s): 10^6 openings a step is {fmt_time(1e6 * per_opening)} in this prototype and a few "
                 "seconds compiled, and the evidence for them is "
                 f"{fmt_bytes(1e6 * (bytes_per_opening or 0))} as JSON ({fmt_bytes(1e6 * 32 * 20)} as packed 20-deep paths)."
@@ -956,6 +969,22 @@ def last_bytes_per_leaf(build: dict[str, Any] | None) -> float:
 
 GPU_HASHES_PER_S = 1e9
 """The SHA-256 rate the deployment figures assume; single GPUs are quoted in the 10^9-10^10/s range."""
+
+
+def _ratio_of_sums(
+    d: Data, benchmark: str, series: str, numerator: str, denominator: str
+) -> float | None:
+    """``sum(numerator) / sum(denominator)`` over the points of a series (``None`` without data)."""
+
+    points = d.points(benchmark, series)
+    below = sum(float(p.get(denominator) or 0) for p in points)
+    if not below:
+        return None
+    return sum(float(p.get(numerator) or 0) for p in points) / below
+
+
+def _pct(value: float | None) -> str:
+    return "?" if value is None else f"{100 * value:.0f}%"
 
 
 def _frontier_ru(d: Data, series: str) -> tuple[str, float | None]:

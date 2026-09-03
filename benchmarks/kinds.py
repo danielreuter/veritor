@@ -122,10 +122,12 @@ def run(scale: Scale) -> Benchmark:
             "interior_contains_s",
             "interior_unrank_s",
         ),
-        note="1000 copies of one RU whose declared `Out` resolves to `R` runs (outputs at irregular gaps).  "
-        "`time_s` is `kind_table()`.  `boundary.rank` and a boundary `contains` miss scan the runs (`O(R)`), "
-        "`boundary.unrank` bisects (`O(log R)`); the interior's `contains`/`rank` are `O(R)` and its `unrank` "
-        "`O(R log |R_r|)`.",
+        note="1000 copies of one RU whose declared `Out` resolves to `R` runs (outputs at irregular gaps); every "
+        "gate is a one-gate VU, so the interior is the RU's gates minus its `Out`.  `time_s` is `kind_table()`.  "
+        "`boundary.rank` and a boundary `contains` miss scan the runs (`O(R)`), `boundary.unrank` bisects "
+        "(`O(log R)`); the interior's `contains`/`rank` subtract the RU outputs below the address (`O(R)`) after an "
+        "`O(depth)` descent to the VU, and its `unrank` bisects the steps with the same subtraction per probe "
+        "(`O(R log |R_r|)`).",
     )
     for wanted in runs_wanted:
         compiled = compiler.compile(runs_unit(wanted, 1000), INPUT)

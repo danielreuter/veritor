@@ -212,6 +212,13 @@ def _run_once(
     timings["interior_positions"] = sum(
         index.interior(u).count for u in replay_challenge.selected
     )
+    kinds = {kind.kind: kind for kind in index.kinds()}
+    timings["replayed_gates"] = sum(
+        kinds[node.kind].size
+        - kinds[node.kind].source_inputs
+        - kinds[node.kind].source_weights
+        for node in (index.replay_units.unit(u) for u in replay_challenge.selected)
+    )
     timings["sampled_verification_units"] = len(sample_challenge.selected)
     timings["openings"] = sum(len(batch) for batch in evidence.units)
     timings["boundary_bytes"] = len(canonical_json_bytes(boundary.manifest))
@@ -265,6 +272,9 @@ def _point(
     positions = timings["interior_positions"]
     openings = timings["openings"]
     constants = {
+        "replay_us_per_gate": _rate(
+            1e6 * timings["prover_replay_s"], timings["replayed_gates"]
+        ),
         "replay_us_per_position": _rate(1e6 * timings["prover_replay_s"], positions),
         "commit_us_per_position": _rate(
             1e6 * timings["prover_commit_interior_s"], positions
@@ -325,8 +335,9 @@ def run(scale: Scale) -> Benchmark:
         "`verifier_total_s` the verifier's (admission, boundary check and `J`, interior check and `T`, "
         "evidence check).  `evaluate_s` is the honest computation itself through the lazy circuit "
         "(`circuit.evaluate`, `gates_per_s`), `kappa_w_s` the one-off weight commitment.  "
-        "Sizes: `boundary_count = |∂|`, `interior_positions` committed, `openings` sent, message bytes as "
-        "canonical JSON.",
+        "Sizes: `boundary_count = |∂|`, `replayed_gates` recomputed (every non-source gate of the selected RUs), "
+        "`interior_positions` committed (the VU outputs among them that are not RU outputs), `openings` sent, "
+        "message bytes as canonical JSON.",
     )
 
     ladder = PROTOCOL_LADDER[: 2 if scale.quick else 4]
