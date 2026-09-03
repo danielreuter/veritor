@@ -24,8 +24,9 @@ except ImportError:  # pragma: no cover - Windows has no advisory file locks
 
 __all__ = ["Recorder", "Row", "dump", "load", "record", "row_key"]
 
-# Catalogue order of the ID prefixes (docs/stress-tests.md, section 2).
-_SECTIONS = "SCNWE"
+# Catalogue order of the ID prefixes (docs/stress-tests.md, section 2; ``H`` is
+# the honest-prover programme, docs/honest-prover.md).
+_SECTIONS = "SCNWEH"
 _IDENTIFIER = re.compile(r"([A-Z])(\d+)([a-z]*)")
 
 
@@ -86,7 +87,12 @@ _NAMES = {name.name for name in fields(Row)} - {"id", "extra"}
 
 @dataclass
 class Recorder:
-    """Rows recorded by one scenario, each ID once; a test fixture writes them when the test passes."""
+    """Rows recorded by one scenario, each ID once; a test fixture writes them when the test passes.
+
+    Keyword arguments beyond the row's own fields are kept in ``extra``: the
+    honest-prover table renders ``declarations``, ``charge_bits`` and
+    ``recompute`` from there.
+    """
 
     rows: list[Row] = field(default_factory=list)
 
@@ -102,6 +108,7 @@ class Recorder:
         description_bytes: int,
         verdict: str,
         notes: str = "",
+        **extra: object,
     ) -> Row:
         if any(row.id == id for row in self.rows):
             raise ValueError(f"row {id!r} recorded twice by one test")
@@ -115,6 +122,7 @@ class Recorder:
             description_bytes=description_bytes,
             verdict=verdict,
             notes=notes,
+            extra=extra,
         )
         self.rows.append(row)
         return row

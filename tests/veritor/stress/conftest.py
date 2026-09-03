@@ -22,6 +22,11 @@ ROOT = Path(__file__).resolve().parents[3]
 DATA = Path(
     os.environ.get("VERITOR_STRESS_DATA", ROOT / "docs" / "data" / "stress.json")
 )
+HONEST_DATA = Path(
+    os.environ.get(
+        "VERITOR_STRESS_HONEST_DATA", ROOT / "docs" / "data" / "stress-honest.json"
+    )
+)
 
 _PASSED = pytest.StashKey[bool]()
 
@@ -42,6 +47,18 @@ def scenario(request: pytest.FixtureRequest) -> Iterator[Recorder]:
     yield recorder
     if recorder.rows and request.node.stash.get(_PASSED, False):
         record(DATA, recorder.rows)
+
+
+@pytest.fixture
+def honest(request: pytest.FixtureRequest) -> Iterator[Recorder]:
+    """The honest-prover programme's recorder: ``H`` rows into ``stress-honest.json``."""
+
+    recorder = Recorder()
+    yield recorder
+    if recorder.rows and request.node.stash.get(_PASSED, False):
+        if any(not row.id.startswith("H") for row in recorder.rows):
+            raise ValueError("honest-prover rows are the H section of the catalogue")
+        record(HONEST_DATA, recorder.rows)
 
 
 @pytest.fixture(scope="session")

@@ -13,6 +13,7 @@ What each file is, what it is generated from, and where to start.
 
 - `benchmarks.md` — how each component scales, from `data/benchmarks.json`. Measure with `python -m benchmarks.run`, render with `python -m benchmarks.report`.
 - `stress-tests.md` — the catalogue of datacenter realities (mechanisms M1–M8, scenarios S/C/N/W/E) and the table of recorded rows. Rows are recorded by the tests in `tests/veritor/stress/` into `data/stress*.json`; render §4 with `python -m veritor.stress.report` (`--check` verifies the rendering is current).
+- `honest-prover.md` — the honest prover under faults: fault classes, secure late advice, what the declarations cost and how much the prover must re-execute to know what to declare; `H` rows from `tests/veritor/stress/` into `data/stress-honest.json`, rendered by the same report. The theory is `notes/late-advice.md`.
 - `frontier-report.md` — the honest-server frontier for the 70B serving shape, from `data/frontier-70b.json` (produced by `python -m veritor.evaluation.sweep docs/data/frontier-70b.json --workers 10`).
 - `zk-backend.md` — the proof layer (`veritor.protocol.proofs`): obligations, statements, batches, the transparent and SP1 backends, measured cycle costs and α. `sp1-benchmark-plan.md` is the plan that preceded it.
 - `hardware-semantics.md` — tensor-core `mma.sync` semantics recovered bit-exactly on an RTX 4090 (`veritor.core.silicon`); kernels and results under `gpu/tensor-core-semantics/`.
