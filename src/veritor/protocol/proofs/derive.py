@@ -118,12 +118,19 @@ DECLARED_PROGRAM = KindProgram(DECLARED_KIND, 0, (), ())
 
 
 def statement_width(gate_set: GateSet) -> int:
-    """The one word width of a gate set (every gate of a set has the same width)."""
+    """The word width of a statement over ``gate_set``: its widest gate.
+
+    The transparent backend decodes every opened value by its own leaf
+    schema, so a set of mixed widths (the pinned GPT-2 gates: 1-, 16- and
+    32-bit) needs no single word.  A zkVM guest resolves the gate set it
+    implements by ``(id, width)`` and rejects any other, so the width is
+    also what tells a guest which machine word a batch is in.
+    """
 
     widths = {gate.width for gate in gate_set}
-    if len(widths) != 1:
-        raise ProtocolError("proof statements need a gate set of one width")
-    return widths.pop()
+    if not widths:
+        raise ProtocolError("proof statements need a gate set with at least one gate")
+    return max(widths)
 
 
 def derive_obligation(
