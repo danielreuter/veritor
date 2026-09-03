@@ -67,13 +67,16 @@ def fault_budget(mean: float, tail: float = 1e-6, *, at_least: int = 1) -> int:
         raise ValueError("mean must be nonnegative and at_least a nonnegative integer")
     if mean == 0:
         return at_least
+    log_mean = math.log(mean)
+
+    def mass(k: int) -> float:  # the Poisson pmf in log space: stable for large means
+        return math.exp(k * log_mean - mean - math.lgamma(k + 1))
+
     f = at_least
-    cumulative = sum(
-        math.exp(-mean) * mean**k / math.factorial(k) for k in range(f + 1)
-    )
+    cumulative = sum(mass(k) for k in range(f + 1))
     while 1 - cumulative > tail:
         f += 1
-        cumulative += math.exp(-mean) * mean**f / math.factorial(f)
+        cumulative += mass(f)
     return f
 
 
@@ -238,12 +241,24 @@ class FaultInjector:
                 readers[argument].append(address)
         self.readers: tuple[tuple[int, ...], ...] = tuple(tuple(r) for r in readers)
 
-    def propagate(self, flips: Mapping[int, int]) -> dict[int, int]:
-        """The honest assignment with ``flips`` applied and their downstream cones recomputed."""
+    def propagate(
+        self,
+        flips: Mapping[int, int],
+        misreads: Mapping[int, Mapping[int, int]] | None = None,
+    ) -> dict[int, int]:
+        """The honest assignment with ``flips`` applied and their downstream cones recomputed.
+
+        ``misreads[reader][argument]`` is the value gate ``reader`` read for
+        ``argument`` instead of the stored one -- a *read* fault: the stored
+        word is untouched (its producer's relation holds), ``reader`` is
+        computed from the value it read (its relation does not) and its cone
+        follows.
+        """
 
         circuit = self.compiled.circuit
+        misreads = {} if misreads is None else misreads
         values = dict(self.honest)
-        queued = set(flips)
+        queued = set(flips) | set(misreads)
         pending = list(queued)
         heapq.heapify(pending)
         while (
@@ -251,10 +266,13 @@ class FaultInjector:
         ):  # gates read only earlier gates, so address order is evaluation order
             address = heapq.heappop(pending)
             ref = circuit[address]
+            misread = misreads.get(address, {})
             value = (
                 values[address]
                 if ref.is_source
-                else circuit.evaluate_gate(address, tuple(values[a] for a in ref.args))
+                else circuit.evaluate_gate(
+                    address, tuple(misread.get(a, values[a]) for a in ref.args)
+                )
             )
             mask = flips.get(address)
             if mask is not None:
