@@ -1,0 +1,9 @@
+[package]
+name = "veritor-zk-guest"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sp1-zkvm = "=6.4.0"
+sha2 = { workspace = true }
+veritor-zk-common = { workspace = true }
