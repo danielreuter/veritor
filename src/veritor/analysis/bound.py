@@ -164,11 +164,15 @@ def bound(
     policy: VerificationPolicy,
     eta: ProbabilityInput,
     options: BoundOptions | None = None,
+    *,
+    max_faults: int = 0,
 ) -> BoundResult:
     """Fold ``U = Bound(C, I, theta)`` at threshold ``eta`` over the kinds of the index.
 
     ``target`` is the compiled artifact or its :class:`KindTable`: the fold
-    reads nothing else.
+    reads nothing else.  ``max_faults`` (``f_max``, mechanism M6) adds the
+    fault allowance of :mod:`veritor.analysis.faults` to ``bits``, still
+    capped by the circuit's interface.
     """
 
     table = as_kind_table(target)
@@ -185,6 +189,10 @@ def bound(
     knapsack = fold.knapsack(replay) if options.knapsack else math.inf
     laplace = fold.laplace(replay)
     bits = min(knapsack, laplace, float(out_bits))
+    if max_faults:  # M6 fault declarations: additive, see veritor.analysis.faults
+        from .faults import fault_allowance_bits
+
+        bits = min(bits + fault_allowance_bits(table, max_faults), float(out_bits))
     return BoundResult(
         bits=_integer_count(max(bits, 0.0)),
         capped=bits >= out_bits,

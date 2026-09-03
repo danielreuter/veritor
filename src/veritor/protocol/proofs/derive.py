@@ -5,18 +5,27 @@ obligation for a sampled VU is computed here from the Index, the header and
 the commitments the verifier itself accepted, and the kind's program is read
 off the definition the VU is a copy of.  The prover runs the same code on the
 same trusted data, so both sides produce identical statement bytes.
+
+A sampled VU the prover *declared* incorrect (``InteriorMessage.declarations``,
+validated by the verifier before the s-challenge) is obliged to open exactly
+the same positions -- its values stay authenticated under the accepted roots,
+and its ``in`` gates stay pinned to the public inputs -- but under the
+:data:`DECLARED_KIND` program, which has no gates: the relation check is
+vacuous.  Both parties derive this from the declarations they hold, so a
+proof over a statement that skips a relation can only exist for a VU the
+transcript says was declared.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Protocol
 
 from veritor.core import Circuit, Compiled, GateSet, Index, IndexNode, Position
 from veritor.core.description import LOCAL, CallStep, Frame
 from veritor.protocol.domains import leaf_schema
 from veritor.protocol.merkle import CommitmentDomain
-from veritor.protocol.messages import Commitment, Header, ProtocolError
+from veritor.protocol.messages import Commitment, Header, ProtocolError, raw_digest
 
 from .statement import LOCAL as LOCAL_ARG
 from .statement import (
@@ -101,6 +110,13 @@ def kind_program(node: IndexNode) -> KindProgram:
     )
 
 
+DECLARED_KIND = raw_digest("veritor/protocol/proofs/declared/v1", {"gates": 0})
+"""The kind digest of a declared VU's obligation: a program of no gates and no ports."""
+
+DECLARED_PROGRAM = KindProgram(DECLARED_KIND, 0, (), ())
+"""The vacuous relation every declared VU is checked against (its openings still are)."""
+
+
 def statement_width(gate_set: GateSet) -> int:
     """The one word width of a gate set (every gate of a set has the same width)."""
 
@@ -116,17 +132,25 @@ def derive_obligation(
     commitments: Mapping[int, tuple[CommitmentDomain, Commitment]],
     unit: int,
     program: KindProgram | None = None,
+    *,
+    declared: bool = False,
 ) -> Obligation:
     """The obligation for sampled VU ``unit`` under the given accepted commitments.
 
     ``commitments`` maps an owner (``WEIGHT_OWNER``, ``BOUNDARY_OWNER`` or a
     replay unit) to its domain and root; every owner the VU touches must be
     present.  ``program`` may be supplied when already derived for the kind.
+    With ``declared`` the obligation opens the same positions under
+    :data:`DECLARED_PROGRAM` instead: authenticated, relation unchecked.
     """
 
     circuit = layout.circuit
     node = layout.index.verification_unit(unit)
-    if program is None:
+    if declared:
+        if program is not None and program != DECLARED_PROGRAM:
+            raise ProtocolError("a declared VU is obliged under the declared program")
+        program = DECLARED_PROGRAM
+    elif program is None:
         program = kind_program(node)
     elif program.kind != bytes.fromhex(node.kind):
         raise ProtocolError("program is for another kind")
@@ -175,7 +199,7 @@ def derive_obligation(
         inputs = tuple(
             slot_of[frame.input_address(ordinal)] for ordinal in program.ports
         )
-        gates = tuple(slot_of[address] for address in node.interval)
+        gates = () if declared else tuple(slot_of[address] for address in node.interval)
     except KeyError as error:
         raise ProtocolError(
             f"VU {unit} touches address {error.args[0]} outside its openings"
@@ -201,12 +225,24 @@ def derive_obligations(
     header: Header,
     commitments: Mapping[int, tuple[CommitmentDomain, Commitment]],
     units: Sequence[int],
+    declared: Collection[int] = (),
 ) -> tuple[tuple[Obligation, ...], tuple[KindProgram, ...]]:
-    """Obligations for the sampled VUs in ``units`` order, and the programs of their kinds."""
+    """Obligations for the sampled VUs in ``units`` order, and the programs of their kinds.
+
+    ``declared`` are the VUs the interior message declared incorrect (already
+    validated against the header's ``max_faults`` and the opened RUs); a
+    sampled one is obliged under :data:`DECLARED_PROGRAM`.
+    """
 
     programs: dict[str, KindProgram] = {}
     obligations: list[Obligation] = []
     for unit in units:
+        if unit in declared:
+            programs.setdefault(DECLARED_KIND.hex(), DECLARED_PROGRAM)
+            obligations.append(
+                derive_obligation(layout, header, commitments, unit, declared=True)
+            )
+            continue
         node = layout.index.verification_unit(unit)
         program = programs.get(node.kind)
         if program is None:

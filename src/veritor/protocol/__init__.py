@@ -37,6 +37,7 @@ from .messages import (
 )
 from .parameters import VerifierParameters, expected_work
 from .session import (
+    Declare,
     Expectation,
     ProtocolRun,
     ProverSession,
@@ -44,9 +45,11 @@ from .session import (
     Values,
     VerifierSession,
     assignment_replay,
+    honest_declare,
     make_expectation,
     replay_unit,
     run_protocol,
+    self_check,
 )
 from .verify import verify_transcript
 from .wire import (
@@ -64,6 +67,7 @@ __all__ = [
     "BoundaryMessage",
     "Commitment",
     "CommitmentDomain",
+    "Declare",
     "EvidenceMessage",
     "Expectation",
     "Header",
@@ -95,10 +99,12 @@ __all__ = [
     "derive_sample_selection",
     "encode_transcript",
     "expected_work",
+    "honest_declare",
     "interior_domain",
     "make_expectation",
     "replay_unit",
     "run_protocol",
+    "self_check",
     "uniform_below",
     "validate_commitment",
     "verify_opening",

@@ -1,4 +1,4 @@
-"""What the verifier fixes on its own: ``eta``, ``U_max``, ``A`` and ``W_max``.
+"""What the verifier fixes on its own: ``eta``, ``U_max``, ``A``, ``W_max`` and ``f_max``.
 
 The client proposes the sampling rates ``theta = (q, s)`` and the advice
 ``a``.  The acceptance threshold ``eta`` defines the security statement, so
@@ -7,6 +7,9 @@ Bound(C, I, theta)`` the verifier will underwrite and ``A = max_advice_bits``
 the advice it will accept, so every admitted request has capacity at most
 ``U_max + A``; ``W_max`` bounds the verifier's own expected work, priced by
 :func:`expected_work` from counts alone before any commitment is accepted.
+``f_max = max_faults`` is how many VUs the prover may declare incorrect after
+the q-challenge (fault declarations, mechanism M6); it is bound into the
+header and priced into ``U`` by :func:`veritor.analysis.faults.fault_allowance_bits`.
 """
 
 from __future__ import annotations
@@ -42,18 +45,23 @@ class VerifierParameters:
     a verifier states its capacity bound, and ``None`` -- which waives the
     check and admits ``theta = (0, 0)`` -- has to be written out.
     ``max_advice_bits`` is ``A``, the longest advice admitted, in bits;
-    ``max_work`` is ``W_max``.
+    ``max_work`` is ``W_max``; ``max_faults`` is ``f_max``, the most VUs a
+    prover may declare incorrect in one run (default 0: no declarations, the
+    protocol exactly as it was before M6).
 
     The paper charges a request ``Bound(C, I, theta) + |a|`` bits: everything
     the client did beyond the advice is a deterministic function of ``(G, x,
     a)``.  With ``U_max`` and ``A`` both enforced at admission, every accepted
-    request has capacity at most ``U_max + A``.
+    request has capacity at most ``U_max + A``; ``Bound`` includes the
+    ``f_max`` fault allowance, so admitting declarations widens ``U``, never
+    the acceptance probability of an undeclared incorrect VU.
     """
 
     eta: Fraction
     max_capacity: int | None
     max_advice_bits: int
     max_work: int
+    max_faults: int
 
     def __init__(
         self,
@@ -62,6 +70,7 @@ class VerifierParameters:
         max_capacity: int | None,
         max_advice_bits: int = 0,
         max_work: int = DEFAULT_MAX_WORK,
+        max_faults: int = 0,
     ) -> None:
         checked = exact_fraction(eta, name="eta")
         if not 0 <= checked < 1:
@@ -72,10 +81,13 @@ class VerifierParameters:
             raise ProtocolError("max_advice_bits must be a nonnegative integer")
         if type(max_work) is not int or max_work < 0:
             raise ProtocolError("max_work must be a nonnegative integer")
+        if type(max_faults) is not int or max_faults < 0:
+            raise ProtocolError("max_faults must be a nonnegative integer")
         object.__setattr__(self, "eta", checked)
         object.__setattr__(self, "max_capacity", max_capacity)
         object.__setattr__(self, "max_advice_bits", max_advice_bits)
         object.__setattr__(self, "max_work", max_work)
+        object.__setattr__(self, "max_faults", max_faults)
 
     def policy(self, proposal: VerificationPolicy) -> VerificationPolicy:
         """The run's policy: the client's ``theta = (q, s)``, validated.
