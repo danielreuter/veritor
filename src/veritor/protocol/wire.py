@@ -19,12 +19,14 @@ from veritor.core import (
 
 from .messages import (
     PROTOCOL_VERSION,
+    TRANSPARENT_BACKEND,
     BoundaryMessage,
     Commitment,
     EvidenceMessage,
     Header,
     InteriorMessage,
     Opening,
+    ProofMessage,
     ProtocolError,
     ReplayChallenge,
     SampleChallenge,
@@ -47,22 +49,27 @@ def _pair(value: Fraction) -> list[int]:
 
 def encode_transcript(transcript: Transcript) -> bytes:
     header = transcript.header
+    header_document: dict[str, JSONValue] = {
+        "advice": header.advice.hex(),
+        "claimed_outputs": [item.hex() for item in header.claimed_outputs],
+        "compiled_digest": header.compiled_digest,
+        "constructor": header.constructor,
+        "eta": _pair(header.eta),
+        "policy": {
+            "q": _pair(header.policy.q),
+            "s": _pair(header.policy.s),
+        },
+        "public_inputs": [item.hex() for item in header.public_inputs],
+        "session_id": header.session_id.hex(),
+        "weights": None if header.weights is None else header.weights.manifest,
+    }
+    if header.backend != TRANSPARENT_BACKEND:
+        # The default backend is left implicit so transparent transcripts are
+        # byte-identical to those written before backends were pluggable.
+        header_document["backend"] = header.backend
     document: dict[str, JSONValue] = {
         "version": PROTOCOL_VERSION,
-        "header": {
-            "advice": header.advice.hex(),
-            "claimed_outputs": [item.hex() for item in header.claimed_outputs],
-            "compiled_digest": header.compiled_digest,
-            "constructor": header.constructor,
-            "eta": _pair(header.eta),
-            "policy": {
-                "q": _pair(header.policy.q),
-                "s": _pair(header.policy.s),
-            },
-            "public_inputs": [item.hex() for item in header.public_inputs],
-            "session_id": header.session_id.hex(),
-            "weights": None if header.weights is None else header.weights.manifest,
-        },
+        "header": header_document,
         "boundary": transcript.boundary.manifest,
         "replay_challenge": transcript.replay_challenge.manifest,
         "interiors": transcript.interiors.manifest,
@@ -134,6 +141,34 @@ def _weights(value: object, where: str) -> Weights | None:
     return Weights(_int(fields["count"], f"{where}.count"), _hex(fields["root"], f"{where}.root"))
 
 
+def _optional_key(value: object, keys: set[str], optional: str, where: str) -> dict[str, object]:
+    """An object with ``keys``, plus ``optional`` if present (its absence is the default)."""
+
+    if type(value) is not dict or not keys <= set(value) <= keys | {optional}:
+        raise MalformedTranscript(f"{where} must be an object with keys {sorted(keys)}")
+    return value
+
+
+def _proof(value: object, where: str) -> ProofMessage:
+    fields = _optional_key(value, {"proof", "units"}, "foreign", where)
+    foreign = _hex(fields["foreign"], f"{where}.foreign") if "foreign" in fields else b""
+    if "foreign" in fields and not foreign:
+        raise NoncanonicalTranscript(f"{where}.foreign is empty; it must be omitted")
+    return ProofMessage(
+        _list(fields["units"], _int, f"{where}.units"),
+        _hex(fields["proof"], f"{where}.proof"),
+        foreign,
+    )
+
+
+def _evidence(value: object, where: str) -> EvidenceMessage:
+    fields = _optional_key(value, {"units"}, "proofs", where)
+    proofs = _list(fields["proofs"], _proof, f"{where}.proofs") if "proofs" in fields else ()
+    if "proofs" in fields and not proofs:
+        raise NoncanonicalTranscript(f"{where}.proofs is empty; it must be omitted")
+    return EvidenceMessage(_list(fields["units"], _openings, f"{where}.units"), proofs)
+
+
 def _challenge[T](
     factory: Callable[[bytes, tuple[int, ...]], T], value: object, where: str
 ) -> T:
@@ -188,7 +223,7 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
     )
     if top["version"] != PROTOCOL_VERSION:
         raise MalformedTranscript("unsupported transcript version")
-    header_fields = _object(
+    header_fields = _optional_key(
         top["header"],
         {
             "advice",
@@ -201,12 +236,18 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
             "session_id",
             "weights",
         },
+        "backend",
         "header",
     )
     policy_fields = _object(header_fields["policy"], {"q", "s"}, "header.policy")
     for name in ("compiled_digest", "constructor"):
         if type(header_fields[name]) is not str:
             raise MalformedTranscript(f"header.{name} must be a string")
+    backend = header_fields.get("backend", TRANSPARENT_BACKEND)
+    if type(backend) is not str or not backend:
+        raise MalformedTranscript("header.backend must be a nonempty string")
+    if backend == TRANSPARENT_BACKEND and "backend" in header_fields:
+        raise NoncanonicalTranscript("header.backend names the default; it must be omitted")
     try:
         policy = VerificationPolicy(
             _fraction(policy_fields["q"], "header.policy.q", checked),
@@ -222,6 +263,7 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
             _list(header_fields["public_inputs"], _hex, "header.public_inputs"),
             _list(header_fields["claimed_outputs"], _hex, "header.claimed_outputs"),
             _weights(header_fields["weights"], "header.weights"),
+            backend,
         )
         boundary_fields = _object(top["boundary"], {"commitment", "io_openings"}, "boundary")
         transcript = Transcript(
@@ -239,15 +281,9 @@ def decode_transcript(data: bytes, limits: VerificationLimits | None = None) -> 
                 )
             ),
             _challenge(SampleChallenge, top["sample_challenge"], "sample_challenge"),
-            EvidenceMessage(
-                _list(
-                    _object(top["evidence"], {"units"}, "evidence")["units"],
-                    _openings,
-                    "evidence.units",
-                )
-            ),
+            _evidence(top["evidence"], "evidence"),
         )
-    except MalformedTranscript:
+    except (MalformedTranscript, NoncanonicalTranscript):
         raise
     except (ProtocolError, ValueError, TypeError) as error:
         raise MalformedTranscript(str(error)) from error

@@ -10,6 +10,7 @@ from __future__ import annotations
 from veritor.core import Compiled, ResourceLimit, VerificationLimits
 
 from .messages import Reject, VerificationCode, VerificationReport
+from .proofs import ProofBackend
 from .session import Expectation, VerifierSession, rejection_report
 from .wire import MalformedTranscript, NoncanonicalTranscript, decode_transcript
 
@@ -19,7 +20,11 @@ def verify_transcript(
     expectation: Expectation,
     compiled: Compiled,
     limits: VerificationLimits | None = None,
+    *,
+    backend: ProofBackend | None = None,
 ) -> VerificationReport:
+    """Decide a recorded transcript; ``backend`` is required for a non-transparent header."""
+
     checked = VerificationLimits() if limits is None else limits
     try:
         transcript = decode_transcript(data, checked)
@@ -31,7 +36,7 @@ def verify_transcript(
         return VerificationReport(VerificationCode.RESOURCE_LIMIT, str(error))
 
     try:
-        session = VerifierSession(expectation, compiled, limits=checked)
+        session = VerifierSession(expectation, compiled, limits=checked, backend=backend)
     except Reject as rejection:
         return rejection_report(rejection, None)
     try:
