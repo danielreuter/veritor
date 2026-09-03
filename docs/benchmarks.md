@@ -6,7 +6,7 @@ How each component of `veritor` behaves as its size parameter grows, measured by
 
 - commit `ae1f20f3c6d8` on `scale-benchmarks` (dirty tree)
 - CPython 3.12.11 on macOS-26.5.1-arm64-arm-64bit (arm)
-- 2026-09-03T01:32:24+00:00, 3 timed repeats per point (median reported), 18.4 min in total
+- 2026-09-03T01:32:24+00:00, 3 timed repeats per point (median reported), 18.5 min in total
 - times are single-threaded CPython wall clock; peak memory is the `tracemalloc` peak of one extra run, above the baseline at the call
 
 ## Contents
@@ -619,35 +619,35 @@ Fitted exponents: evaluate ∝ x^0.00 (R² 1.00, 4 pts); P commit ∂ ∝ x^-0.0
 
 `time_s` is `output_reach(root)` on the parsed root; `transient_ports_s` the sibling pass, `kinds_s` the whole `Index.kinds()` (both passes plus the per-kind summaries), `parse_s` `parse_description`.  `root_steps` is the step count of the root definition, `definitions` the reachable kinds.
 
-`reach` ran in 5.19 min.
+`reach` ran in 5.48 s.
 
 #### `chain_vs_steps`
 
-A root with `S` sequential `call` steps of one 3-gate RU, each reading the previous step's output (a decode chain).  The closure `Down(j)` is every later step.  *This table was measured before the interval sweep replaced the bitmask closure in `_step_reach`*: the bit-iteration it shows visited `Θ(S²)` bits, each on an `S`-bit integer, `Θ(S³ / w)` word operations against `Θ(S)` for the parse; the sweep is `O(S log S)` here (70 ms at `S = 8192`, see *Bottlenecks* and *Performance bugs*).
+A root with `S` sequential `call` steps of one 3-gate RU, each reading the previous step's output (a decode chain).  The closure `Down(j)` is every later step, one interval `[j, S)` in the sweep of `_step_reach`: `O(S log S)` (two range additions and one extraction on the segment tree per step), against `Θ(S)` for the parse.  The bitmask closure this replaced was `Θ(S³ / w)` here (14.3 s at `S = 8192`).
 
 | root steps | time | peak mem | description | definitions | root steps | n | `transient_ports` | `kinds()` | `parse_description` |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 64 | 189 µs | 9.15 KB | 8.78 KB | 5 | 65 | 193 | 90 µs | 314 µs | 803 µs |
-| 256 | 2.39 ms | 38.5 KB | 31.1 KB | 5 | 257 | 769 | 331 µs | 2.91 ms | 2.66 ms |
-| 1,024 | 59.1 ms | 302 KB | 120 KB | 5 | 1,025 | 3,073 | 1.38 ms | 60.7 ms | 10.8 ms |
-| 4,096 | 2.43 s | 3.56 MB | 480 KB | 5 | 4,097 | 12,289 | 5.55 ms | 2.41 s | 44.3 ms |
-| 8,192 | 14.3 s | 13.5 MB | 960 KB | 5 | 8,193 | 24,577 | 12.5 ms | 16.5 s | 86.9 ms |
+| 64 | 282 µs | 27.2 KB | 8.78 KB | 5 | 65 | 193 | 91.8 µs | 440 µs | 775 µs |
+| 256 | 1.47 ms | 96.5 KB | 31.1 KB | 5 | 257 | 769 | 313 µs | 1.8 ms | 2.87 ms |
+| 1,024 | 6.87 ms | 393 KB | 120 KB | 5 | 1,025 | 3,073 | 1.4 ms | 8.53 ms | 10.5 ms |
+| 4,096 | 32.3 ms | 1.54 MB | 480 KB | 5 | 4,097 | 12,289 | 5.67 ms | 40.2 ms | 41.1 ms |
+| 8,192 | 68.8 ms | 3.09 MB | 960 KB | 5 | 8,193 | 24,577 | 11.2 ms | 83.6 ms | 87 ms |
 
-Fitted exponents: `kinds()` ∝ x^2.27 (R² 0.99, 5 pts); `parse_description` ∝ x^0.98 (R² 1.00, 5 pts); peak mem ∝ x^1.53 (R² 0.99, 5 pts); time ∝ x^2.35 (R² 0.99, 5 pts); `transient_ports` ∝ x^1.01 (R² 1.00, 5 pts).
+Fitted exponents: `kinds()` ∝ x^1.09 (R² 1.00, 5 pts); `parse_description` ∝ x^0.97 (R² 1.00, 5 pts); peak mem ∝ x^0.99 (R² 1.00, 5 pts); time ∝ x^1.13 (R² 1.00, 5 pts); `transient_ports` ∝ x^1.00 (R² 1.00, 5 pts).
 
 #### `independent_vs_steps`
 
-A root with `S` independent `call` steps of one RU (every step reads the input).  `Down(j) = {j}`, so the pass is linear.  *Measured before the interval sweep*: the input step's `readers` mask was the OR of `S` masks of `S` bits, the `Θ(S² / w)` behind the peak-memory exponent; the sweep keeps `Down(input) = [0, S + 1)` as one interval (see *Bottlenecks*).
+A root with `S` independent `call` steps of one RU, every step reading the input step (siblings over one broadcast step, as requests over a weights step).  `Down(j) = {j}` and `Down(input) = [0, S + 1)`, so the pass is `O(S log S)`; the bitmask closure ORed `S` masks of `S` bits here, `Θ(S² / w)`.
 
 | root steps | time | peak mem | description | definitions | root steps | n | `transient_ports` | `kinds()` | `parse_description` |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 64 | 49.6 µs | 7.06 KB | 8.73 KB | 5 | 65 | 193 | 44 µs | 141 µs | 790 µs |
-| 256 | 192 µs | 24.4 KB | 30.7 KB | 5 | 257 | 769 | 163 µs | 464 µs | 2.79 ms |
-| 1,024 | 1.01 ms | 142 KB | 118 KB | 5 | 1,025 | 3,073 | 682 µs | 1.86 ms | 10.7 ms |
-| 4,096 | 5.33 ms | 1.35 MB | 469 KB | 5 | 4,097 | 12,289 | 3.14 ms | 9.68 ms | 44.2 ms |
-| 8,192 | 14.3 ms | 4.82 MB | 937 KB | 5 | 8,193 | 24,577 | 5.99 ms | 23.7 ms | 86.4 ms |
+| 64 | 81.2 µs | 26.6 KB | 8.73 KB | 5 | 65 | 193 | 44.8 µs | 227 µs | 825 µs |
+| 256 | 364 µs | 102 KB | 30.7 KB | 5 | 257 | 769 | 163 µs | 652 µs | 2.83 ms |
+| 1,024 | 1.42 ms | 406 KB | 118 KB | 5 | 1,025 | 3,073 | 720 µs | 2.68 ms | 10.2 ms |
+| 4,096 | 5.58 ms | 1.6 MB | 469 KB | 5 | 4,097 | 12,289 | 2.95 ms | 10.4 ms | 40.8 ms |
+| 8,192 | 11.4 ms | 3.21 MB | 937 KB | 5 | 8,193 | 24,577 | 5.74 ms | 20.5 ms | 87.1 ms |
 
-Fitted exponents: `kinds()` ∝ x^1.06 (R² 0.99, 5 pts); `parse_description` ∝ x^0.97 (R² 1.00, 5 pts); peak mem ∝ x^1.36 (R² 0.98, 5 pts); time ∝ x^1.17 (R² 1.00, 5 pts); `transient_ports` ∝ x^1.03 (R² 1.00, 5 pts).
+Fitted exponents: `kinds()` ∝ x^0.94 (R² 1.00, 5 pts); `parse_description` ∝ x^0.96 (R² 1.00, 5 pts); peak mem ∝ x^0.99 (R² 1.00, 5 pts); time ∝ x^1.01 (R² 1.00, 5 pts); `transient_ports` ∝ x^1.01 (R² 1.00, 5 pts).
 
 #### `definitions_vs_count`
 
@@ -655,12 +655,12 @@ A root calling `D` distinct RU definitions once each, all reading the input: lin
 
 | definitions | time | peak mem | description | definitions | root steps | n | `transient_ports` | `kinds()` | `parse_description` |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 64 | 125 µs | 9.58 KB | 26.6 KB | 68 | 65 | 6,241 | 104 µs | 460 µs | 3.26 ms |
-| 256 | 478 µs | 35.9 KB | 103 KB | 260 | 257 | 98,689 | 371 µs | 1.67 ms | 11.8 ms |
-| 1,024 | 2.14 ms | 190 KB | 410 KB | 1,028 | 1,025 | 1,574,401 | 1.57 ms | 7.52 ms | 46.6 ms |
-| 4,096 | 11.2 ms | 1.53 MB | 1.6 MB | 4,100 | 4,097 | 25,171,969 | 7.09 ms | 38.2 ms | 212 ms |
+| 64 | 178 µs | 29.1 KB | 26.6 KB | 68 | 65 | 6,241 | 116 µs | 686 µs | 3.12 ms |
+| 256 | 773 µs | 114 KB | 103 KB | 260 | 257 | 98,689 | 381 µs | 2.17 ms | 11.6 ms |
+| 1,024 | 3.61 ms | 414 KB | 410 KB | 1,028 | 1,025 | 1,574,401 | 1.85 ms | 9.47 ms | 45.8 ms |
+| 4,096 | 14.1 ms | 1.63 MB | 1.6 MB | 4,100 | 4,097 | 25,171,969 | 7.79 ms | 46.1 ms | 208 ms |
 
-Fitted exponents: `kinds()` ∝ x^1.07 (R² 1.00, 4 pts); `parse_description` ∝ x^1.00 (R² 1.00, 4 pts); peak mem ∝ x^1.22 (R² 0.99, 4 pts); time ∝ x^1.08 (R² 1.00, 4 pts); `transient_ports` ∝ x^1.02 (R² 1.00, 4 pts).
+Fitted exponents: `kinds()` ∝ x^1.02 (R² 1.00, 4 pts); `parse_description` ∝ x^1.01 (R² 1.00, 4 pts); peak mem ∝ x^0.97 (R² 1.00, 4 pts); time ∝ x^1.06 (R² 1.00, 4 pts); `transient_ports` ∝ x^1.02 (R² 1.00, 4 pts).
 
 #### `deep_repeat_vs_depth`
 
@@ -668,14 +668,14 @@ Fitted exponents: `kinds()` ∝ x^1.07 (R² 1.00, 4 pts); `parse_description` �
 
 | depth | time | peak mem | description | definitions | root steps | n | `transient_ports` | `kinds()` | `parse_description` |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 4 | 11.8 µs | 3.42 KB | 2.38 KB | 8 | 2 | 769 | 8 µs | 43.7 µs | 309 µs |
-| 8 | 15.7 µs | 3.7 KB | 3.48 KB | 12 | 2 | 196,609 | 11.2 µs | 61.2 µs | 707 µs |
-| 12 | 19.3 µs | 3.73 KB | 4.59 KB | 16 | 2 | 50,331,649 | 13.7 µs | 85.2 µs | 560 µs |
-| 16 | 23.8 µs | 5.33 KB | 5.7 KB | 20 | 2 | 1.29e+10 | 16.7 µs | 95.5 µs | 660 µs |
-| 20 | 27.9 µs | 5.72 KB | 6.81 KB | 24 | 2 | 3.3e+12 | 23.2 µs | 130 µs | 953 µs |
-| 24 | 31.8 µs | 5.81 KB | 7.92 KB | 28 | 2 | 8.44e+14 | 31.3 µs | 133 µs | 920 µs |
+| 4 | 21.6 µs | 4.18 KB | 2.38 KB | 8 | 2 | 769 | 10.3 µs | 47.4 µs | 433 µs |
+| 8 | 22.2 µs | 4.46 KB | 3.48 KB | 12 | 2 | 196,609 | 10 µs | 85.9 µs | 422 µs |
+| 12 | 31.1 µs | 4.49 KB | 4.59 KB | 16 | 2 | 50,331,649 | 12.4 µs | 87.8 µs | 581 µs |
+| 16 | 34.9 µs | 6.09 KB | 5.7 KB | 20 | 2 | 1.29e+10 | 21 µs | 128 µs | 642 µs |
+| 20 | 46.5 µs | 6.48 KB | 6.81 KB | 24 | 2 | 3.3e+12 | 17.3 µs | 121 µs | 771 µs |
+| 24 | 50.5 µs | 6.57 KB | 7.92 KB | 28 | 2 | 8.44e+14 | 20.8 µs | 179 µs | 1.16 ms |
 
-Fitted exponents: `kinds()` ∝ x^0.65 (R² 0.98, 6 pts); `parse_description` ∝ x^0.56 (R² 0.80, 6 pts); peak mem ∝ x^0.33 (R² 0.81, 6 pts); time ∝ x^0.56 (R² 0.98, 6 pts); `transient_ports` ∝ x^0.72 (R² 0.92, 6 pts).
+Fitted exponents: `kinds()` ∝ x^0.66 (R² 0.93, 6 pts); `parse_description` ∝ x^0.50 (R² 0.77, 6 pts); peak mem ∝ x^0.28 (R² 0.80, 6 pts); time ∝ x^0.51 (R² 0.88, 6 pts); `transient_ports` ∝ x^0.45 (R² 0.75, 6 pts).
 
 #### `cluster_vs_description`
 
@@ -683,11 +683,11 @@ The `ClusterG` ladder: the description grows with the layer count and the schedu
 
 | description bytes | time | peak mem | definitions | root steps | n | `transient_ports` | `kinds()` | `parse_description` |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 23.4 KB | 184 µs | 10.1 KB | 35 | 4 | 4,437 | 286 µs | 654 µs | 2.89 ms |
-| 24.4 KB | 178 µs | 10.2 KB | 35 | 7 | 27,169 | 317 µs | 732 µs | 3.45 ms |
-| 45.5 KB | 461 µs | 10.8 KB | 45 | 9 | 509,833 | 1.02 ms | 1.87 ms | 6.68 ms |
-| 46.8 KB | 453 µs | 10.9 KB | 45 | 9 | 1,943,561 | 1.05 ms | 1.69 ms | 6.31 ms |
-| 47.4 KB | 456 µs | 11 KB | 45 | 9 | 7,588,105 | 1.07 ms | 1.77 ms | 6.34 ms |
+| 23.4 KB | 318 µs | 11.7 KB | 35 | 4 | 4,437 | 314 µs | 840 µs | 2.89 ms |
+| 24.4 KB | 348 µs | 11.9 KB | 35 | 7 | 27,169 | 392 µs | 824 µs | 2.94 ms |
+| 45.5 KB | 892 µs | 18.5 KB | 45 | 9 | 509,833 | 970 µs | 2.1 ms | 6.27 ms |
+| 46.8 KB | 860 µs | 18.5 KB | 45 | 9 | 1,943,561 | 1.05 ms | 2.3 ms | 6.43 ms |
+| 47.4 KB | 1.01 ms | 18.5 KB | 45 | 9 | 7,588,105 | 1.16 ms | 2.46 ms | 6.33 ms |
 
 | description bytes | case |
 |---:|---:|
@@ -697,7 +697,7 @@ The `ClusterG` ladder: the description grows with the layer count and the schedu
 | 46.8 KB | d32-L2 |
 | 47.4 KB | d64-L2 |
 
-Fitted exponents: `kinds()` ∝ x^1.41 (R² 0.99, 5 pts); `parse_description` ∝ x^1.07 (R² 0.98, 5 pts); peak mem ∝ x^0.11 (R² 0.99, 5 pts); time ∝ x^1.38 (R² 0.99, 5 pts); `transient_ports` ∝ x^1.86 (R² 1.00, 5 pts).
+Fitted exponents: `kinds()` ∝ x^1.51 (R² 0.99, 5 pts); `parse_description` ∝ x^1.16 (R² 1.00, 5 pts); peak mem ∝ x^0.67 (R² 1.00, 5 pts); time ∝ x^1.52 (R² 0.99, 5 pts); `transient_ports` ∝ x^1.66 (R² 0.99, 5 pts).
 
 ## Bottlenecks
 
@@ -753,29 +753,11 @@ What limits each component asymptotically, the constant this CPython prototype m
 
 ### `output_reach`
 
-- **Fixed: linear up to a logarithm in the steps of one definition, whatever their dependency structure.**  The closure `Down(j)` is now kept as intervals of steps and swept with a segment tree (`_step_reach`; the comment above `_segment_bits` in `src/veritor/core/index.py` describes it), so the chain of 8,192 sequential `call` steps that took 14.3 s and 13.5 MB in the tables above takes 70 ms and 3.2 MB (the parse of the same description is 86.9 ms); 10^5 chained steps take 1.0 s and 35 MB (parse 1.2 s), and 10^6, the `max_steps_per_definition` limit, 11.5 s (parse 12.4 s) where the bitmask closure extrapolated to ~35 days.  `N` independent steps reading one broadcast step (requests over a weights step), Θ(N² / w) for the bitmask, take 0.17 s at N = 10^5 (1.16 s before) and 1.4 s at 10^6.  The section 8 tables predate the fix; *Performance bugs* below has the before/after numbers.
-- Independent steps cost 12 ms at 8,192 (14.3 ms before), many distinct definitions 11.2 ms for 4,096 (∝ ^1.08), and `repeat` nesting is flat in n: the pass is now linear in the description, up to a logarithm of the longest step list, everywhere.
+- **Linear up to a logarithm in the steps of one definition, whatever their dependency structure.**  `output_reach` on a root with 8,192 sequential `call` steps (a decode chain, the closure `Down(j)` of every step being every later step) takes 68.8 ms and 3.09 MB (∝ steps^1.13 in time, ∝ steps^0.99 in memory) against 87 ms for the parse and 11.2 ms for `transient_ports`; `Index.kinds()` is 83.6 ms.  The closure is swept as intervals of steps over a segment tree (`_step_reach`; the comment above `_segment_bits` in `src/veritor/core/index.py`), `O((S + R) · log S)` for `S` steps and `R` recorded argument ranges on a chain or on siblings reading one step, so the 10^6-step `max_steps_per_definition` limit is seconds, like the parse.
+- The same number of independent steps costs 11.4 ms (∝ steps^1.01), many distinct definitions 14.1 ms for 4,096 (∝ ^1.06), and `repeat` nesting is flat in n: the pass is linear in the description, up to a logarithm of the longest step list, everywhere.
 
 ## Performance bugs
 
-### Fixed: `output_reach` was Θ(S²) Python iterations on Θ(S)-bit integers for a chain of S steps
+None observed in this run.
 
-- **Where**: `src/veritor/core/index.py`, `_step_reach`, called from `output_reach`, called from `Index.kinds()`, hence from `Index.kind_table()`, `Compile` (research API) and the verifier's admission.
-- **What it was**: `Down(j)` was kept as a bitmask over the steps of the definition.  For a chain (step `k` reads step `k - 1`) `Down(j)` is every later step, so the mask had `S - j` bits and the inner loop popped them one at a time, each pop an O(S / w) big-integer operation: Θ(S²) iterations and Θ(S³ / w) word operations, plus Θ(S² / 8) bytes of masks.  `N` independent steps reading one step ORed `N` masks of `N` bits into that step's `readers`: Θ(N² / w).
-- **Measured before** (`benchmarks/reach.py`, `chain_vs_steps`): S = 64: 189 µs, S = 256: 2.39 ms, S = 1,024: 59.1 ms, S = 4,096: 2.43 s, S = 8,192: 14.3 s; fitted exponent 2.35, local exponent 2.56 between the last two sizes, extrapolating to ~35 days and ~116 GB at the 10^6-step limit.
-- **The fix**: reads are recorded on the reader's side as ranges of steps (two bisections on `step_slot` per argument run; a strided run over more than 64 steps is recorded as its hull, a superset), the steps are swept last to first, and a segment tree over the step positions counts, per position, the active readers whose `Down` contains it: the bits a step reaches are read off the root and its `Down` comes out as maximal intervals by descent, at most 64 of them before the hull `[j, max Down(j) + 1)` stands in.  Both approximations only enlarge a closure, so every reach stays a downstream cut, and both are exact on every definition of at most 64 steps (`tests/veritor/core/test_reach.py` checks the sweep against the bitmask closure on random definitions).  `O((S + R) · log S)` for `R` recorded ranges on the chain and sibling shapes, `O((S + R) · 64 · log S)` at worst.
-- **Measured after**: the table below, same machine (`output_reach(root)` on the parsed root, best of 3; the "before" column re-measured on the bitmask closure for the comparison).  Peak memory of the pass: 3.2 MB at S = 8,192 (13.5 MB before), 35 MB at 10^5, so ~350 MB at 10^6 against ~116 GB of bitmasks.  Below a few thousand steps the two are within a factor of two of each other either way (the segment tree costs ~10 µs per step, the bitmasks are cheap while they fit in a few words); `tests/veritor/perf/test_asymptotics.py` asserts the ratio between 256 and 1,024 steps stays under `4 * 3` for both shapes.
-- **What is looser**: the sweep over-approximates only where it takes a hull, and never below the bitmask closure: a strided argument run whose stride skips a step, spanning more than 64 steps (a `repeat` reading every other one of 200 unrolled steps charges the steps it skips too), and a closure of more than 64 maximal intervals (the head of one of two interleaved chains of 100 links is charged the other chain's links).  Chains, KV-cache chains and broadcasts are single-interval closures and stay exact at any length.
-
-| shape | S | before | after |
-|---|---:|---:|---:|
-| chain (`chain_steps`) | 256 | 2.5 ms | 1.4 ms |
-| chain | 1,024 | 60.8 ms | 6.4 ms |
-| chain | 8,192 | 14.2 s | 70 ms |
-| chain | 10^5 | ~2.4 h (extrapolated, exponent 2.56) | 1.0 s |
-| chain | 10^6 | ~35 days (extrapolated) | 11.5 s |
-| siblings + broadcast (`unrolled_units`) | 256 | 0.2 ms | 0.3 ms |
-| siblings + broadcast | 1,024 | 0.8 ms | 1.3 ms |
-| siblings + broadcast | 8,192 | 14.6 ms | 12.1 ms |
-| siblings + broadcast | 10^5 | 1.16 s | 0.17 s |
-| siblings + broadcast | 10^6 | ~1-2 min (extrapolated, quadratic) | 1.4 s |
+- **Fixed: `output_reach` was Θ(S²) Python iterations on Θ(S)-bit integers for a chain of S steps** (14.3 s at S = 8,192, extrapolating to ~35 days and ~116 GB of bitmasks at the 10^6-step limit).  `_step_reach` (`src/veritor/core/index.py`) now records reads as ranges of steps and sweeps the closure `Down` as intervals over a segment tree: `chain_vs_steps` is ∝ steps^1.13 in this run, 68.8 ms at S = 8,192.  A strided argument run over more than 64 steps and a closure of more than 64 maximal intervals are recorded as hulls, which only enlarge a closure (every reach stays a downstream cut) and are exact on every definition of at most 64 steps; `tests/veritor/core/test_reach.py` checks the sweep against the bitmask closure it replaced.

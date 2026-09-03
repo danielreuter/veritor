@@ -4128,7 +4128,7 @@
   "reach": {
    "description": "`time_s` is `output_reach(root)` on the parsed root; `transient_ports_s` the sibling pass, `kinds_s` the whole `Index.kinds()` (both passes plus the per-kind summaries), `parse_s` `parse_description`.  `root_steps` is the step count of the root definition, `definitions` the reachable kinds.",
    "name": "reach",
-   "seconds": 311.37750379089266,
+   "seconds": 5.48449125001207,
    "series": [
     {
      "columns": [
@@ -4149,102 +4149,102 @@
      ],
      "fits": {
       "kinds_s": {
-       "coefficient": 1.533369479615339e-08,
-       "exponent": 2.2653910015308236,
+       "coefficient": 4.5260812433295886e-06,
+       "exponent": 1.0899003712507416,
        "points": 5,
-       "r2": 0.9898258268863275
+       "r2": 0.9996546286848432
       },
       "parse_s": {
-       "coefficient": 1.2940167440375021e-05,
-       "exponent": 0.9754870462794456,
+       "coefficient": 1.3447155797467524e-05,
+       "exponent": 0.9680031231218257,
        "points": 5,
-       "r2": 0.9990446799294607
+       "r2": 0.9995555901379529
       },
       "peak_bytes": {
-       "coefficient": 11.232188278624237,
-       "exponent": 1.527384740120387,
+       "coefficient": 441.05276903722523,
+       "exponent": 0.9858742267407112,
        "points": 5,
-       "r2": 0.9879179010583181
+       "r2": 0.9996214134181419
       },
       "time_s": {
-       "coefficient": 7.439265618897813e-09,
-       "exponent": 2.346253097830681,
+       "coefficient": 2.6655644590982476e-06,
+       "exponent": 1.130200876615643,
        "points": 5,
-       "r2": 0.9947307374393767
+       "r2": 0.9997690262794484
       },
       "transient_ports_s": {
-       "coefficient": 1.2577343224260894e-06,
-       "exponent": 1.0138466200559713,
+       "coefficient": 1.336715928429387e-06,
+       "exponent": 1.0015383555348896,
        "points": 5,
-       "r2": 0.9992498406803944
+       "r2": 0.9990817953414435
       }
      },
      "name": "chain_vs_steps",
-     "note": "A root with `S` sequential `call` steps of one 3-gate RU, each reading the previous step's output (a decode chain).  The closure `Down(j)` is every later step, so the bit-iteration in `_step_reach` visits `\u0398(S\u00b2)` bits, each on an `S`-bit integer: `\u0398(S\u00b3 / w)` word operations, against `\u0398(S)` for the parse.",
+     "note": "A root with `S` sequential `call` steps of one 3-gate RU, each reading the previous step's output (a decode chain).  The closure `Down(j)` is every later step, one interval `[j, S)` in the sweep of `_step_reach`: `O(S log S)` (two range additions and one extraction on the segment tree per step), against `\u0398(S)` for the parse.  The bitmask closure this replaced was `\u0398(S\u00b3 / w)` here (14.3 s at `S = 8192`).",
      "points": [
       {
        "definitions": 5,
        "description_bytes": 8992,
-       "kinds_s": 0.00031416723504662514,
+       "kinds_s": 0.0004404173232614994,
        "n": 193,
-       "parse_s": 0.000802875030785799,
-       "peak_bytes": 9368,
+       "parse_s": 0.0007750829681754112,
+       "peak_bytes": 27856,
        "repeats": 3,
        "root_steps": 65,
-       "time_s": 0.0001888750120997429,
-       "transient_ports_s": 8.995784446597099e-05,
+       "time_s": 0.0002815411426126957,
+       "transient_ports_s": 9.179208427667618e-05,
        "x": 64
       },
       {
        "definitions": 5,
        "description_bytes": 31805,
-       "kinds_s": 0.002911667339503765,
+       "kinds_s": 0.0017963750287890434,
        "n": 769,
-       "parse_s": 0.00265579205006361,
-       "peak_bytes": 39396,
+       "parse_s": 0.0028660837560892105,
+       "peak_bytes": 98824,
        "repeats": 3,
        "root_steps": 257,
-       "time_s": 0.0023888330906629562,
-       "transient_ports_s": 0.0003309999592602253,
+       "time_s": 0.0014681671746075153,
+       "transient_ports_s": 0.00031250016763806343,
        "x": 256
       },
       {
        "definitions": 5,
        "description_bytes": 123222,
-       "kinds_s": 0.06065566698089242,
+       "kinds_s": 0.00852599972859025,
        "n": 3073,
-       "parse_s": 0.010830416809767485,
-       "peak_bytes": 308976,
+       "parse_s": 0.010519875213503838,
+       "peak_bytes": 402480,
        "repeats": 3,
        "root_steps": 1025,
-       "time_s": 0.05912495777010918,
-       "transient_ports_s": 0.0013765408657491207,
+       "time_s": 0.0068702083081007,
+       "transient_ports_s": 0.0013959580101072788,
        "x": 1024
       },
       {
        "definitions": 5,
        "description_bytes": 491862,
-       "kinds_s": 2.4142356673255563,
+       "kinds_s": 0.04015883291140199,
        "n": 12289,
-       "parse_s": 0.04428979102522135,
-       "peak_bytes": 3738144,
+       "parse_s": 0.041069791186600924,
+       "peak_bytes": 1619232,
        "repeats": 3,
        "root_steps": 4097,
-       "time_s": 2.4282610416412354,
-       "transient_ports_s": 0.0055491249077022076,
+       "time_s": 0.03227512538433075,
+       "transient_ports_s": 0.005665833130478859,
        "x": 4096
       },
       {
        "definitions": 5,
        "description_bytes": 983382,
-       "kinds_s": 16.476384166860953,
+       "kinds_s": 0.08363083330914378,
        "n": 24577,
-       "parse_s": 0.08685620781034231,
-       "peak_bytes": 14199876,
-       "repeats": 2,
+       "parse_s": 0.0869927080348134,
+       "peak_bytes": 3241352,
+       "repeats": 3,
        "root_steps": 8193,
-       "time_s": 14.274445062503219,
-       "transient_ports_s": 0.012467457912862301,
+       "time_s": 0.068831083830446,
+       "transient_ports_s": 0.01115745771676302,
        "x": 8192
       }
      ],
@@ -4269,102 +4269,102 @@
      ],
      "fits": {
       "kinds_s": {
-       "coefficient": 1.4659324131211354e-06,
-       "exponent": 1.0587911529660674,
+       "coefficient": 4.030142755090699e-06,
+       "exponent": 0.9422729522788689,
        "points": 5,
-       "r2": 0.9943693706007127
+       "r2": 0.9975303272536109
       },
       "parse_s": {
-       "coefficient": 1.318199649884279e-05,
-       "exponent": 0.9731274012287063,
+       "coefficient": 1.4425262436854435e-05,
+       "exponent": 0.9579504074015823,
        "points": 5,
-       "r2": 0.9995420046231923
+       "r2": 0.9987823782121448
       },
       "peak_bytes": {
-       "coefficient": 17.389749212000822,
-       "exponent": 1.3606387153334778,
+       "coefficient": 429.00061397056146,
+       "exponent": 0.9940606083978508,
        "points": 5,
-       "r2": 0.983880338222601
+       "r2": 0.9999505207742196
       },
       "time_s": {
-       "coefficient": 3.349417196118973e-07,
-       "exponent": 1.1687556295911552,
+       "coefficient": 1.2633521317798592e-06,
+       "exponent": 1.0112999748112241,
        "points": 5,
-       "r2": 0.9971464253015035
+       "r2": 0.9996592390612304
       },
       "transient_ports_s": {
-       "coefficient": 5.869821831412928e-07,
-       "exponent": 1.025052433682741,
+       "coefficient": 6.441887463016581e-07,
+       "exponent": 1.0104879529095494,
        "points": 5,
-       "r2": 0.9992615437018286
+       "r2": 0.9995292449050278
       }
      },
      "name": "independent_vs_steps",
-     "note": "A root with `S` independent `call` steps of one RU (every step reads the input).  `Down(j) = {j}`, so the pass is linear.",
+     "note": "A root with `S` independent `call` steps of one RU, every step reading the input step (siblings over one broadcast step, as requests over a weights step).  `Down(j) = {j}` and `Down(input) = [0, S + 1)`, so the pass is `O(S log S)`; the bitmask closure ORed `S` masks of `S` bits here, `\u0398(S\u00b2 / w)`.",
      "points": [
       {
        "definitions": 5,
        "description_bytes": 8938,
-       "kinds_s": 0.00014133425429463387,
+       "kinds_s": 0.000226583331823349,
        "n": 193,
-       "parse_s": 0.0007902919314801693,
-       "peak_bytes": 7228,
+       "parse_s": 0.0008248751983046532,
+       "peak_bytes": 27224,
        "repeats": 3,
        "root_steps": 65,
-       "time_s": 4.9584079533815384e-05,
-       "transient_ports_s": 4.4040847569704056e-05,
+       "time_s": 8.120806887745857e-05,
+       "transient_ports_s": 4.483293741941452e-05,
        "x": 64
       },
       {
        "definitions": 5,
        "description_bytes": 31403,
-       "kinds_s": 0.0004636668600142002,
+       "kinds_s": 0.0006524156779050827,
        "n": 769,
-       "parse_s": 0.0027864999137818813,
-       "peak_bytes": 24968,
+       "parse_s": 0.002827542368322611,
+       "peak_bytes": 104648,
        "repeats": 3,
        "root_steps": 257,
-       "time_s": 0.00019220774993300438,
-       "transient_ports_s": 0.00016266712918877602,
+       "time_s": 0.0003642500378191471,
+       "transient_ports_s": 0.00016287527978420258,
        "x": 256
       },
       {
        "definitions": 5,
        "description_bytes": 121260,
-       "kinds_s": 0.001864457968622446,
+       "kinds_s": 0.00267783273011446,
        "n": 3073,
-       "parse_s": 0.01071104221045971,
-       "peak_bytes": 145044,
+       "parse_s": 0.010166166815906763,
+       "peak_bytes": 416160,
        "repeats": 3,
        "root_steps": 1025,
-       "time_s": 0.0010103331878781319,
-       "transient_ports_s": 0.0006816661916673183,
+       "time_s": 0.0014155842363834381,
+       "transient_ports_s": 0.0007204161956906319,
        "x": 1024
       },
       {
        "definitions": 5,
        "description_bytes": 480684,
-       "kinds_s": 0.009675249923020601,
+       "kinds_s": 0.010362375061959028,
        "n": 12289,
-       "parse_s": 0.04415933322161436,
-       "peak_bytes": 1411524,
+       "parse_s": 0.040817707777023315,
+       "peak_bytes": 1675880,
        "repeats": 3,
        "root_steps": 4097,
-       "time_s": 0.005331458989530802,
-       "transient_ports_s": 0.0031380830332636833,
+       "time_s": 0.005583582911640406,
+       "transient_ports_s": 0.0029526660218834877,
        "x": 4096
       },
       {
        "definitions": 5,
        "description_bytes": 959916,
-       "kinds_s": 0.023744792211800814,
+       "kinds_s": 0.020538832992315292,
        "n": 24577,
-       "parse_s": 0.08635579189285636,
-       "peak_bytes": 5057512,
+       "parse_s": 0.08710316708311439,
+       "peak_bytes": 3364840,
        "repeats": 3,
        "root_steps": 8193,
-       "time_s": 0.014259916730225086,
-       "transient_ports_s": 0.005994291976094246,
+       "time_s": 0.011374291032552719,
+       "transient_ports_s": 0.005740999709814787,
        "x": 8192
       }
      ],
@@ -4389,34 +4389,34 @@
      ],
      "fits": {
       "kinds_s": {
-       "coefficient": 5.017352662222344e-06,
-       "exponent": 1.0650709025498872,
+       "coefficient": 8.882005658912982e-06,
+       "exponent": 1.0168257356430628,
        "points": 4,
-       "r2": 0.9973352952849419
+       "r2": 0.9951397427369137
       },
       "parse_s": {
-       "coefficient": 4.74957330950799e-05,
-       "exponent": 1.003189620945609,
+       "coefficient": 4.5101927786272296e-05,
+       "exponent": 1.0077911375646242,
        "points": 4,
-       "r2": 0.9986133754163554
+       "r2": 0.9989587619586936
       },
       "peak_bytes": {
-       "coefficient": 49.904001575916425,
-       "exponent": 1.223503440389943,
+       "coefficient": 529.3777997537678,
+       "exponent": 0.9694281817210614,
        "points": 4,
-       "r2": 0.9891616616024757
+       "r2": 0.9998158741037538
       },
       "time_s": {
-       "coefficient": 1.291535382320598e-06,
-       "exponent": 1.0804346236819666,
+       "coefficient": 2.225380667017944e-06,
+       "exponent": 1.0570695665319287,
        "points": 4,
-       "r2": 0.9978541981925171
+       "r2": 0.9994181562495945
       },
       "transient_ports_s": {
-       "coefficient": 1.4079421859853855e-06,
-       "exponent": 1.0186081109584388,
+       "coefficient": 1.5058546998204e-06,
+       "exponent": 1.0237388344621725,
        "points": 4,
-       "r2": 0.9985774225782699
+       "r2": 0.9970580093563738
       }
      },
      "name": "definitions_vs_count",
@@ -4425,53 +4425,53 @@
       {
        "definitions": 68,
        "description_bytes": 27205,
-       "kinds_s": 0.0004602912813425064,
+       "kinds_s": 0.0006860420107841492,
        "n": 6241,
-       "parse_s": 0.0032554161734879017,
-       "peak_bytes": 9812,
+       "parse_s": 0.00311870826408267,
+       "peak_bytes": 29808,
        "repeats": 3,
        "root_steps": 65,
-       "time_s": 0.00012483401224017143,
-       "transient_ports_s": 0.0001037907786667347,
+       "time_s": 0.00017800042405724525,
+       "transient_ports_s": 0.00011629099026322365,
        "x": 64
       },
       {
        "definitions": 260,
        "description_bytes": 105663,
-       "kinds_s": 0.0016687908209860325,
+       "kinds_s": 0.002172584179788828,
        "n": 98689,
-       "parse_s": 0.011766625102609396,
-       "peak_bytes": 36768,
+       "parse_s": 0.01162920892238617,
+       "peak_bytes": 116448,
        "repeats": 3,
        "root_steps": 257,
-       "time_s": 0.00047774985432624817,
-       "transient_ports_s": 0.0003705001436173916,
+       "time_s": 0.0007730000652372837,
+       "transient_ports_s": 0.000381499994546175,
        "x": 256
       },
       {
        "definitions": 1028,
        "description_bytes": 419825,
-       "kinds_s": 0.007518833037465811,
+       "kinds_s": 0.00946766696870327,
        "n": 1574401,
-       "parse_s": 0.04659845819696784,
-       "peak_bytes": 194220,
+       "parse_s": 0.04577854136005044,
+       "peak_bytes": 424344,
        "repeats": 3,
        "root_steps": 1025,
-       "time_s": 0.0021376670338213444,
-       "transient_ports_s": 0.0015748748555779457,
+       "time_s": 0.0036143329925835133,
+       "transient_ports_s": 0.0018484997563064098,
        "x": 1024
       },
       {
        "definitions": 4100,
        "description_bytes": 1682417,
-       "kinds_s": 0.03824475035071373,
+       "kinds_s": 0.04612066596746445,
        "n": 25171969,
-       "parse_s": 0.2121457918547094,
-       "peak_bytes": 1607772,
+       "parse_s": 0.2080207080580294,
+       "peak_bytes": 1708640,
        "repeats": 3,
        "root_steps": 4097,
-       "time_s": 0.011161124799400568,
-       "transient_ports_s": 0.007093874737620354,
+       "time_s": 0.01407783292233944,
+       "transient_ports_s": 0.007791332900524139,
        "x": 4096
       }
      ],
@@ -4497,34 +4497,34 @@
      ],
      "fits": {
       "kinds_s": {
-       "coefficient": 1.698168663568787e-05,
-       "exponent": 0.6484657774427732,
+       "coefficient": 1.9276886484806595e-05,
+       "exponent": 0.6627599086955932,
        "points": 6,
-       "r2": 0.9781245956817628
+       "r2": 0.9305591403755913
       },
       "parse_s": {
-       "coefficient": 0.0001609483056332508,
-       "exponent": 0.5578466684539675,
+       "coefficient": 0.00017929947388893694,
+       "exponent": 0.5046746107474778,
        "points": 6,
-       "r2": 0.802700978488156
+       "r2": 0.7707915974478201
       },
       "peak_bytes": {
-       "coefficient": 2025.1301032923423,
-       "exponent": 0.3317578236996099,
+       "coefficient": 2676.7345864600975,
+       "exponent": 0.2832366133991646,
        "points": 6,
-       "r2": 0.8074979982513357
+       "r2": 0.8048249071254303
       },
       "time_s": {
-       "coefficient": 5.130224259082044e-06,
-       "exponent": 0.5586914289323379,
+       "coefficient": 9.321147551443795e-06,
+       "exponent": 0.5054765132374243,
        "points": 6,
-       "r2": 0.982220674906175
+       "r2": 0.8781702213509031
       },
       "transient_ports_s": {
-       "coefficient": 2.6537574532335562e-06,
-       "exponent": 0.7160945530594831,
+       "coefficient": 4.833235542395978e-06,
+       "exponent": 0.44504491925661416,
        "points": 6,
-       "r2": 0.9249927079721726
+       "r2": 0.7542038131617651
       }
      },
      "name": "deep_repeat_vs_depth",
@@ -4534,84 +4534,84 @@
        "definitions": 8,
        "description_bytes": 2432,
        "gates": 769,
-       "kinds_s": 4.370789974927902e-05,
+       "kinds_s": 4.7416891902685165e-05,
        "n": 769,
-       "parse_s": 0.00030858302488923073,
-       "peak_bytes": 3504,
+       "parse_s": 0.000433207955211401,
+       "peak_bytes": 4280,
        "repeats": 3,
        "root_steps": 2,
-       "time_s": 1.1750031262636185e-05,
-       "transient_ports_s": 8.00006091594696e-06,
+       "time_s": 2.162531018257141e-05,
+       "transient_ports_s": 1.0250136256217957e-05,
        "x": 4
       },
       {
        "definitions": 12,
        "description_bytes": 3568,
        "gates": 196609,
-       "kinds_s": 6.120791658759117e-05,
+       "kinds_s": 8.591730147600174e-05,
        "n": 196609,
-       "parse_s": 0.0007072081789374352,
-       "peak_bytes": 3792,
+       "parse_s": 0.0004220418632030487,
+       "peak_bytes": 4568,
        "repeats": 3,
        "root_steps": 2,
-       "time_s": 1.5667174011468887e-05,
-       "transient_ports_s": 1.1249911040067673e-05,
+       "time_s": 2.2207852452993393e-05,
+       "transient_ports_s": 1.0041985660791397e-05,
        "x": 8
       },
       {
        "definitions": 16,
        "description_bytes": 4704,
        "gates": 50331649,
-       "kinds_s": 8.520763367414474e-05,
+       "kinds_s": 8.783303201198578e-05,
        "n": 50331649,
-       "parse_s": 0.0005595828406512737,
-       "peak_bytes": 3824,
+       "parse_s": 0.0005806251429021358,
+       "peak_bytes": 4600,
        "repeats": 3,
        "root_steps": 2,
-       "time_s": 1.925043761730194e-05,
-       "transient_ports_s": 1.370767131447792e-05,
+       "time_s": 3.11252661049366e-05,
+       "transient_ports_s": 1.2417323887348175e-05,
        "x": 12
       },
       {
        "definitions": 20,
        "description_bytes": 5840,
        "gates": 12884901889,
-       "kinds_s": 9.55001451075077e-05,
+       "kinds_s": 0.000128250103443861,
        "n": 12884901889,
-       "parse_s": 0.0006600408814847469,
-       "peak_bytes": 5456,
+       "parse_s": 0.0006421669386327267,
+       "peak_bytes": 6232,
        "repeats": 3,
        "root_steps": 2,
-       "time_s": 2.3833010345697403e-05,
-       "transient_ports_s": 1.674983650445938e-05,
+       "time_s": 3.4874770790338516e-05,
+       "transient_ports_s": 2.0958948880434036e-05,
        "x": 16
       },
       {
        "definitions": 24,
        "description_bytes": 6976,
        "gates": 3298534883329,
-       "kinds_s": 0.00013029202818870544,
+       "kinds_s": 0.00012091593816876411,
        "n": 3298534883329,
-       "parse_s": 0.0009530410170555115,
-       "peak_bytes": 5856,
+       "parse_s": 0.0007707923650741577,
+       "peak_bytes": 6632,
        "repeats": 3,
        "root_steps": 2,
-       "time_s": 2.791592851281166e-05,
-       "transient_ports_s": 2.316618338227272e-05,
+       "time_s": 4.645809531211853e-05,
+       "transient_ports_s": 1.7333775758743286e-05,
        "x": 20
       },
       {
        "definitions": 28,
        "description_bytes": 8112,
        "gates": 844424930131969,
-       "kinds_s": 0.00013258401304483414,
+       "kinds_s": 0.00017941603437066078,
        "n": 844424930131969,
-       "parse_s": 0.0009199171327054501,
-       "peak_bytes": 5952,
+       "parse_s": 0.0011642077006399632,
+       "peak_bytes": 6728,
        "repeats": 3,
        "root_steps": 2,
-       "time_s": 3.1833071261644363e-05,
-       "transient_ports_s": 3.133341670036316e-05,
+       "time_s": 5.0459057092666626e-05,
+       "transient_ports_s": 2.0791776478290558e-05,
        "x": 24
       }
      ],
@@ -4637,34 +4637,34 @@
      ],
      "fits": {
       "kinds_s": {
-       "coefficient": 4.734106429451468e-10,
-       "exponent": 1.405016722089509,
+       "coefficient": 1.9925520871842827e-10,
+       "exponent": 1.5088455912714291,
        "points": 5,
-       "r2": 0.9888650030595302
+       "r2": 0.9931273961732948
       },
       "parse_s": {
-       "coefficient": 6.52044363712742e-08,
-       "exponent": 1.0676553433908298,
+       "coefficient": 2.3711062226631298e-08,
+       "exponent": 1.160004861939771,
        "points": 5,
-       "r2": 0.9773209804359542
+       "r2": 0.998253493960944
       },
       "peak_bytes": {
-       "coefficient": 3552.6050819002594,
-       "exponent": 0.1063191113147866,
+       "coefficient": 13.843234450075835,
+       "exponent": 0.670331745008193,
        "points": 5,
-       "r2": 0.9856615803697193
+       "r2": 0.9981981076930564
       },
       "time_s": {
-       "coefficient": 1.6133019102142689e-10,
-       "exponent": 1.3789374091709214,
+       "coefficient": 7.145849306552246e-11,
+       "exponent": 1.5195787015883155,
        "points": 5,
-       "r2": 0.9932680974168795
+       "r2": 0.9916068758934565
       },
       "transient_ports_s": {
-       "coefficient": 2.0787190892940095e-12,
-       "exponent": 1.8598635167925877,
+       "coefficient": 1.8113642563123615e-11,
+       "exponent": 1.6603050504397738,
        "points": 5,
-       "r2": 0.9996513003958087
+       "r2": 0.9876437444796629
       }
      },
      "name": "cluster_vs_description",
@@ -4674,70 +4674,70 @@
        "case": "d4-L1",
        "definitions": 35,
        "description_bytes": 23917,
-       "kinds_s": 0.0006537497974932194,
+       "kinds_s": 0.0008402499370276928,
        "n": 4437,
-       "parse_s": 0.0028893747366964817,
-       "peak_bytes": 10336,
+       "parse_s": 0.002889334224164486,
+       "peak_bytes": 11984,
        "repeats": 3,
        "root_steps": 4,
-       "time_s": 0.00018400000408291817,
-       "transient_ports_s": 0.00028579216450452805,
+       "time_s": 0.0003183339722454548,
+       "transient_ports_s": 0.0003142496570944786,
        "x": 23917
       },
       {
        "case": "d8-L1",
        "definitions": 35,
        "description_bytes": 24953,
-       "kinds_s": 0.0007315832190215588,
+       "kinds_s": 0.0008239578455686569,
        "n": 27169,
-       "parse_s": 0.0034495829604566097,
-       "peak_bytes": 10472,
+       "parse_s": 0.0029392498545348644,
+       "peak_bytes": 12192,
        "repeats": 3,
        "root_steps": 7,
-       "time_s": 0.00017770938575267792,
-       "transient_ports_s": 0.0003172503784298897,
+       "time_s": 0.00034795887768268585,
+       "transient_ports_s": 0.0003915000706911087,
        "x": 24953
       },
       {
        "case": "d16-L2",
        "definitions": 45,
        "description_bytes": 46617,
-       "kinds_s": 0.0018652081489562988,
+       "kinds_s": 0.002099290955811739,
        "n": 509833,
-       "parse_s": 0.006681208033114672,
-       "peak_bytes": 11080,
+       "parse_s": 0.0062693334184587,
+       "peak_bytes": 18944,
        "repeats": 3,
        "root_steps": 9,
-       "time_s": 0.00046120816841721535,
-       "transient_ports_s": 0.0010156668722629547,
+       "time_s": 0.0008916668593883514,
+       "transient_ports_s": 0.0009704590775072575,
        "x": 46617
       },
       {
        "case": "d32-L2",
        "definitions": 45,
        "description_bytes": 47961,
-       "kinds_s": 0.001691875047981739,
+       "kinds_s": 0.0022990000434219837,
        "n": 1943561,
-       "parse_s": 0.006310167256742716,
-       "peak_bytes": 11176,
+       "parse_s": 0.006429333705455065,
+       "peak_bytes": 18944,
        "repeats": 3,
        "root_steps": 9,
-       "time_s": 0.000453209038823843,
-       "transient_ports_s": 0.0010522911325097084,
+       "time_s": 0.0008604158647358418,
+       "transient_ports_s": 0.0010474156588315964,
        "x": 47961
       },
       {
        "case": "d64-L2",
        "definitions": 45,
        "description_bytes": 48494,
-       "kinds_s": 0.00176679203286767,
+       "kinds_s": 0.002462207805365324,
        "n": 7588105,
-       "parse_s": 0.006340917199850082,
-       "peak_bytes": 11240,
+       "parse_s": 0.0063262502662837505,
+       "peak_bytes": 18944,
        "repeats": 3,
        "root_steps": 9,
-       "time_s": 0.00045575015246868134,
-       "transient_ports_s": 0.0010663336142897606,
+       "time_s": 0.001009209081530571,
+       "transient_ports_s": 0.0011642910540103912,
        "x": 48494
       }
      ],
@@ -4769,7 +4769,7 @@
   "python": "3.12.11",
   "quick": false,
   "repeats": 3,
-  "seconds": 1102.979626541026,
+  "seconds": 1108.604174207896,
   "timestamp": "2026-09-03T01:32:24+00:00",
   "updates": [
    {
@@ -4780,6 +4780,15 @@
     "git_dirty": true,
     "seconds": 4.691294790711254,
     "timestamp": "2026-09-03T01:33:49+00:00"
+   },
+   {
+    "benchmarks": [
+     "reach"
+    ],
+    "git_commit": "a93584fc7d335d8b07a1740fa09e01f97c95f0d7",
+    "git_dirty": true,
+    "seconds": 5.624547666870058,
+    "timestamp": "2026-09-03T03:20:34+00:00"
    }
   ],
   "veritor_version": "unknown"
