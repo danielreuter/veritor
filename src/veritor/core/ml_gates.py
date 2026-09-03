@@ -7,11 +7,14 @@ replay/proof cost of each, so that a description over it can be compiled,
 indexed and priced (``Compile``, ``Index.kinds``, ``Bound``, ``Cost``) and
 its bottleneck widths read off the per-kind table.  It has **no executable
 semantics**: every gate's evaluator is a stub that raises
-``NotImplementedError``.  Whether values are fixed-point words, floats or
-something else is an open architectural decision; nothing on the compile,
-index or analysis path evaluates a gate, and a circuit over this set can
-never be run (``evaluate``/``check`` of every gate raise, so
-``Circuit.evaluate`` and the protocol's relation checks fail loudly).
+``NotImplementedError``.  A gate's semantics are part of its definition and
+are pinned at the silicon level (the tensor-core MMA step of a named GPU
+architecture and dtype, the IEEE operation of a CUDA core); this set is the
+structural placeholder until those gates land in
+:mod:`veritor.core.silicon`.  Nothing on the compile, index or analysis
+path evaluates a gate, and a circuit over this set can never be run
+(``evaluate``/``check`` of every gate raise, so ``Circuit.evaluate`` and
+the protocol's relation checks fail loudly).
 
 Two widths.  ``width`` is the activation width (16: what a serving profile
 calls the FP16 boundary for weights, activations, KV-cache entries, softmax
