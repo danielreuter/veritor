@@ -5,6 +5,14 @@ message it depends on has been received and checked.  Every lookup the
 verifier performs is against the trusted :class:`Compiled` ``(C, I)``; the
 prover never tells the verifier where a value lives or which addresses a unit
 has.
+
+A :class:`Claim` is what a run is about -- everything the header binds -- and
+an :class:`Expectation` is a claim together with the verifier's two seeds.  A
+:class:`VerifierSession` admits either: from an expectation it is the
+per-session protocol as written; from a claim the seeds arrive later through
+:meth:`VerifierSession.release`, after the boundary has been accepted, which
+is how the epoch layer (:mod:`veritor.protocol.epoch`) commits a round of
+runs before any challenge exists.
 """
 
 from __future__ import annotations
@@ -81,19 +89,62 @@ and weight values (see :func:`self_check`)."""
 
 
 @dataclass(frozen=True, slots=True)
-class Expectation:
-    """What the verifier expects and the randomness it owns.
+class Claim:
+    """What a run is about: everything the header binds, and no randomness.
 
     ``compiled_digest``, ``constructor`` and ``advice`` name the
-    ``Compile(G, x, a)`` the run is about; ``policy`` is the client's ``theta
-    = (q, s)``; ``parameters`` hold the verifier's own ``eta``, ``U_max``,
-    ``A`` and ``W_max``.  ``public_inputs`` are the values of the circuit's
-    ``in`` gates by rank (address order) and ``claimed_outputs`` the outputs;
-    the verifier encodes them with the circuit's canonical codec.
-    ``weights`` is the model's ``kappa_W``, required exactly when the circuit
-    has weight gates.  Both seeds are mandatory so a verifier can never
-    accidentally let the prover choose them.  ``backend`` names the proof
-    backend the reveal step runs through (default: transparent openings).
+    ``Compile(G, x, a)`` the run is about; ``policy`` is the run's ``theta =
+    (q, s)``; ``parameters`` hold the verifier's own ``eta``, ``U_max``,
+    ``A``, ``W_max`` and ``f_max``.  ``public_inputs`` are the values of the
+    circuit's ``in`` gates by rank (address order) and ``claimed_outputs``
+    the outputs; the verifier encodes them with the circuit's canonical
+    codec.  ``weights`` is the model's ``kappa_W``, required exactly when the
+    circuit has weight gates.  ``backend`` names the proof backend the reveal
+    step runs through (default: transparent openings).
+    """
+
+    session_id: bytes
+    compiled_digest: Digest
+    constructor: Digest
+    advice: bytes
+    policy: VerificationPolicy
+    parameters: VerifierParameters
+    public_inputs: tuple[object, ...]
+    claimed_outputs: tuple[object, ...]
+    weights: Weights | None = None
+    backend: str = TRANSPARENT_BACKEND
+
+    def __post_init__(self) -> None:
+        _check_claim(self)
+
+
+def _check_claim(claim: Claim | Expectation) -> None:
+    if type(claim.advice) is not bytes:
+        raise ProtocolError("advice must be bytes")
+    if not isinstance(claim.parameters, VerifierParameters):
+        raise ProtocolError("parameters must be VerifierParameters")
+    if not isinstance(claim.policy, VerificationPolicy):
+        raise ProtocolError("policy must be a VerificationPolicy")
+    if claim.weights is not None and not isinstance(claim.weights, Weights):
+        raise ProtocolError("weights must be Weights or None")
+
+
+def check_seed(name: str, value: object) -> bytes:
+    """``value`` as one of the verifier's 32-byte seeds, or a :class:`ProtocolError`."""
+
+    if type(value) is not bytes or len(value) != 32:
+        raise ProtocolError(f"expected {name} of 32 bytes")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class Expectation:
+    """What the verifier expects and the randomness it owns: a :class:`Claim`
+    (see there for the fields) with the verifier's two seeds.
+
+    Both seeds are mandatory so a verifier can never accidentally let the
+    prover choose them; a verifier that must commit to a run before its
+    seeds exist admits the :attr:`claim` alone and releases the seeds later.
     """
 
     session_id: bytes
@@ -110,18 +161,26 @@ class Expectation:
     backend: str = TRANSPARENT_BACKEND
 
     def __post_init__(self) -> None:
-        for name in ("q_seed", "s_seed"):
-            value = getattr(self, name)
-            if type(value) is not bytes or len(value) != 32:
-                raise ProtocolError(f"expected {name.replace('_', ' ')} of 32 bytes")
-        if type(self.advice) is not bytes:
-            raise ProtocolError("advice must be bytes")
-        if not isinstance(self.parameters, VerifierParameters):
-            raise ProtocolError("parameters must be VerifierParameters")
-        if not isinstance(self.policy, VerificationPolicy):
-            raise ProtocolError("policy must be a VerificationPolicy")
-        if self.weights is not None and not isinstance(self.weights, Weights):
-            raise ProtocolError("weights must be Weights or None")
+        check_seed("q seed", self.q_seed)
+        check_seed("s seed", self.s_seed)
+        _check_claim(self)
+
+    @property
+    def claim(self) -> Claim:
+        """The expectation without its seeds: what the header binds."""
+
+        return Claim(
+            self.session_id,
+            self.compiled_digest,
+            self.constructor,
+            self.advice,
+            self.policy,
+            self.parameters,
+            self.public_inputs,
+            self.claimed_outputs,
+            self.weights,
+            self.backend,
+        )
 
 
 def make_expectation(
@@ -506,11 +565,18 @@ class VerifierSession:
     advice against ``A`` and ``Bound(C, I, theta)`` against ``U_max``, before
     any commitment is accepted; every verdict, including a resource limit, is
     a :class:`Reject`.
+
+    Admitted from an :class:`Expectation`, the session holds its seeds from
+    the start and :meth:`receive_boundary` answers with the replay challenge.
+    Admitted from a bare :class:`Claim`, it has no seeds: the boundary is
+    committed with :meth:`accept_boundary`, the seeds arrive through
+    :meth:`release`, and :meth:`challenge_replay` derives the challenge --
+    the run is bound to its boundary before any randomness exists.
     """
 
     def __init__(
         self,
-        expectation: Expectation,
+        expectation: Expectation | Claim,
         compiled: Compiled,
         *,
         limits: VerificationLimits | None = None,
@@ -518,10 +584,13 @@ class VerifierSession:
     ) -> None:
         if not isinstance(compiled, Compiled):
             raise ProtocolError("sessions require a Compiled circuit")
-        if expectation.compiled_digest != compiled.digest:
+        if not isinstance(expectation, Expectation | Claim):
+            raise ProtocolError("sessions require an Expectation or a Claim")
+        claim = expectation.claim if isinstance(expectation, Expectation) else expectation
+        if claim.compiled_digest != compiled.digest:
             raise ProtocolError("expectation names a different compiled circuit")
-        self._backend = resolve_backend(backend, expectation.backend, compiled, limits)
-        weights = expectation.weights
+        self._backend = resolve_backend(backend, claim.backend, compiled, limits)
+        weights = claim.weights
         weight_count = compiled.index.weight_count
         if weights is None and weight_count:
             raise Reject(
@@ -535,7 +604,8 @@ class VerifierSession:
                 f"{weight_count} weight gates",
             )
         self._layout = _Layout(compiled)
-        self._expectation = expectation
+        self._claim = claim
+        self._seeds: tuple[bytes, bytes] | None = None
         self._limits = VerificationLimits() if limits is None else limits
         self._phase = "admission"
         self.selected_replay_units: tuple[int, ...] = ()
@@ -546,29 +616,27 @@ class VerifierSession:
             inputs = tuple(
                 circuit.encode(address, value)
                 for address, value in zip(
-                    self._layout.public_inputs, expectation.public_inputs, strict=True
+                    self._layout.public_inputs, claim.public_inputs, strict=True
                 )
             )
             outputs = tuple(
                 circuit.encode(address, value)
-                for address, value in zip(
-                    circuit.outputs, expectation.claimed_outputs, strict=True
-                )
+                for address, value in zip(circuit.outputs, claim.claimed_outputs, strict=True)
             )
         except Exception as error:
             raise ProtocolError("expectation values do not encode canonically") from error
         self.header = Header(
-            expectation.session_id,
+            claim.session_id,
             compiled.digest,
-            expectation.constructor,
-            expectation.advice,
-            expectation.policy,
-            expectation.parameters.eta,
+            claim.constructor,
+            claim.advice,
+            claim.policy,
+            claim.parameters.eta,
             inputs,
             outputs,
             weights,
-            expectation.backend,
-            expectation.parameters.max_faults,
+            claim.backend,
+            claim.parameters.max_faults,
         )
         self._commitments: dict[int, tuple[CommitmentDomain, Commitment]] = {}
         if weights is not None:
@@ -583,6 +651,31 @@ class VerifierSession:
         self.declared_verification_units: tuple[int, ...] = ()
         """The VUs the interior message declared incorrect, once accepted."""
         self.transcript_parts: list[object] = [self.header]
+        if isinstance(expectation, Expectation):
+            self.release(expectation.q_seed, expectation.s_seed)
+
+    def release(self, q_seed: bytes, s_seed: bytes) -> None:
+        """Give the session its seeds, once.
+
+        A session admitted from a :class:`Claim` has none until here; the
+        epoch layer calls this at round close, after every boundary of the
+        round is committed, with seeds derived from the round's seal.
+        """
+
+        if self._seeds is not None:
+            raise ProtocolError("the verifier's seeds are released once")
+        self._seeds = (check_seed("q seed", q_seed), check_seed("s seed", s_seed))
+
+    @property
+    def released(self) -> bool:
+        """Whether the session holds its seeds (it never shows them)."""
+
+        return self._seeds is not None
+
+    def _seed(self, index: int) -> bytes:
+        if self._seeds is None:
+            raise ProtocolError("the verifier's seeds have not been released")
+        return self._seeds[index]
 
     def _admit(self) -> None:
         """Price the run before any commitment; folds over the kinds, nothing per copy.
@@ -596,9 +689,9 @@ class VerifierSession:
         """
 
         index = self._layout.index
-        policy = self._expectation.policy
-        parameters = self._expectation.parameters
-        advice_bits = 8 * len(self._expectation.advice)
+        policy = self._claim.policy
+        parameters = self._claim.parameters
+        advice_bits = 8 * len(self._claim.advice)
         if advice_bits > parameters.max_advice_bits:
             raise self._reject(
                 VerificationCode.POLICY_REJECTED,
@@ -689,6 +782,20 @@ class VerifierSession:
         return opening.value
 
     def receive_boundary(self, message: BoundaryMessage) -> ReplayChallenge:
+        """Accept the boundary and answer with the replay challenge."""
+
+        self.accept_boundary(message)
+        return self.challenge_replay()
+
+    def accept_boundary(self, message: BoundaryMessage) -> None:
+        """Commit the run to its boundary without deriving a challenge.
+
+        The commitment is checked against its domain and the public I/O
+        openings against the header; the boundary phase is fixed.  Nothing
+        here needs a seed, so a session admitted from a :class:`Claim` can
+        take the boundary at run time and be challenged at round close.
+        """
+
         self._expect("boundary")
         with self._rejecting_limits():
             compiled = self._layout.compiled
@@ -716,18 +823,34 @@ class VerifierSession:
                             f"{label} at address {address} differs",
                         )
             self._boundary_phase = boundary_phase(self.header, message)
+        self._phase = "replay"
+        self.transcript_parts.append(message)
+
+    @property
+    def boundary_phase(self) -> bytes:
+        """The boundary-phase digest of the accepted boundary (what the epoch
+        stream links); empty until :meth:`accept_boundary`."""
+
+        return self._boundary_phase
+
+    def challenge_replay(self) -> ReplayChallenge:
+        """The replay challenge over the accepted boundary, from the released q seed."""
+
+        self._expect("replay")
+        q_seed = self._seed(0)
+        with self._rejecting_limits():
             selected = derive_replay_selection(
-                self._expectation.q_seed,
+                q_seed,
                 self._boundary_phase,
-                compiled,
+                self._layout.compiled,
                 self.header.policy,
                 self._limits,
             )
-        challenge = ReplayChallenge(self._expectation.q_seed, selected)
+        challenge = ReplayChallenge(q_seed, selected)
         self._replay_phase = replay_phase(self._boundary_phase, challenge)
         self.selected_replay_units = selected
         self._phase = "interiors"
-        self.transcript_parts.extend((message, challenge))
+        self.transcript_parts.append(challenge)
         return challenge
 
     def receive_interiors(self, message: InteriorMessage) -> SampleChallenge:
@@ -748,14 +871,14 @@ class VerifierSession:
             self._accept_declarations(message.declarations)
             self._interior_phase = interior_phase(self._replay_phase, message)
             sampled = derive_sample_selection(
-                self._expectation.s_seed,
+                self._seed(1),
                 self._interior_phase,
                 compiled,
                 selected,
                 self.header.policy,
                 self._limits,
             )
-        challenge = SampleChallenge(self._expectation.s_seed, sampled)
+        challenge = SampleChallenge(self._seed(1), sampled)
         sample_phase(self._interior_phase, challenge)
         self.selected_verification_units = sampled
         self._phase = "evidence"
