@@ -53,6 +53,26 @@ def expected_faults(
     return device_hours * rate
 
 
+def _poisson_mass(mean: float, k: int) -> float:
+    """The Poisson pmf at ``k``, in log space: stable for large means."""
+
+    if mean == 0:
+        return 1.0 if k == 0 else 0.0
+    return math.exp(k * math.log(mean) - mean - math.lgamma(k + 1))
+
+
+def poisson_tail(mean: float, count: int) -> float:
+    """``P[Poisson(mean) > count]``, summed upward so that tiny tails keep their digits."""
+
+    if mean < 0 or type(count) is not int or count < 0:
+        raise ValueError("mean must be nonnegative and count a nonnegative integer")
+    if mean == 0:
+        return 0.0
+    # past mean + 50 sqrt(mean) + 50 the terms are below double precision of the sum
+    last = int(max(count + 1, mean + 50 * math.sqrt(mean))) + 50
+    return sum(_poisson_mass(mean, k) for k in range(count + 1, last + 1))
+
+
 def fault_budget(mean: float, tail: float = 1e-6, *, at_least: int = 1) -> int:
     """The smallest ``f_max >= at_least`` with ``P[Poisson(mean) > f_max] <= tail``.
 
@@ -68,12 +88,10 @@ def fault_budget(mean: float, tail: float = 1e-6, *, at_least: int = 1) -> int:
     if mean == 0:
         return at_least
     f = at_least
-    cumulative = sum(
-        math.exp(-mean) * mean**k / math.factorial(k) for k in range(f + 1)
-    )
+    cumulative = sum(_poisson_mass(mean, k) for k in range(f + 1))
     while 1 - cumulative > tail:
         f += 1
-        cumulative += math.exp(-mean) * mean**f / math.factorial(f)
+        cumulative += _poisson_mass(mean, f)
     return f
 
 
@@ -238,12 +256,24 @@ class FaultInjector:
                 readers[argument].append(address)
         self.readers: tuple[tuple[int, ...], ...] = tuple(tuple(r) for r in readers)
 
-    def propagate(self, flips: Mapping[int, int]) -> dict[int, int]:
-        """The honest assignment with ``flips`` applied and their downstream cones recomputed."""
+    def propagate(
+        self,
+        flips: Mapping[int, int],
+        misreads: Mapping[int, Mapping[int, int]] | None = None,
+    ) -> dict[int, int]:
+        """The honest assignment with ``flips`` applied and their downstream cones recomputed.
+
+        ``misreads[reader][argument]`` is the value gate ``reader`` read for
+        ``argument`` instead of the stored one -- a *read* fault: the stored
+        word is untouched (its producer's relation holds), ``reader`` is
+        computed from the value it read (its relation does not) and its cone
+        follows.
+        """
 
         circuit = self.compiled.circuit
+        misreads = {} if misreads is None else misreads
         values = dict(self.honest)
-        queued = set(flips)
+        queued = set(flips) | set(misreads)
         pending = list(queued)
         heapq.heapify(pending)
         while (
@@ -251,10 +281,13 @@ class FaultInjector:
         ):  # gates read only earlier gates, so address order is evaluation order
             address = heapq.heappop(pending)
             ref = circuit[address]
+            misread = misreads.get(address, {})
             value = (
                 values[address]
                 if ref.is_source
-                else circuit.evaluate_gate(address, tuple(values[a] for a in ref.args))
+                else circuit.evaluate_gate(
+                    address, tuple(misread.get(a, values[a]) for a in ref.args)
+                )
             )
             mask = flips.get(address)
             if mask is not None:
@@ -304,4 +337,5 @@ __all__ = [
     "fault_budget",
     "inject_fault",
     "is_dot_unit",
+    "poisson_tail",
 ]
