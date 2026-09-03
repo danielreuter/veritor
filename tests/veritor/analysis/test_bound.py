@@ -28,7 +28,7 @@ from veritor.core import Compiled, KindTable, VerificationPolicy, make_word_gate
 from veritor.core.description import REPLAY
 from veritor.evaluation import ServingShape, serving_table
 
-from .conftest import build_compiled, paper_example, random_compiled
+from .conftest import bottlenecked, build_compiled, paper_example, random_compiled
 
 TOLERANCE = 1e-6
 
@@ -116,6 +116,19 @@ def test_cover_by_index_nodes_is_never_below_the_exact_cut(make_compiled):
         assert cut_bits(compiled, errors) <= cover_bits(compiled, errors)
         assert cover_bits(compiled, errors) == 8 * len(errors)
     assert error_counts(compiled.index, frozenset({0, 1, 4})) == [2, 1]
+
+
+@pytest.mark.parametrize(
+    "compiled",
+    [paper_example(2, split) for split in (False, True)]
+    + [random_compiled(seed) for seed in range(6)]
+    + [bottlenecked(2), bottlenecked(2, width=1)],
+)
+def test_the_three_cuts_of_a_cover_are_never_below_the_exact_cut(compiled: Compiled):
+    """A node's interface, its reach and its ancestors' interfaces are downstream cuts: the min-cut is below."""
+
+    for errors in error_sets(compiled.index):
+        assert cut_bits(compiled, errors) <= cover_bits(compiled, errors)
 
 
 @pytest.fixture(scope="module")
@@ -328,19 +341,27 @@ def test_fold_never_enumerates_copies():
         assert result.knapsack_bits > 1024 and result.laplace_bits > 1024
 
 
-def interface_only(table: KindTable) -> KindTable:
-    """The table with every kind's reach widened to the whole output: the charge before ``reach_bits``.
+def widened(table: KindTable, **cuts: bool) -> KindTable:
+    """The table with the named cuts (``reach``, ``ancestor``) widened to the whole output.
 
-    A node was charged its interface, capped by the root's; with the reach
-    set to the root's ``out_bits`` the fold's ``min(out_bits, reach_bits)``
-    is exactly that.
+    A widened cut no longer binds: the fold's ``min(out_bits, reach_bits,
+    ancestor_bits)`` becomes the minimum of the others, so the table prices
+    as the fold did before that cut was known (larger cuts are always
+    sound, so this is a table).
     """
 
     root = next(row for row in table.rows if row.kind == table.root)
-    rows = tuple(replace(row, reach_bits=root.out_bits) for row in table.rows)
+    fields = {f"{name}_bits": root.out_bits for name, wide in cuts.items() if wide}
+    rows = tuple(replace(row, **fields) for row in table.rows)
     return KindTable(
         rows, table.root, table.n, table.input_count, table.weight_count, table.replay_unit_count, table.digest
     )
+
+
+def interface_only(table: KindTable) -> KindTable:
+    """The charge before ``reach_bits`` and ``ancestor_bits``: a node's interface, capped by the root's."""
+
+    return widened(table, reach=True, ancestor=True)
 
 
 TOY = ServingShape(vocab=8, d_model=4, heads=2, layers=1, prompt=2, generated=3, requests=4, batch=2)
@@ -355,15 +376,38 @@ TOY = ServingShape(vocab=8, d_model=4, heads=2, layers=1, prompt=2, generated=3,
     + [serving_table(TOY, replay, verification) for replay, verification in (("request", "row"), ("step", "row"))],
 )
 def test_the_reach_never_raises_the_bound(table: KindTable):
-    """Charging a node the narrower of two downstream cuts is never worse than charging one of them."""
+    """Charging a node the narrowest of three downstream cuts is never worse than charging one of them."""
 
-    widened = interface_only(table)
+    before = interface_only(table)
     for policy, eta in POLICIES:
-        result, before = bound(table, policy, eta), bound(widened, policy, eta)
-        assert result.out_bits == before.out_bits
-        assert result.bits <= before.bits + TOLERANCE
-        assert result.knapsack_bits <= before.knapsack_bits + TOLERANCE
-        assert result.laplace_bits <= before.laplace_bits + TOLERANCE
+        result, older = bound(table, policy, eta), bound(before, policy, eta)
+        assert result.out_bits == older.out_bits
+        assert result.bits <= older.bits + TOLERANCE
+        assert result.knapsack_bits <= older.knapsack_bits + TOLERANCE
+        assert result.laplace_bits <= older.laplace_bits + TOLERANCE
+
+
+@pytest.mark.parametrize(
+    "table",
+    [build_compiled(sizes).kind_table() for sizes in FAMILIES]
+    + [paper_example(2, split).kind_table() for split in (False, True)]
+    + [random_compiled(seed).kind_table() for seed in range(6)]
+    + [compile_matmul().compiled.kind_table()]
+    + [
+        serving_table(TOY, replay, verification)
+        for replay, verification in (("request", "cell"), ("step", "row"))
+    ],
+)
+def test_the_ancestor_interfaces_never_raise_the_bound(table: KindTable):
+    """The bound with ``ancestor_bits`` is at most the bound of commit fb3d074, ``min(out_bits, reach_bits)``."""
+
+    before = widened(table, ancestor=True)
+    for policy, eta in POLICIES:
+        result, older = bound(table, policy, eta), bound(before, policy, eta)
+        assert result.out_bits == older.out_bits
+        assert result.bits <= older.bits + TOLERANCE
+        assert result.knapsack_bits <= older.knapsack_bits + TOLERANCE
+        assert result.laplace_bits <= older.laplace_bits + TOLERANCE
 
 
 def chained_requests(requests: int) -> Compiled:
@@ -443,3 +487,77 @@ def test_a_wide_unit_inside_a_request_is_charged_the_requests_word():
     assert before.bits == pytest.approx(math.log2(1 + 8 * 2 * 2**16 + 4 * 2**8), abs=0.001)
     assert result.bits == pytest.approx(math.log2(1 + 8 * 2 * 2**8 + 4 * 2**8), abs=0.001)
     assert result.bits < before.bits - 7
+
+
+def test_a_wide_unit_in_a_narrow_stage_is_charged_the_stages_word():
+    """Hand check as above on :func:`bottlenecked`: the reach does not bind, the enclosing stage does.
+
+    The stage's one word feeds every output, so a ``wide`` RU (16-bit
+    interface) reaches all ``8 * fanout`` output bits and, before
+    ``ancestor_bits``, was charged its 16 bits; the stage encloses it in 8.
+    With ``q = 1/2, s = 1, eta = 1/3`` exactly one RU may be corrupted, so
+    the bound is one plus, per RU, ``2**kappa`` for each of its error
+    counts (a ``wide`` RU has two ``pair`` VUs; the source RU is never
+    incorrect).
+    """
+
+    fanout = 3
+    compiled = bottlenecked(fanout)
+    rows = {row.kind: row for row in compiled.index.kinds()}
+    wide = next(
+        row for row in rows.values() if row.role == REPLAY and row.out_bits == 16
+    )
+    narrow = next(
+        row for row in rows.values() if row.role == REPLAY and row.out_bits == 8
+    )
+    pairs = next(
+        row
+        for row in rows.values()
+        if row.role == "verification" and row.out_bits == 16
+    )
+    assert (wide.copies, narrow.copies, pairs.copies) == (2, 1 + fanout, 4)
+    assert wide.reach_bits == pairs.reach_bits == 8 * fanout > wide.out_bits
+    assert wide.ancestor_bits == pairs.ancestor_bits == 8
+    assert (
+        kind_cut_bits(wide) == kind_cut_bits(pairs) == 8 and kind_cut_bits(narrow) == 8
+    )
+
+    policy, eta = VerificationPolicy(Fraction(1, 2), 1), Fraction(1, 3)
+    result = bound(compiled, policy, eta)
+    before = bound(widened(compiled.kind_table(), ancestor=True), policy, eta)
+
+    assert (
+        result.out_bits == before.out_bits == 8 * fanout
+        and not result.capped
+        and not before.capped
+    )
+    assert result.errors_limit == before.errors_limit == 1
+    assert before.bits == pytest.approx(
+        math.log2(1 + 2 * 2 * 2**16 + (1 + fanout) * 2**8), abs=0.001
+    )
+    assert result.bits == pytest.approx(
+        math.log2(1 + 2 * 2 * 2**8 + (1 + fanout) * 2**8), abs=0.001
+    )
+    assert result.bits < before.bits - 7
+
+
+def test_the_union_of_the_bottlenecked_circuit_is_below_the_ancestor_aware_fold():
+    """One-bit words make the transcripts of :func:`bottlenecked` enumerable: the union stays below."""
+
+    fanout = 6
+    compiled = bottlenecked(fanout, width=1)
+    outputs = transcript_outputs(compiled, [1] * (fanout + 2))
+    policy, eta = VerificationPolicy(Fraction(1, 2), 1), Fraction(1, 3)
+    result = bound(compiled, policy, eta)
+    before = bound(widened(compiled.kind_table(), ancestor=True), policy, eta)
+    union = len(accepted_outputs(outputs, policy, eta))
+
+    assert result.out_bits == fanout and not result.capped
+    assert result.bits == pytest.approx(
+        math.log2(1 + 2 * 2 * 2 + (1 + fanout) * 2), abs=0.001
+    )
+    assert result.bits < before.bits
+    assert math.log2(union) <= result.bits + TOLERANCE
+    for policy, eta in POLICIES[:4]:
+        union = len(accepted_outputs(outputs, policy, eta))
+        assert math.log2(union) <= bound(compiled, policy, eta).bits + TOLERANCE

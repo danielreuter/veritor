@@ -6,15 +6,18 @@ set ``E`` (verification units (VUs) holding an incorrect gate) with
 survival ``sigma(E) > eta`` (see :mod:`veritor.analysis.probability`), and
 if all incorrect gates lie inside a union of index nodes ``S_1, ..., S_m``
 then at most ``2**(sum_j kappa(S_j))`` outputs are reachable, where
-``kappa(S)`` is the width of any downstream cut for ``S``.  Two cuts are
+``kappa(S)`` is the width of any downstream cut for ``S``.  Three cuts are
 read off the kind table: the node's interface ``Out(S)`` (``out_bits``,
-every path out of the node leaves through a declared output) and the
-circuit outputs reachable from the node (``reach_bits``, every path from
-the node to the output ends at one of them), so a node is charged
-``kappa(S) = min(out_bits, reach_bits)``; the whole output ``out_bits(C)``
-caps everything.  Assign every subset ``E'`` of a replay unit (RU) a cover
-``c(E')`` by index nodes, so that ``E`` is covered by the union of the
-``c(E ∩ R_r)``; then
+every path out of the node leaves through a declared output), the circuit
+outputs reachable from the node (``reach_bits``, every path from the node
+to the output ends at one of them) and the narrowest interface of a node
+enclosing it (``ancestor_bits``, every path out of the enclosing node
+leaves through *its* declared outputs), so a node is charged its
+*bottleneck* ``kappa(S) = min(out_bits, reach_bits, ancestor_bits)``
+(:attr:`~veritor.core.KindSummary.cut_bits`); the whole output
+``out_bits(C)`` caps everything.  Assign every subset ``E'`` of a replay
+unit (RU) a cover ``c(E')`` by index nodes, so that ``E`` is covered by
+the union of the ``c(E ∩ R_r)``; then
 
     |Y_eta| <= sum over admissible (l_r)_r of prod_r V_r(l_r),
 
@@ -189,14 +192,16 @@ def bound(
 
 
 def cut_bits(row: KindSummary) -> int:
-    """``kappa`` of a node of the kind: the narrower of its two downstream cuts.
+    """``kappa`` of a node of the kind: the narrowest of its three downstream cuts.
 
-    The interface ``Out`` (``out_bits``) and the circuit outputs the node can
-    reach (``reach_bits``) are both downstream cuts for every gate of the
-    node, so the node may be charged either; the fold charges the smaller.
+    The interface ``Out`` (``out_bits``), the circuit outputs the node can
+    reach (``reach_bits``) and the narrowest interface of a node enclosing
+    it (``ancestor_bits``) are all downstream cuts for every gate of the
+    node, so the node may be charged any of them; the fold charges the
+    smallest (:attr:`~veritor.core.KindSummary.cut_bits`).
     """
 
-    return min(row.out_bits, row.reach_bits)
+    return row.cut_bits
 
 
 def _integer_count(bits: float) -> float:

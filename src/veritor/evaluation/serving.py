@@ -66,6 +66,13 @@ the weights, so nothing reaches across waves.  The weights RU is read by
 everything and reaches the whole output.  Tracking dataflow per slot of a
 step rather than per step would be a further refinement; in this wave model
 the ``batch`` slots of a step advance together, so the two coincide.
+
+Each kind also records the narrowest interface enclosing a copy of it
+(:attr:`~veritor.core.KindSummary.ancestor_bits`), the third cut of the
+bottleneck ``Bound`` charges, from the same hierarchy: a kind called from a
+caller is enclosed by what encloses the caller, narrowed by the caller's own
+interface, and keeps the widest such value over its call sites, exactly as
+:meth:`~veritor.core.Index.kinds` computes it for the compiled toy.
 """
 
 from __future__ import annotations
@@ -400,14 +407,14 @@ class _Builder:
             )
             return {unit: count}
         if ctx == _FREE:
-            cell = self.cells(gate, count, _IN_REPLAY)
+            block_cells = self.cells(gate, count, _IN_REPLAY)
             block = self.define(
                 (gate + "_block", count),
                 REPLAY,
                 a=_ARITY[gate] * count,
                 outputs=count,
-                calls=cell,
-                feeds={kind: _feed(a=A) for kind in cell},
+                calls=block_cells,
+                feeds={kind: _feed(a=A) for kind in block_cells},
             )
             return {block: 1}
         role = None if ctx == _IN_VERIFICATION else VERIFICATION
@@ -753,9 +760,13 @@ class _Builder:
         # a kind reaches the most any call site lets it: what the caller reaches, unless the
         # caller's dataflow says the child's outputs reach less (the root's requests and steps)
         reach: dict[str, int] = {root: self.rows[root].out_count * width}
+        # the narrowest interface enclosing a copy, widest over the copies: what the caller
+        # is enclosed by, narrowed by the caller's own interface (the root by nothing)
+        ancestor: dict[str, int] = {root: self.rows[root].out_count * width}
         for name in self.parents_first(root):
             row = self.rows[name]
             own = retained.setdefault(name, {})
+            enclosing = min(ancestor[name], row.out_count * width)
             for child, count in row.children.items():
                 copies[child] = copies.get(child, 0) + copies[name] * count
                 depth = min_depth[name] + 1
@@ -768,6 +779,7 @@ class _Builder:
                     target[group] = target.get(group, True) and fed
                 site = min(reach[name], row.reaches.get(child, reach[name]))
                 reach[child] = max(reach.get(child, 0), site)
+                ancestor[child] = max(ancestor.get(child, 0), enclosing)
         rows = tuple(
             KindSummary(
                 kind=row.key,
@@ -780,6 +792,7 @@ class _Builder:
                 out_count=row.out_count,
                 out_bits=row.out_count * width,
                 reach_bits=reach[row.key],
+                ancestor_bits=ancestor[row.key],
                 source_inputs=row.source_inputs,
                 source_weights=row.source_weights,
                 min_depth=min_depth[row.key],

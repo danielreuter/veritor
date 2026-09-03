@@ -25,7 +25,7 @@ from circuit_cut_analysis.circuit import CircuitDAG, Gate
 from circuit_cut_analysis.mincut import minimum_vertex_cut
 from veritor.core.circuit import Circuit
 from veritor.core.compiled import Compiled
-from veritor.core.description import VERIFICATION
+from veritor.core.description import VERIFICATION, Frame
 from veritor.core.index import Index, IndexNode
 from veritor.core.policy import VerificationPolicy
 
@@ -49,8 +49,19 @@ def error_counts(index: Index, errors: ErrorSet) -> list[int]:
 
     counts = [0] * index.replay_units.count
     for unit in errors:
-        counts[index.verification_unit(unit).replay_unit] += 1
+        counts[_replay_unit_of(index.verification_unit(unit))] += 1
     return counts
+
+
+def _replay_unit_of(unit: IndexNode) -> int:
+    """The replay unit (RU) a verification unit (VU) lies in; the marks tile, so it exists."""
+
+    replay_unit = unit.replay_unit
+    if (
+        replay_unit is None
+    ):  # pragma: no cover - validate_marks puts every VU inside an RU
+        raise AssertionError("a verification unit outside every replay unit")
+    return replay_unit
 
 
 def unit_owner(index: Index) -> dict[int, int]:
@@ -85,28 +96,54 @@ def reach_bits(circuit: Circuit, node: IndexNode) -> int:
     return sum(circuit[address].width for address in circuit.outputs if reached[address])
 
 
+def ancestor_bits(circuit: Circuit, node: IndexNode) -> int:
+    """The narrowest declared interface among the node's proper ancestors, in bits.
+
+    The exact value of what :attr:`~veritor.core.KindSummary.ancestor_bits`
+    bounds over the copies of a kind; the root, having no ancestor, is
+    given its own interface, the whole output.  Every value inside the
+    node leaves each enclosing copy through that copy's declared outputs,
+    so the interface of every ancestor is a downstream cut for the node.
+    """
+
+    frame = node.frame
+    if frame.parent is None:
+        return out_bits(circuit, node)
+    narrowest = math.inf
+    parent: Frame | None = frame.parent
+    while parent is not None:
+        narrowest = min(narrowest, out_bits(circuit, IndexNode(parent)))
+        parent = parent.parent
+    return int(narrowest)
+
+
 def cover_bits(compiled: Compiled, errors: ErrorSet) -> int:
     """``kappa(E)``: the cheapest cover of ``E`` by index nodes, in bits.
 
-    A node is covered either by itself -- charged the narrower of its
-    interface and the circuit outputs it reaches, both downstream cuts --
-    or by covering the children that contain errors; a verification unit
-    (VU) is covered by itself.
+    A node is covered either by itself -- charged the narrowest of its
+    interface, the circuit outputs it reaches and the interfaces of the
+    nodes enclosing it, all downstream cuts -- or by covering the children
+    that contain errors; a verification unit (VU) is covered by itself.
     """
 
     owner = unit_owner(compiled.index)
     circuit = compiled.circuit
 
-    def charge(node: IndexNode) -> int:
-        return min(out_bits(circuit, node), reach_bits(circuit, node))
+    def charge(node: IndexNode, enclosing: int) -> int:
+        return min(out_bits(circuit, node), reach_bits(circuit, node), enclosing)
 
-    def value(node: IndexNode) -> int:
+    def value(node: IndexNode, enclosing: int) -> int:
+        """The cover of the errors under ``node``; ``enclosing`` is the narrowest interface above it."""
+
+        own = charge(node, enclosing)
         if node.role == VERIFICATION:
-            return charge(node) if owner[node.interval.start] in errors else 0
-        below = sum(value(child) for child in node.children())
-        return min(below, charge(node)) if below else 0
+            return own if owner[node.interval.start] in errors else 0
+        inside = min(enclosing, out_bits(circuit, node))
+        below = sum(value(child, inside) for child in node.children())
+        return min(below, own) if below else 0
 
-    return value(compiled.index.root)
+    root = compiled.index.root
+    return value(root, out_bits(circuit, root))
 
 
 def cut_bits(compiled: Compiled, errors: ErrorSet) -> int:
@@ -186,7 +223,7 @@ def transcript_outputs(
     circuit = compiled.circuit
     index = compiled.index
     owner = unit_owner(index)
-    replay_of = [index.verification_unit(u).replay_unit for u in range(index.verification_unit_count)]
+    replay_of = [_replay_unit_of(index.verification_unit(u)) for u in range(index.verification_unit_count)]
     pinned = dict(zip(circuit.inputs, inputs, strict=True))
     pinned.update(zip(circuit.weights, weights, strict=True))
     gates = [address for address in range(circuit.n) if address not in pinned]
@@ -235,6 +272,7 @@ __all__ = [
     "Output",
     "accepted_outputs",
     "admissible_sets",
+    "ancestor_bits",
     "cover_bits",
     "cut_bits",
     "error_counts",
